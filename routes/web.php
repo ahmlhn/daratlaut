@@ -140,8 +140,14 @@ Route::middleware(['auth', 'resolve.tenant'])->group(function () {
     // Settings
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
 
+    // System Update UI lives under Settings, but keep legacy /system-update path as redirect.
+    Route::get('/settings/system-update', [SystemUpdateController::class, 'index'])->name('system_update.index');
+    Route::get('/system-update', function (Request $request) {
+        $qs = $request->getQueryString();
+        return redirect('/settings/system-update' . ($qs ? ('?' . $qs) : ''), 302);
+    })->name('system_update.legacy');
+
     // System Update (ZIP-based; no shell access required)
-    Route::get('/system-update', [SystemUpdateController::class, 'index'])->name('system_update.index');
     Route::get('/system-update/status', [SystemUpdateController::class, 'status'])->name('system_update.status');
     Route::post('/system-update/upload', [SystemUpdateController::class, 'upload'])->name('system_update.upload');
     Route::post('/system-update/download', [SystemUpdateController::class, 'download'])->name('system_update.download');

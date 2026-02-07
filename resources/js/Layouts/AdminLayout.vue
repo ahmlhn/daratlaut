@@ -184,7 +184,7 @@ const navigationGroups = [
     items: [
       { name: 'Paket Layanan', href: '/plans', icon: 'tag' },
       { name: 'Pengaturan', href: '/settings', icon: 'cog' },
-      { name: 'Update Sistem', href: '/system-update', icon: 'refresh' },
+      { name: 'Update Sistem', href: '/settings/system-update', icon: 'refresh' },
     ]
   },
   {
