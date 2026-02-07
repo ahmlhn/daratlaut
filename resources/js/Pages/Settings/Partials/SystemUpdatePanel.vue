@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, inject, nextTick, watch } from 'vue'
+import LoadingSpinner from '@/Components/LoadingSpinner.vue'
 
 const props = defineProps({
   embedded: { type: Boolean, default: false },
@@ -73,9 +74,62 @@ const stagePill = computed(() => {
   return { text: 'IDLE', klass: 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-200' }
 })
 
-const panelClass = computed(() => {
-  if (!props.embedded) return 'card p-5'
-  return 'rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-dark-950 p-5'
+const isBusy = computed(() => statusLoading.value || uploading.value || running.value || ghBusy.value)
+
+const sectionClass = computed(() => {
+  const base = 'rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-dark-950'
+  const shadow = props.embedded ? '' : 'shadow-sm'
+  return `${base} ${shadow} p-5`
+})
+
+const mutedBoxClass = computed(() => {
+  return 'rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-dark-900/40 p-4'
+})
+
+const canPrepare = computed(() => {
+  if (!cfg.value?.enabled) return false
+  return !isBusy.value && ['uploaded', 'error', 'idle', 'ready', 'copying', 'finalize', 'done'].includes(stage.value)
+})
+
+const canApply = computed(() => {
+  if (!cfg.value?.enabled) return false
+  return !isBusy.value && ['uploaded', 'ready', 'copying', 'finalize'].includes(stage.value)
+})
+
+const stepper = computed(() => {
+  const steps = [
+    { id: 'package', label: 'Paket' },
+    { id: 'prepare', label: 'Prepare' },
+    { id: 'copy', label: 'Copy' },
+    { id: 'finalize', label: 'Finalize' },
+    { id: 'done', label: 'Selesai' },
+  ]
+
+  const s = stage.value
+  let current = 0
+  if (s === 'idle') current = 0
+  else if (s === 'uploaded') current = 1
+  else if (s === 'ready') current = 2
+  else if (s === 'copying') current = 2
+  else if (s === 'finalize') current = 3
+  else if (s === 'done') current = 4
+  else if (s === 'error') {
+    if (finalizeProgress.value) current = 3
+    else if (copyProgress.value || state.value?.manifest) current = 2
+    else current = 1
+  }
+
+  return steps.map((st, idx) => {
+    const isError = s === 'error'
+    const status = s === 'done'
+      ? 'done'
+      : idx < current
+        ? 'done'
+        : idx === current
+          ? (isError ? 'error' : 'current')
+          : 'upcoming'
+    return { ...st, index: idx + 1, status }
+  })
 })
 
 async function refreshStatus() {
@@ -306,6 +360,17 @@ function scrollLogToBottom() {
   el.scrollTop = el.scrollHeight
 }
 
+async function copyLog() {
+  try {
+    const text = (state.value?.log_tail || []).join('\n')
+    if (!text) return notify('warning', 'Log masih kosong.')
+    await navigator.clipboard.writeText(text)
+    notify('success', 'Log disalin ke clipboard.')
+  } catch (e) {
+    notify('error', 'Gagal menyalin log (clipboard tidak tersedia).')
+  }
+}
+
 watch(
   () => (state.value?.log_tail || []).length,
   async () => {
@@ -322,23 +387,31 @@ onMounted(() => {
 <template>
   <div :class="embedded ? 'card p-6' : ''">
     <div class="space-y-6">
-      <div class="flex items-start justify-between gap-4">
-        <div>
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div class="min-w-0">
           <h2 v-if="embedded" class="text-lg font-semibold text-gray-900 dark:text-white">Update Sistem</h2>
           <h1 v-else class="text-2xl font-black text-gray-900 dark:text-white">Update Sistem</h1>
           <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Update lewat panel tanpa <span class="font-semibold">git pull</span> / <span class="font-semibold">composer</span>.
-            Disarankan pakai paket ZIP <span class="font-semibold">sudah build</span> (termasuk <span class="font-semibold">vendor</span> + <span class="font-semibold">public/build</span>).
+            Saran: gunakan paket build (sudah termasuk <span class="font-semibold">vendor</span> dan <span class="font-semibold">public/build</span>).
           </p>
+          <div v-if="installed?.source" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            Installed: <span class="font-semibold">{{ installed.source }}</span>
+            <span v-if="installed.github?.sha" class="ml-2">
+              sha <span class="font-mono font-semibold">{{ (installed.github.sha || '').slice(0, 7) }}</span>
+            </span>
+          </div>
         </div>
-        <div class="flex items-center gap-2">
+
+        <div class="flex flex-wrap items-center gap-2">
           <span :class="['px-2.5 py-1 rounded-full text-xs font-black tracking-wider', stagePill.klass]">
             {{ stagePill.text }}
           </span>
-          <button @click="refreshStatus" class="btn btn-secondary" :disabled="statusLoading || uploading || running">
+          <button @click="refreshStatus" class="btn btn-secondary" :disabled="isBusy">
+            <span v-if="statusLoading" class="mr-2"><LoadingSpinner size="sm" /></span>
             Refresh
           </button>
-          <button @click="resetUpdate" class="btn btn-danger" :disabled="statusLoading || uploading || running">
+          <button @click="resetUpdate" class="btn btn-danger" :disabled="isBusy">
             Reset
           </button>
         </div>
@@ -346,34 +419,66 @@ onMounted(() => {
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-2 space-y-6">
-          <div :class="panelClass">
-            <div class="flex items-center justify-between gap-4">
+          <div :class="sectionClass">
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h3 class="text-sm font-black text-gray-900 dark:text-white uppercase tracking-wider">Status</h3>
+                <h3 class="text-base font-semibold text-gray-900 dark:text-white">Progress</h3>
                 <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
                   <span class="font-semibold">Stage:</span> {{ stageLabel }}
                 </p>
-                <p v-if="installed?.source" class="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                  Installed: <span class="font-semibold">{{ installed.source }}</span>
-                  <span v-if="installed.github?.sha" class="ml-2">sha <span class="font-mono font-semibold">{{ (installed.github.sha || '').slice(0, 7) }}</span></span>
-                </p>
-                <p v-if="err" class="text-sm text-red-600 dark:text-red-400 mt-2 whitespace-pre-line">{{ err }}</p>
-              </div>
-              <div class="flex items-center gap-2">
-                <button
-                  @click="prepare"
-                  class="btn btn-secondary"
-                  :disabled="uploading || running || !['uploaded','error','idle','ready','copying','finalize','done'].includes(stage)"
+
+                <div
+                  v-if="!cfg.enabled"
+                  class="mt-3 text-sm rounded-xl border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200 p-3"
                 >
+                  Fitur update dinonaktifkan di server. Set <span class="font-mono font-semibold">SYSTEM_UPDATE_ENABLED=true</span>.
+                </div>
+
+                <div
+                  v-if="err"
+                  class="mt-3 text-sm rounded-xl border border-red-200 bg-red-50 text-red-900 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200 p-3 whitespace-pre-line"
+                >
+                  {{ err }}
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <button @click="prepare" class="btn btn-secondary" :disabled="!canPrepare">
                   Prepare
                 </button>
-                <button
-                  @click="runSteps"
-                  class="btn btn-primary"
-                  :disabled="uploading || running || !['uploaded','ready','copying','finalize'].includes(stage)"
-                >
-                  {{ running ? 'Memproses...' : 'Jalankan Update' }}
+                <button @click="runSteps" class="btn btn-primary" :disabled="!canApply">
+                  <span v-if="running" class="mr-2"><LoadingSpinner size="sm" color="primary" /></span>
+                  {{ running ? 'Memproses...' : (stage === 'copying' || stage === 'finalize' ? 'Lanjutkan' : 'Apply Update') }}
                 </button>
+              </div>
+            </div>
+
+            <div class="mt-5 grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div
+                v-for="st in stepper"
+                :key="st.id"
+                class="flex items-center gap-3 sm:flex-col sm:items-center sm:gap-2"
+              >
+                <div
+                  :class="[
+                    'h-9 w-9 rounded-full flex items-center justify-center text-sm font-black border',
+                    st.status === 'done' ? 'bg-emerald-600 text-white border-emerald-600' : '',
+                    st.status === 'current' ? 'bg-primary-600 text-white border-primary-600' : '',
+                    st.status === 'upcoming' ? 'bg-gray-100 text-gray-700 border-gray-200 dark:bg-white/5 dark:text-gray-200 dark:border-white/10' : '',
+                    st.status === 'error' ? 'bg-red-600 text-white border-red-600' : '',
+                  ]"
+                >
+                  <svg v-if="st.status === 'done'" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  <svg v-else-if="st.status === 'error'" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86l-8.02 13.9A2 2 0 004 20h16a2 2 0 001.73-3.24l-8.02-13.9a2 2 0 00-3.46 0z" />
+                  </svg>
+                  <span v-else>{{ st.index }}</span>
+                </div>
+                <div class="sm:text-center">
+                  <div class="text-sm sm:text-xs font-semibold text-gray-900 dark:text-white">{{ st.label }}</div>
+                </div>
               </div>
             </div>
 
@@ -397,87 +502,133 @@ onMounted(() => {
               </div>
             </div>
 
-            <div v-if="state?.manifest" class="mt-4 text-xs text-gray-500 dark:text-gray-400">
-              <div class="flex flex-wrap gap-x-6 gap-y-1">
-                <span>vendor: <span class="font-semibold" :class="state.manifest.vendor_included ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'">{{ state.manifest.vendor_included ? 'included' : 'NOT included' }}</span></span>
-                <span>build: <span class="font-semibold" :class="state.manifest.build_included ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'">{{ state.manifest.build_included ? 'included' : 'NOT included' }}</span></span>
-                <span>excluded: <span class="font-semibold">{{ state.manifest.excluded_count || 0 }}</span></span>
+            <div v-if="state?.manifest" class="mt-5" :class="mutedBoxClass">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                <div class="flex items-center justify-between sm:block">
+                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">vendor</div>
+                  <div
+                    class="mt-1 font-semibold"
+                    :class="state.manifest.vendor_included ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'"
+                  >
+                    {{ state.manifest.vendor_included ? 'included' : 'NOT included' }}
+                  </div>
+                </div>
+                <div class="flex items-center justify-between sm:block">
+                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">public/build</div>
+                  <div
+                    class="mt-1 font-semibold"
+                    :class="state.manifest.build_included ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'"
+                  >
+                    {{ state.manifest.build_included ? 'included' : 'NOT included' }}
+                  </div>
+                </div>
+                <div class="flex items-center justify-between sm:block">
+                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">excluded</div>
+                  <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ state.manifest.excluded_count || 0 }}</div>
+                </div>
               </div>
-              <p class="mt-2 text-gray-500 dark:text-gray-400">
+              <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
                 Tidak menimpa: <span class="font-semibold">.env</span>, <span class="font-semibold">storage/</span>,
                 <span class="font-semibold">bootstrap/cache</span>, <span class="font-semibold">public/storage</span>, <span class="font-semibold">public/uploads</span>.
-              </p>
-              <p v-if="!state.manifest.vendor_included" class="mt-2 text-amber-700 dark:text-amber-300">
-                Paket tidak mengandung <span class="font-semibold">vendor/</span>. Sistem akan mempertahankan vendor yang ada.
+              </div>
+              <div v-if="!state.manifest.vendor_included" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                Paket tidak mengandung <span class="font-semibold">vendor/</span>. Sistem mempertahankan vendor yang ada.
                 Jika ada perubahan dependency, update bisa gagal.
-              </p>
-              <p v-if="!state.manifest.build_included" class="mt-1 text-amber-700 dark:text-amber-300">
-                Paket tidak mengandung <span class="font-semibold">public/build</span>. Sistem akan mempertahankan build yang ada.
+              </div>
+              <div v-if="!state.manifest.build_included" class="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                Paket tidak mengandung <span class="font-semibold">public/build</span>. Sistem mempertahankan build yang ada.
                 Jika ada perubahan frontend, UI bisa tidak update.
-              </p>
+              </div>
             </div>
           </div>
 
-          <div :class="panelClass">
+          <div :class="sectionClass">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <h3 class="text-sm font-black text-gray-900 dark:text-white uppercase tracking-wider">GitHub (main)</h3>
+                <h3 class="text-base font-semibold text-gray-900 dark:text-white">GitHub (main)</h3>
                 <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
-                  Cek update terbaru dari GitHub branch <span class="font-semibold">{{ github.branch || 'main' }}</span> dan apply otomatis.
+                  Ambil paket build dari GitHub Release, lalu apply otomatis.
                 </p>
               </div>
               <div class="flex items-center gap-2">
-                <button @click="githubCheckLatest" class="btn btn-secondary" :disabled="ghBusy || running || uploading || !github.enabled">
-                  Cek Update
+                <button @click="githubCheckLatest" class="btn btn-secondary px-3 py-2 text-xs" :disabled="isBusy || !github.enabled">
+                  Cek
                 </button>
                 <button
                   @click="githubDownloadAndUpdate"
-                  class="btn btn-primary"
-                  :disabled="ghBusy || running || uploading || !github.enabled || !github.configured || !github.token_present"
+                  class="btn btn-primary px-3 py-2 text-xs"
+                  :disabled="isBusy || !github.enabled || !github.configured || !github.token_present"
                 >
-                  Download & Update
+                  Update
                 </button>
               </div>
             </div>
 
+            <div
+              v-if="!github.enabled"
+              class="mt-4 text-sm rounded-xl border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200 p-3"
+            >
+              GitHub update dinonaktifkan (server config).
+            </div>
+
             <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-gray-700 dark:text-gray-300">
-              <div>
+              <div :class="mutedBoxClass">
                 <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Repo</div>
                 <div class="mt-1 font-semibold">
                   <span v-if="github.configured">{{ github.owner }}/{{ github.repo }}</span>
-                  <span v-else class="text-amber-700 dark:text-amber-300">Belum diset (isi `SYSTEM_UPDATE_GITHUB_OWNER/REPO` di .env)</span>
+                  <span v-else class="text-amber-700 dark:text-amber-300">Belum diset di .env</span>
+                </div>
+                <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  Branch: <span class="font-mono font-semibold">{{ github.branch || 'main' }}</span>
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Tag: <span class="font-mono font-semibold">{{ github.release_tag || 'panel-main-latest' }}</span>
+                  <span class="mx-2">|</span>
+                  Asset: <span class="font-mono font-semibold">{{ github.release_asset || 'update-package.zip' }}</span>
                 </div>
               </div>
-              <div>
+
+              <div :class="mutedBoxClass">
                 <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Token</div>
                 <div class="mt-1 font-semibold">
-                  <span v-if="github.token_present" class="text-emerald-700 dark:text-emerald-300">Ada ({{ github.token_hint || '****' }})</span>
+                  <span v-if="github.token_present" class="text-emerald-700 dark:text-emerald-300">
+                    Ada ({{ github.token_hint || '****' }})
+                  </span>
                   <span v-else class="text-amber-700 dark:text-amber-300">Belum ada</span>
+                </div>
+                <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  Saran: Fine-grained PAT, akses <span class="font-semibold">Contents: Read</span> untuk repo ini saja.
                 </div>
               </div>
             </div>
 
-            <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <input v-model="ghToken" type="password" class="input sm:col-span-2" placeholder="GitHub token (read-only contents)" />
-              <div class="flex items-center gap-2">
-                <button @click="githubSaveToken" class="btn btn-secondary flex-1" :disabled="ghBusy || running || uploading || !github.enabled">Simpan</button>
-                <button @click="githubClearToken" class="btn btn-danger" :disabled="ghBusy || running || uploading || !github.enabled">Hapus</button>
+            <div class="mt-4" :class="mutedBoxClass">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Simpan Token</div>
+                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Token disimpan di server (file-based, encrypted).
+                  </div>
+                </div>
+                <button @click="githubClearToken" class="btn btn-danger px-3 py-2 text-xs" :disabled="isBusy || !github.enabled">
+                  Hapus
+                </button>
+              </div>
+              <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <input v-model="ghToken" type="password" class="input sm:col-span-2" placeholder="Fine-grained PAT (read-only)" />
+                <button @click="githubSaveToken" class="btn btn-secondary px-3 py-2 text-xs" :disabled="isBusy || !github.enabled">
+                  Simpan
+                </button>
               </div>
             </div>
 
-            <div class="mt-4 text-xs text-gray-500 dark:text-gray-400">
-              <p>
-                Disarankan pakai <span class="font-semibold">Fine-grained PAT</span> dengan akses <span class="font-semibold">Contents: Read</span> ke repo ini saja.
-              </p>
-            </div>
-
-            <div v-if="ghCheck?.latest" class="mt-4 rounded-xl border border-gray-200 dark:border-white/10 p-4 bg-white dark:bg-dark-950">
+            <div v-if="ghCheck?.latest" class="mt-4" :class="mutedBoxClass">
               <div class="flex items-start justify-between gap-4">
-                <div>
+                <div class="min-w-0">
                   <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Latest</div>
                   <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">
                     <span class="font-mono">{{ ghCheck.latest.short }}</span>
-                    <span class="ml-2 text-gray-600 dark:text-gray-300">{{ ghCheck.latest.message }}</span>
+                    <span class="ml-2 text-gray-600 dark:text-gray-300 truncate">{{ ghCheck.latest.message }}</span>
                   </div>
                   <div v-if="ghCheck.latest.date" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ ghCheck.latest.date }}</div>
 
@@ -506,7 +657,7 @@ onMounted(() => {
                     </div>
                   </div>
                 </div>
-                <div class="text-right text-xs">
+                <div class="text-right text-xs whitespace-nowrap">
                   <div v-if="ghCheck.build_ready === true" class="font-bold text-emerald-700 dark:text-emerald-300">BUILD READY</div>
                   <div v-else-if="ghCheck.build_ready === false" class="font-bold text-amber-700 dark:text-amber-300">BUILD PENDING</div>
                   <div v-if="ghCheck.update_available === false" class="font-bold text-emerald-700 dark:text-emerald-300">UP TO DATE</div>
@@ -517,47 +668,84 @@ onMounted(() => {
             </div>
           </div>
 
-          <div :class="panelClass">
-            <h3 class="text-sm font-black text-gray-900 dark:text-white uppercase tracking-wider">Paket Update (ZIP)</h3>
-            <div class="mt-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-              <input ref="fileRef" type="file" accept=".zip" class="block w-full text-sm text-gray-700 dark:text-gray-300" />
-              <button @click="uploadPackage" class="btn btn-primary" :disabled="uploading || running">
-                {{ uploading ? `Uploading ${uploadPct}%` : 'Upload ZIP' }}
-              </button>
-              <button
-                v-if="cfg.allow_download && cfg.package_url_set"
-                @click="downloadConfigured"
-                class="btn btn-secondary"
-                :disabled="uploading || running"
-              >
-                Download Dari URL
-              </button>
+          <div :class="sectionClass">
+            <div>
+              <h3 class="text-base font-semibold text-gray-900 dark:text-white">Paket ZIP</h3>
+              <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
+                Upload paket update manual (ZIP). Cocok untuk hosting tanpa akses git/composer.
+              </p>
             </div>
-            <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">
-              Catatan: update tidak menimpa <span class="font-semibold">.env</span>, <span class="font-semibold">storage/</span>,
-              <span class="font-semibold">bootstrap/cache</span>, <span class="font-semibold">public/storage</span>, <span class="font-semibold">public/uploads</span>.
-            </p>
+
+            <div class="mt-4 space-y-3">
+              <input ref="fileRef" type="file" accept=".zip" class="block w-full text-sm text-gray-700 dark:text-gray-300" />
+
+              <div class="flex flex-wrap gap-2">
+                <button @click="uploadPackage" class="btn btn-primary" :disabled="uploading || isBusy || !cfg.enabled">
+                  <span v-if="uploading" class="mr-2"><LoadingSpinner size="sm" color="primary" /></span>
+                  {{ uploading ? `Uploading ${uploadPct}%` : 'Upload ZIP' }}
+                </button>
+                <button
+                  v-if="cfg.allow_download && cfg.package_url_set"
+                  @click="downloadConfigured"
+                  class="btn btn-secondary"
+                  :disabled="isBusy || !cfg.enabled"
+                >
+                  Download Dari URL
+                </button>
+              </div>
+
+              <div v-if="uploading" class="h-2 bg-gray-100 dark:bg-white/10 rounded-full overflow-hidden">
+                <div class="h-full bg-gradient-to-r from-primary-600 to-primary-500" :style="{ width: `${uploadPct}%` }"></div>
+              </div>
+
+              <div :class="mutedBoxClass">
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                  Tidak menimpa: <span class="font-semibold">.env</span>, <span class="font-semibold">storage/</span>,
+                  <span class="font-semibold">bootstrap/cache</span>, <span class="font-semibold">public/storage</span>,
+                  <span class="font-semibold">public/uploads</span>.
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
         <div class="space-y-6">
-          <div :class="panelClass">
+          <div :class="sectionClass">
             <div class="flex items-center justify-between gap-3">
-              <h3 class="text-sm font-black text-gray-900 dark:text-white uppercase tracking-wider">Log (tail)</h3>
-              <button @click="scrollLogToBottom" class="btn btn-secondary btn-sm text-xs" type="button">Ke bawah</button>
+              <h3 class="text-base font-semibold text-gray-900 dark:text-white">Log</h3>
+              <div class="flex items-center gap-2">
+                <button @click="copyLog" class="btn btn-secondary px-3 py-2 text-xs" type="button" :disabled="isBusy">
+                  Copy
+                </button>
+                <button @click="scrollLogToBottom" class="btn btn-secondary px-3 py-2 text-xs" type="button">
+                  Ke bawah
+                </button>
+              </div>
             </div>
-            <div ref="logBoxRef" class="mt-3 h-80 overflow-auto rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-dark-950 p-3">
+            <div ref="logBoxRef" class="mt-3 h-80 overflow-auto rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-black/20 p-3">
               <pre class="text-[11px] leading-relaxed text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ (state?.log_tail || []).join('\n') }}</pre>
             </div>
           </div>
 
-          <div :class="panelClass">
-            <h3 class="text-sm font-black text-gray-900 dark:text-white uppercase tracking-wider">Konfigurasi</h3>
-            <div class="mt-3 text-sm text-gray-600 dark:text-gray-300 space-y-2">
-              <p><span class="font-semibold">Enabled:</span> {{ cfg.enabled ? 'YES' : 'NO' }}</p>
-              <p><span class="font-semibold">Chunk size:</span> {{ cfg.chunk_size }}</p>
-              <p><span class="font-semibold">Max package:</span> {{ cfg.max_package_mb }} MB</p>
-              <p><span class="font-semibold">Download:</span> {{ cfg.allow_download ? 'YES' : 'NO' }}</p>
+          <div :class="sectionClass">
+            <h3 class="text-base font-semibold text-gray-900 dark:text-white">Konfigurasi</h3>
+            <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div :class="mutedBoxClass">
+                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Enabled</div>
+                <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.enabled ? 'YES' : 'NO' }}</div>
+              </div>
+              <div :class="mutedBoxClass">
+                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Chunk size</div>
+                <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.chunk_size }}</div>
+              </div>
+              <div :class="mutedBoxClass">
+                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Max package</div>
+                <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.max_package_mb }} MB</div>
+              </div>
+              <div :class="mutedBoxClass">
+                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Download</div>
+                <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.allow_download ? 'YES' : 'NO' }}</div>
+              </div>
             </div>
           </div>
         </div>
@@ -565,4 +753,3 @@ onMounted(() => {
     </div>
   </div>
 </template>
-
