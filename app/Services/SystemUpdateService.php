@@ -344,7 +344,9 @@ final class SystemUpdateService
         // 1) Hit the GitHub API asset endpoint but do NOT follow redirects automatically.
         // Some HTTP clients strip Authorization on cross-host redirects; manual follow is more reliable.
         $res = $this->githubRequestForDownload()
-            ->withHeaders(['Accept' => 'application/octet-stream'])
+            // Important: use replaceHeaders, because Laravel's withHeaders() merges recursively and would
+            // create multiple Accept headers (GitHub may then return JSON instead of the binary asset).
+            ->replaceHeaders(['Accept' => 'application/octet-stream'])
             ->withOptions(['allow_redirects' => false])
             ->sink($tmp)
             ->get($assetApiUrl);
