@@ -132,6 +132,13 @@ final class SystemUpdateService
         @file_put_contents($this->logPath(), $line, FILE_APPEND);
     }
 
+    public function logError(string $context, \Throwable $e): void
+    {
+        $msg = trim((string) $e->getMessage());
+        if ($msg === '') $msg = get_class($e);
+        $this->appendLog('ERROR ' . $context . ': ' . $msg);
+    }
+
     private function logTail(int $maxLines = 200): array
     {
         $path = $this->logPath();
@@ -331,6 +338,13 @@ final class SystemUpdateService
         $url = $this->githubApiBase() . "/repos/{$owner}/{$repo}/releases/tags/{$tag}";
         $res = $this->githubRequest()->get($url);
         if (!$res->successful()) {
+            if ($res->status() === 404) {
+                throw new RuntimeException(
+                    "GitHub release tag '{$tag}' not found. " .
+                    "Run the GitHub Actions workflow to publish the built package, " .
+                    "or create a Release with asset '{$this->githubReleaseAssetName()}'."
+                );
+            }
             $msg = (string) ($res->json('message') ?? $res->body() ?? '');
             $msg = trim($msg);
             throw new RuntimeException('GitHub release API error (' . $res->status() . '): ' . ($msg !== '' ? $msg : 'request failed'));
