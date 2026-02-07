@@ -28,6 +28,10 @@ return [
         'token' => env('SYSTEM_UPDATE_GITHUB_TOKEN'),
         'api_base' => env('SYSTEM_UPDATE_GITHUB_API_BASE', 'https://api.github.com'),
         'api_version' => env('SYSTEM_UPDATE_GITHUB_API_VERSION', '2022-11-28'),
+
+        // Release artifact built by GitHub Actions (recommended: includes vendor + public/build).
+        'release_tag' => env('SYSTEM_UPDATE_GITHUB_RELEASE_TAG', 'panel-main-latest'),
+        'release_asset' => env('SYSTEM_UPDATE_GITHUB_RELEASE_ASSET', 'update-package.zip'),
     ],
 
     // Paths that should never be overwritten by an update package.

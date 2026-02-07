@@ -191,6 +191,18 @@ final class SystemUpdateService
         return $b !== '' ? $b : 'main';
     }
 
+    private function githubReleaseTag(): string
+    {
+        $t = trim((string) $this->cfg('github.release_tag', 'panel-main-latest'));
+        return $t !== '' ? $t : 'panel-main-latest';
+    }
+
+    private function githubReleaseAssetName(): string
+    {
+        $n = trim((string) $this->cfg('github.release_asset', 'update-package.zip'));
+        return $n !== '' ? $n : 'update-package.zip';
+    }
+
     private function githubApiBase(): string
     {
         $base = trim((string) $this->cfg('github.api_base', 'https://api.github.com'));
@@ -260,6 +272,114 @@ final class SystemUpdateService
         return $req;
     }
 
+    private function githubRequestForDownload(): PendingRequest
+    {
+        // Downloads of vendor-included packages can take longer on shared hosting.
+        $req = Http::timeout(600)
+            ->connectTimeout(30)
+            ->withHeaders([
+                'Accept' => 'application/vnd.github+json',
+                'X-GitHub-Api-Version' => $this->githubApiVersion(),
+                'User-Agent' => 'DaratLaut-SystemUpdate/1.0',
+            ])
+            ->withOptions([
+                'allow_redirects' => true,
+            ]);
+
+        $token = $this->githubToken();
+        if (is_string($token) && $token !== '') {
+            $req = $req->withToken($token);
+        }
+
+        return $req;
+    }
+
+    private function githubParseReleaseMeta(?string $body): ?array
+    {
+        if (!is_string($body)) return null;
+        $raw = trim($body);
+        if ($raw === '') return null;
+
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) return $decoded;
+
+        // Fallback: try to extract a JSON object from a longer body.
+        if (preg_match('/\\{.*\\}/s', $raw, $m) === 1) {
+            $decoded2 = json_decode((string) $m[0], true);
+            if (is_array($decoded2)) return $decoded2;
+        }
+
+        return null;
+    }
+
+    private function githubGetBuiltRelease(): array
+    {
+        if (!$this->githubEnabled()) {
+            throw new RuntimeException('GitHub update is disabled.');
+        }
+
+        $owner = $this->githubOwner();
+        $repo = $this->githubRepo();
+        if ($owner === '' || $repo === '') {
+            throw new RuntimeException('GitHub repo is not configured. Set SYSTEM_UPDATE_GITHUB_OWNER and SYSTEM_UPDATE_GITHUB_REPO.');
+        }
+        if ($this->githubToken() === null) {
+            throw new RuntimeException('GitHub token is missing. Set SYSTEM_UPDATE_GITHUB_TOKEN or save token from the panel.');
+        }
+
+        $tag = $this->githubReleaseTag();
+        $url = $this->githubApiBase() . "/repos/{$owner}/{$repo}/releases/tags/{$tag}";
+        $res = $this->githubRequest()->get($url);
+        if (!$res->successful()) {
+            $msg = (string) ($res->json('message') ?? $res->body() ?? '');
+            $msg = trim($msg);
+            throw new RuntimeException('GitHub release API error (' . $res->status() . '): ' . ($msg !== '' ? $msg : 'request failed'));
+        }
+
+        $json = $res->json();
+        if (!is_array($json)) {
+            throw new RuntimeException('GitHub release API returned invalid response.');
+        }
+
+        return $json;
+    }
+
+    private function githubBuiltInfo(): array
+    {
+        $release = $this->githubGetBuiltRelease();
+        $meta = $this->githubParseReleaseMeta((string) ($release['body'] ?? ''));
+
+        $assetName = $this->githubReleaseAssetName();
+        $assets = $release['assets'] ?? [];
+        if (!is_array($assets)) $assets = [];
+
+        $asset = null;
+        foreach ($assets as $a) {
+            if (!is_array($a)) continue;
+            if ((string) ($a['name'] ?? '') === $assetName) {
+                $asset = $a;
+                break;
+            }
+        }
+
+        return [
+            'release' => [
+                'tag' => (string) ($release['tag_name'] ?? $this->githubReleaseTag()),
+                'name' => (string) ($release['name'] ?? ''),
+                'published_at' => (string) ($release['published_at'] ?? ''),
+                'html_url' => (string) ($release['html_url'] ?? ''),
+            ],
+            'meta' => $meta,
+            'asset' => $asset ? [
+                'id' => $asset['id'] ?? null,
+                'name' => (string) ($asset['name'] ?? ''),
+                'size' => $asset['size'] ?? null,
+                'url' => (string) ($asset['url'] ?? ''), // API URL (download via octet-stream)
+                'browser_download_url' => (string) ($asset['browser_download_url'] ?? ''),
+            ] : null,
+        ];
+    }
+
     public function status(): array
     {
         $state = $this->withLockedState(function (array $state) {
@@ -274,6 +394,8 @@ final class SystemUpdateService
             'owner' => $this->githubOwner(),
             'repo' => $this->githubRepo(),
             'branch' => $this->githubBranch(),
+            'release_tag' => $this->githubReleaseTag(),
+            'release_asset' => $this->githubReleaseAssetName(),
             'configured' => ($this->githubOwner() !== '' && $this->githubRepo() !== ''),
             'token_present' => $this->githubToken() !== null,
             'token_hint' => $this->githubTokenHint(),
@@ -392,7 +514,7 @@ final class SystemUpdateService
         $zipUrl = $this->githubApiBase() . "/repos/{$owner}/{$repo}/zipball/{$sha}";
         $this->appendLog("Downloading GitHub zipball: {$owner}/{$repo}@{$sha}");
 
-        $res = $this->githubRequest()->sink($zipPath)->get($zipUrl);
+        $res = $this->githubRequestForDownload()->sink($zipPath)->get($zipUrl);
         if (!$res->successful()) {
             @unlink($zipPath);
             $msg = (string) ($res->json('message') ?? $res->body() ?? '');
@@ -425,6 +547,129 @@ final class SystemUpdateService
                     'repo' => $this->githubRepo(),
                     'branch' => (string) ($latest['branch'] ?? $this->githubBranch()),
                     'sha' => (string) ($latest['sha'] ?? ''),
+                ],
+            ];
+            $state['_save_state'] = true;
+            return $state;
+        });
+
+        return $this->status();
+    }
+
+    public function githubCheckBuiltLatest(): array
+    {
+        $latest = $this->githubCheckLatest();
+        $built = $this->githubBuiltInfo();
+
+        $latestSha = (string) (($latest['latest']['sha'] ?? '') ?: '');
+        $installed = $this->readInstalled();
+        $installedSha = is_array($installed) ? (string) (($installed['github']['sha'] ?? '') ?: '') : '';
+
+        $builtSha = '';
+        $meta = $built['meta'] ?? null;
+        if (is_array($meta) && isset($meta['sha'])) {
+            $builtSha = (string) $meta['sha'];
+        }
+
+        $buildReady = ($latestSha !== '' && $builtSha !== '' && strtolower($latestSha) === strtolower($builtSha));
+
+        $updateAvailable = null;
+        if ($installedSha !== '' && $buildReady) {
+            $updateAvailable = (strtolower($installedSha) !== strtolower($builtSha));
+        }
+
+        return [
+            'latest' => $latest['latest'] ?? null,
+            'built' => $built,
+            'installed' => $installed,
+            'build_ready' => $buildReady,
+            'update_available' => $updateAvailable,
+        ];
+    }
+
+    public function githubDownloadBuiltLatest(): array
+    {
+        if (!class_exists(ZipArchive::class)) {
+            throw new RuntimeException('ZipArchive extension is not available on this server.');
+        }
+
+        $check = $this->githubCheckBuiltLatest();
+
+        $latest = $check['latest'] ?? null;
+        $built = $check['built'] ?? null;
+        if (!is_array($latest) || empty($latest['sha'])) {
+            throw new RuntimeException('Latest commit info is missing.');
+        }
+        if (!is_array($built)) {
+            throw new RuntimeException('Built release info is missing.');
+        }
+
+        $buildReady = (bool) ($check['build_ready'] ?? false);
+        if (!$buildReady) {
+            $metaSha = is_array($built['meta'] ?? null) ? (string) (($built['meta']['sha'] ?? '') ?: '') : '';
+            throw new RuntimeException(
+                'Build artifact is not ready for latest main commit. ' .
+                'Latest: ' . substr((string) $latest['sha'], 0, 7) .
+                ($metaSha !== '' ? ('; built: ' . substr($metaSha, 0, 7)) : '; built: unknown')
+            );
+        }
+
+        $asset = $built['asset'] ?? null;
+        if (!is_array($asset) || empty($asset['url']) || empty($asset['name'])) {
+            throw new RuntimeException('Release asset not found. Expected: ' . $this->githubReleaseAssetName());
+        }
+
+        $sha = (string) $latest['sha'];
+        $short = substr($sha, 0, 7);
+        $id = now()->format('Ymd-His') . '-' . bin2hex(random_bytes(4));
+        $zipName = 'github-release-' . $short . '-' . $id . '.zip';
+        $zipPath = $this->packagesDir() . DIRECTORY_SEPARATOR . $zipName;
+
+        $this->appendLog('Downloading GitHub release asset: ' . (string) ($asset['name'] ?? '') . ' (sha ' . $short . ')');
+
+        // Download via GitHub API asset endpoint (requires octet-stream accept).
+        $assetUrl = (string) $asset['url'];
+        $res = $this->githubRequestForDownload()
+            ->withHeaders(['Accept' => 'application/octet-stream'])
+            ->sink($zipPath)
+            ->get($assetUrl);
+
+        if (!$res->successful()) {
+            @unlink($zipPath);
+            $msg = (string) ($res->json('message') ?? $res->body() ?? '');
+            $msg = trim($msg);
+            throw new RuntimeException('GitHub asset download error (' . $res->status() . '): ' . ($msg !== '' ? $msg : 'request failed'));
+        }
+
+        $size = @filesize($zipPath);
+        if (!is_numeric($size) || (int) $size <= 0) {
+            @unlink($zipPath);
+            throw new RuntimeException('Downloaded release asset is empty.');
+        }
+
+        $sha256 = @hash_file('sha256', $zipPath) ?: null;
+        $this->appendLog("Downloaded GitHub release package: {$zipName}" . ($sha256 ? " (sha256 {$sha256})" : ''));
+
+        $meta = is_array($built['meta'] ?? null) ? $built['meta'] : [];
+
+        $this->withLockedState(function (array $state) use ($id, $zipName, $zipPath, $sha256, $size, $latest, $meta) {
+            $state = $this->defaultState();
+            $state['stage'] = 'uploaded';
+            $state['package'] = [
+                'id' => $id,
+                'filename' => $zipName,
+                'zip_path' => $zipPath,
+                'sha256' => $sha256,
+                'size_bytes' => is_numeric($size) ? (int) $size : null,
+                'uploaded_at' => now()->toIso8601String(),
+                'source' => 'github_release',
+                'github' => [
+                    'owner' => $this->githubOwner(),
+                    'repo' => $this->githubRepo(),
+                    'branch' => (string) ($latest['branch'] ?? $this->githubBranch()),
+                    'sha' => (string) ($latest['sha'] ?? ''),
+                    'release_tag' => $this->githubReleaseTag(),
+                    'meta' => $meta,
                 ],
             ];
             $state['_save_state'] = true;

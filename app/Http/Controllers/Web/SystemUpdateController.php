@@ -101,7 +101,7 @@ class SystemUpdateController extends Controller
         $this->assertEnabled();
         $this->assertAllowed($request);
 
-        return response()->json(['status' => 'success', 'data' => $svc->githubCheckLatest()]);
+        return response()->json(['status' => 'success', 'data' => $svc->githubCheckBuiltLatest()]);
     }
 
     public function githubDownload(Request $request, SystemUpdateService $svc): JsonResponse
@@ -109,7 +109,7 @@ class SystemUpdateController extends Controller
         $this->assertEnabled();
         $this->assertAllowed($request);
 
-        $state = $svc->githubDownloadLatest();
+        $state = $svc->githubDownloadBuiltLatest();
         return response()->json(['status' => 'success', 'data' => $state]);
     }
 

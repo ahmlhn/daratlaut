@@ -215,12 +215,15 @@ async function githubCheckLatest() {
 
 async function githubDownloadAndUpdate() {
   const repo = github.value?.owner && github.value?.repo ? `${github.value.owner}/${github.value.repo}` : '(repo belum diset)'
+  const tag = github.value?.release_tag || 'panel-main-latest'
+  const asset = github.value?.release_asset || 'update-package.zip'
   const warn = [
-    `Sistem akan download source dari GitHub (${repo}@${github.value?.branch || 'main'}) dan apply update.`,
+    `Sistem akan download paket build dari GitHub Release (${repo} tag ${tag}).`,
+    `Asset: ${asset}`,
     '',
     'Catatan penting:',
-    '- Zipball GitHub biasanya TIDAK berisi vendor/ dan public/build.',
-    '- Jika ada perubahan dependency/frontend, update bisa tidak sempurna.',
+    '- Paket ini di-build oleh GitHub Actions setiap push ke main (termasuk vendor/ + public/build).',
+    '- Jika build belum selesai, sistem akan menolak update sampai artifact siap.',
     '',
     'Lanjutkan?',
   ].join('\n')
@@ -431,8 +434,35 @@ onMounted(() => {
                     <span class="ml-2 text-gray-600 dark:text-gray-300">{{ ghCheck.latest.message }}</span>
                   </div>
                   <div v-if="ghCheck.latest.date" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ ghCheck.latest.date }}</div>
+
+                  <div v-if="ghCheck.built" class="mt-3">
+                    <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Built Artifact</div>
+                    <div class="mt-1 text-xs text-gray-600 dark:text-gray-300 space-y-1">
+                      <div>
+                        <span class="font-semibold">tag:</span>
+                        <span class="font-mono">{{ ghCheck.built.release?.tag || '-' }}</span>
+                      </div>
+                      <div v-if="ghCheck.built.meta?.short">
+                        <span class="font-semibold">sha:</span>
+                        <span class="font-mono">{{ ghCheck.built.meta.short }}</span>
+                        <span v-if="ghCheck.built.meta.built_at" class="ml-2 text-gray-500 dark:text-gray-400">{{ ghCheck.built.meta.built_at }}</span>
+                      </div>
+                      <div v-else class="text-amber-700 dark:text-amber-300">
+                        Metadata build tidak terbaca (body release tidak berisi JSON meta).
+                      </div>
+                      <div v-if="ghCheck.built.asset?.name">
+                        <span class="font-semibold">asset:</span>
+                        <span class="font-mono">{{ ghCheck.built.asset.name }}</span>
+                        <span v-if="typeof ghCheck.built.asset.size === 'number'" class="ml-2 text-gray-500 dark:text-gray-400">
+                          ({{ Math.round(ghCheck.built.asset.size / 1024 / 1024) }} MB)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <div class="text-right text-xs">
+                  <div v-if="ghCheck.build_ready === true" class="font-bold text-emerald-700 dark:text-emerald-300">BUILD READY</div>
+                  <div v-else-if="ghCheck.build_ready === false" class="font-bold text-amber-700 dark:text-amber-300">BUILD PENDING</div>
                   <div v-if="ghCheck.update_available === false" class="font-bold text-emerald-700 dark:text-emerald-300">UP TO DATE</div>
                   <div v-else-if="ghCheck.update_available === true" class="font-bold text-amber-700 dark:text-amber-300">UPDATE AVAILABLE</div>
                   <div v-else class="font-bold text-gray-500 dark:text-gray-400">UNKNOWN</div>

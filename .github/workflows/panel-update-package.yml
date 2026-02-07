@@ -1,0 +1,88 @@
+name: Build Panel Update Package (main)
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: panel-update-package-main
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer:v2
+          extensions: mbstring, pdo_mysql, zip, bcmath, curl
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install Composer deps (no-dev)
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+
+      - name: Install NPM deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend (Vite)
+        run: npm run build
+
+      - name: Create update package zip (includes vendor + public/build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f update-package.zip update-package.sha256 release-notes.txt
+
+          # Build the ZIP from repo root. Exclude runtime paths and secrets.
+          zip -r update-package.zip . \
+            -x ".git/*" ".github/*" \
+               "node_modules/*" \
+               "storage/*" "bootstrap/cache/*" \
+               "public/storage/*" "public/uploads/*" \
+               ".env" ".env.*" \
+               "scripts/deploy.config.ps1"
+
+          sha256sum update-package.zip | awk '{print $1}' > update-package.sha256
+
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          cat > release-notes.txt <<EOF
+          {"branch":"main","sha":"${GITHUB_SHA}","short":"${SHORT_SHA}","built_at":"${BUILD_AT}","run_id":"${GITHUB_RUN_ID}","run_number":"${GITHUB_RUN_NUMBER}"}
+          EOF
+
+      - name: Force-move tag to this commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag -f panel-main-latest "$GITHUB_SHA"
+          git push -f origin panel-main-latest
+
+      - name: Create or update release + upload asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view panel-main-latest >/dev/null 2>&1; then
+            gh release edit panel-main-latest --title "Panel build (main)" --notes-file release-notes.txt
+          else
+            gh release create panel-main-latest --title "Panel build (main)" --notes-file release-notes.txt
+          fi
+
+          gh release upload panel-main-latest update-package.zip update-package.sha256 --clobber
+
