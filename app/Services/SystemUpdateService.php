@@ -301,6 +301,138 @@ final class SystemUpdateService
         return $req;
     }
 
+    private function sniffFilePrefix(string $path, int $len = 64): array
+    {
+        $len = max(1, min(4096, (int) $len));
+        $h = @fopen($path, 'rb');
+        if (!is_resource($h)) {
+            return ['hex' => null, 'ascii' => null];
+        }
+
+        $raw = @fread($h, $len);
+        @fclose($h);
+
+        if (!is_string($raw) || $raw === '') {
+            return ['hex' => null, 'ascii' => null];
+        }
+
+        $hex = bin2hex(substr($raw, 0, min(16, strlen($raw))));
+        $ascii = preg_replace('/[^\\x20-\\x7E]/', '.', $raw);
+        $ascii = is_string($ascii) ? substr($ascii, 0, 120) : null;
+
+        return ['hex' => $hex, 'ascii' => $ascii];
+    }
+
+    private function looksLikeZip(string $path): bool
+    {
+        $h = @fopen($path, 'rb');
+        if (!is_resource($h)) {
+            return false;
+        }
+        $prefix = @fread($h, 2);
+        @fclose($h);
+        return is_string($prefix) && $prefix === 'PK';
+    }
+
+    private function githubDownloadAssetToFile(string $assetApiUrl, string $destPath, ?int $expectedSize = null): void
+    {
+        $this->ensureDirs();
+
+        $tmp = $destPath . '.tmp';
+        @unlink($tmp);
+
+        // 1) Hit the GitHub API asset endpoint but do NOT follow redirects automatically.
+        // Some HTTP clients strip Authorization on cross-host redirects; manual follow is more reliable.
+        $res = $this->githubRequestForDownload()
+            ->withHeaders(['Accept' => 'application/octet-stream'])
+            ->withOptions(['allow_redirects' => false])
+            ->sink($tmp)
+            ->get($assetApiUrl);
+
+        $status = (int) $res->status();
+
+        if ($status >= 300 && $status < 400) {
+            $location = trim((string) ($res->header('Location') ?? ''));
+            @unlink($tmp);
+
+            if ($location === '') {
+                throw new RuntimeException('GitHub asset download redirect missing Location header.');
+            }
+
+            $host = strtolower((string) (parse_url($location, PHP_URL_HOST) ?? ''));
+
+            $req2 = Http::timeout(600)
+                ->connectTimeout(30)
+                ->withHeaders([
+                    'User-Agent' => 'DaratLaut-SystemUpdate/1.0',
+                    'Accept' => '*/*',
+                ])
+                ->withOptions([
+                    'allow_redirects' => true,
+                ])
+                ->sink($tmp);
+
+            // Only send token to GitHub hosts (avoid leaking to arbitrary redirects).
+            if ($host === 'github.com' || $host === 'api.github.com' || str_ends_with($host, '.github.com')) {
+                $token = $this->githubToken();
+                if (is_string($token) && $token !== '') {
+                    $req2 = $req2->withToken($token);
+                }
+            }
+
+            $res2 = $req2->get($location);
+            if (!$res2->successful()) {
+                $msg = (string) ($res2->json('message') ?? $res2->body() ?? '');
+                $msg = trim($msg);
+                @unlink($tmp);
+                throw new RuntimeException('GitHub asset redirect download error (' . $res2->status() . '): ' . ($msg !== '' ? $msg : 'request failed'));
+            }
+        } elseif (!$res->successful()) {
+            $msg = (string) ($res->json('message') ?? $res->body() ?? '');
+            $msg = trim($msg);
+            @unlink($tmp);
+            throw new RuntimeException('GitHub asset API error (' . $res->status() . '): ' . ($msg !== '' ? $msg : 'request failed'));
+        }
+
+        $size = @filesize($tmp);
+        if (!is_numeric($size) || (int) $size <= 0) {
+            @unlink($tmp);
+            throw new RuntimeException('Downloaded release asset is empty.');
+        }
+
+        // If GitHub gave us an expected size, enforce it to detect partial/HTML downloads early.
+        if (is_int($expectedSize) && $expectedSize > 0 && (int) $size !== $expectedSize) {
+            $sniff = $this->sniffFilePrefix($tmp, 128);
+            @unlink($tmp);
+            throw new RuntimeException(
+                'Downloaded asset size mismatch. expected=' . $expectedSize . ' got=' . (int) $size .
+                ($sniff['hex'] ? (' prefix_hex=' . $sniff['hex']) : '') .
+                ($sniff['ascii'] ? (' prefix_ascii=' . $sniff['ascii']) : '')
+            );
+        }
+
+        // Validate ZIP signature. If we got HTML/JSON instead, show a helpful error.
+        if (!$this->looksLikeZip($tmp)) {
+            $sniff = $this->sniffFilePrefix($tmp, 256);
+            @unlink($tmp);
+            throw new RuntimeException(
+                'Downloaded release asset is not a ZIP.' .
+                ($sniff['hex'] ? (' prefix_hex=' . $sniff['hex']) : '') .
+                ($sniff['ascii'] ? (' prefix_ascii=' . $sniff['ascii']) : '')
+            );
+        }
+
+        @unlink($destPath);
+        if (!@rename($tmp, $destPath)) {
+            // Cross-device rename fallback.
+            if (!@copy($tmp, $destPath)) {
+                @unlink($tmp);
+                throw new RuntimeException('Unable to move downloaded asset into place.');
+            }
+            @unlink($tmp);
+        }
+    }
+
     private function githubParseReleaseMeta(?string $body): ?array
     {
         if (!is_string($body)) return null;
@@ -641,25 +773,12 @@ final class SystemUpdateService
 
         $this->appendLog('Downloading GitHub release asset: ' . (string) ($asset['name'] ?? '') . ' (sha ' . $short . ')');
 
-        // Download via GitHub API asset endpoint (requires octet-stream accept).
+        // Download via GitHub API asset endpoint (octet-stream), with manual redirect follow and ZIP validation.
         $assetUrl = (string) $asset['url'];
-        $res = $this->githubRequestForDownload()
-            ->withHeaders(['Accept' => 'application/octet-stream'])
-            ->sink($zipPath)
-            ->get($assetUrl);
-
-        if (!$res->successful()) {
-            @unlink($zipPath);
-            $msg = (string) ($res->json('message') ?? $res->body() ?? '');
-            $msg = trim($msg);
-            throw new RuntimeException('GitHub asset download error (' . $res->status() . '): ' . ($msg !== '' ? $msg : 'request failed'));
-        }
+        $expectedSize = is_numeric($asset['size'] ?? null) ? (int) $asset['size'] : null;
+        $this->githubDownloadAssetToFile($assetUrl, $zipPath, $expectedSize);
 
         $size = @filesize($zipPath);
-        if (!is_numeric($size) || (int) $size <= 0) {
-            @unlink($zipPath);
-            throw new RuntimeException('Downloaded release asset is empty.');
-        }
 
         $sha256 = @hash_file('sha256', $zipPath) ?: null;
         $this->appendLog("Downloaded GitHub release package: {$zipName}" . ($sha256 ? " (sha256 {$sha256})" : ''));
@@ -831,7 +950,14 @@ final class SystemUpdateService
                 $zip = new ZipArchive();
                 $open = $zip->open($zipPath);
                 if ($open !== true) {
-                    throw new RuntimeException('Unable to open ZIP (code: ' . (string) $open . ').');
+                    $size = @filesize($zipPath);
+                    $sniff = $this->sniffFilePrefix($zipPath, 256);
+                    throw new RuntimeException(
+                        'Unable to open ZIP (code: ' . (string) $open . ').' .
+                        (is_numeric($size) ? (' size=' . (int) $size) : '') .
+                        ($sniff['hex'] ? (' prefix_hex=' . $sniff['hex']) : '') .
+                        ($sniff['ascii'] ? (' prefix_ascii=' . $sniff['ascii']) : '')
+                    );
                 }
                 if (!$zip->extractTo($extractDir)) {
                     $zip->close();
