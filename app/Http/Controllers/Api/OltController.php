@@ -9,6 +9,7 @@ use App\Models\OltLog;
 use App\Services\OltService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 
 class OltController extends Controller
@@ -20,19 +21,23 @@ class OltController extends Controller
     {
         $tenantId = $request->user()->tenant_id ?? 1;
         
-        $olts = Olt::forTenant($tenantId)
-            ->withCount('onus')
-            ->orderBy('nama_olt')
-            ->get()
+        $query = Olt::forTenant($tenantId)->orderBy('nama_olt');
+
+        // Some legacy deployments may not have ONU cache table yet.
+        if (Schema::hasTable('noci_olt_onu')) {
+            $query->withCount('onus');
+        }
+
+        $olts = $query->get()
             ->map(function ($olt) {
                 return [
                     'id' => $olt->id,
                     'nama_olt' => $olt->nama_olt,
                     'host' => $olt->host,
                     'port' => $olt->port,
-                    'is_active' => $olt->is_active,
+                    'is_active' => $olt->is_active ?? true,
                     'fsp_count' => count($olt->fsp_cache ?? []),
-                    'onu_count' => $olt->onus_count,
+                    'onu_count' => (int) ($olt->onus_count ?? 0),
                     'last_sync' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
                 ];
             });
@@ -51,9 +56,27 @@ class OltController extends Controller
         $tenantId = $request->user()->tenant_id ?? 1;
         
         $totalOlts = Olt::forTenant($tenantId)->count();
-        $activeOlts = Olt::forTenant($tenantId)->active()->count();
-        $totalOnus = OltOnu::where('tenant_id', $tenantId)->count();
-        $onlineOnus = OltOnu::where('tenant_id', $tenantId)->where('status', 'online')->count();
+
+        // Legacy schema compatibility: older `noci_olts` may not have `is_active`.
+        $activeOlts = $totalOlts;
+        if (Schema::hasColumn('noci_olts', 'is_active')) {
+            $activeOlts = Olt::forTenant($tenantId)->where('is_active', true)->count();
+        }
+
+        // Legacy schema compatibility: OLT ONU cache schema differs between native and Laravel.
+        $totalOnus = 0;
+        $onlineOnus = 0;
+        if (Schema::hasTable('noci_olt_onu')) {
+            $totalOnus = OltOnu::where('tenant_id', $tenantId)->count();
+
+            if (Schema::hasColumn('noci_olt_onu', 'status')) {
+                $onlineOnus = OltOnu::where('tenant_id', $tenantId)->where('status', 'online')->count();
+            } elseif (Schema::hasColumn('noci_olt_onu', 'state')) {
+                $onlineOnus = OltOnu::where('tenant_id', $tenantId)
+                    ->whereIn('state', ['ready', 'working', 'online'])
+                    ->count();
+            }
+        }
         
         return response()->json([
             'status' => 'ok',
@@ -73,9 +96,12 @@ class OltController extends Controller
     {
         $tenantId = $request->user()->tenant_id ?? 1;
         
-        $olt = Olt::forTenant($tenantId)
-            ->withCount('onus')
-            ->findOrFail($id);
+        $query = Olt::forTenant($tenantId);
+        if (Schema::hasTable('noci_olt_onu')) {
+            $query->withCount('onus');
+        }
+
+        $olt = $query->findOrFail($id);
         
         return response()->json([
             'status' => 'ok',
@@ -87,10 +113,10 @@ class OltController extends Controller
                 'username' => $olt->username,
                 'tcont_default' => $olt->tcont_default,
                 'vlan_default' => $olt->vlan_default,
-                'is_active' => $olt->is_active,
+                'is_active' => $olt->is_active ?? true,
                 'fsp_cache' => $olt->fsp_cache ?? [],
                 'fsp_cache_at' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
-                'onu_count' => $olt->onus_count,
+                'onu_count' => (int) ($olt->onus_count ?? 0),
             ],
         ]);
     }
@@ -175,10 +201,14 @@ class OltController extends Controller
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         
         // Delete related ONUs
-        OltOnu::where('olt_id', $id)->delete();
+        if (Schema::hasTable('noci_olt_onu')) {
+            OltOnu::where('olt_id', $id)->delete();
+        }
         
         // Delete logs
-        OltLog::where('olt_id', $id)->delete();
+        if (Schema::hasTable('noci_olt_logs')) {
+            OltLog::where('olt_id', $id)->delete();
+        }
         
         $olt->delete();
 
@@ -225,7 +255,7 @@ class OltController extends Controller
         if ($olt->isFspCacheValid()) {
             return response()->json([
                 'status' => 'ok',
-                'data' => $olt->getCachedFsp(),
+                'data' => $olt->fsp_cache ?? [],
                 'cached' => true,
             ]);
         }
@@ -602,10 +632,12 @@ class OltController extends Controller
     {
         $tenantId = $request->user()->tenant_id ?? 1;
         
-        $olts = Olt::forTenant($tenantId)
-            ->active()
-            ->orderBy('nama_olt')
-            ->get(['id', 'nama_olt', 'host']);
+        $query = Olt::forTenant($tenantId)->orderBy('nama_olt');
+        if (Schema::hasColumn('noci_olts', 'is_active')) {
+            $query->where('is_active', true);
+        }
+
+        $olts = $query->get(['id', 'nama_olt', 'host']);
         
         return response()->json([
             'status' => 'ok',

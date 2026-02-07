@@ -43,21 +43,54 @@ const formData = ref({
 // API base
 const API_BASE = '/api/v1';
 
+async function fetchJson(url, options = {}) {
+    const res = await fetch(url, {
+        headers: {
+            'Accept': 'application/json',
+            ...(options.headers || {}),
+        },
+        ...options,
+    });
+
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    const text = await res.text();
+
+    let data = null;
+    if (contentType.includes('application/json')) {
+        try {
+            data = JSON.parse(text);
+        } catch {
+            // ignore
+        }
+    }
+
+    if (!res.ok) {
+        const msg = (data && (data.message || data.error)) ? (data.message || data.error) : `HTTP ${res.status}`;
+        throw new Error(msg);
+    }
+
+    if (data === null) {
+        throw new Error('Non-JSON response');
+    }
+
+    return data;
+}
+
 // Load OLTs
 async function loadOlts() {
     loading.value = true;
     try {
-        const [oltsRes, statsRes] = await Promise.all([
-            fetch(`${API_BASE}/olts`),
-            fetch(`${API_BASE}/olts/stats`),
-        ]);
-        const oltsData = await oltsRes.json();
-        const statsData = await statsRes.json();
-        
+        const oltsData = await fetchJson(`${API_BASE}/olts`);
         if (oltsData.status === 'ok') olts.value = oltsData.data;
+    } catch (e) {
+        console.error('Failed to load OLT list:', e);
+    }
+
+    try {
+        const statsData = await fetchJson(`${API_BASE}/olts/stats`);
         if (statsData.status === 'ok') stats.value = statsData.data;
     } catch (e) {
-        console.error('Failed to load OLTs:', e);
+        console.error('Failed to load OLT stats:', e);
     }
     loading.value = false;
 }

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Schema;
 
 class OltOnu extends Model
 {
@@ -34,6 +35,15 @@ class OltOnu extends Model
     // Scopes
     public function scopeForTenant($query, int $tenantId)
     {
+        static $hasTenantId = null;
+        if ($hasTenantId === null) {
+            $hasTenantId = Schema::hasColumn($query->getModel()->getTable(), 'tenant_id');
+        }
+
+        if (!$hasTenantId) {
+            return $query;
+        }
+
         return $query->where('tenant_id', $tenantId);
     }
 

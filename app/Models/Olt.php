@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Schema;
 
 class Olt extends Model
 {
@@ -40,11 +41,31 @@ class Olt extends Model
     // Scopes
     public function scopeForTenant($query, int $tenantId)
     {
+        static $hasTenantId = null;
+        if ($hasTenantId === null) {
+            $hasTenantId = Schema::hasColumn($query->getModel()->getTable(), 'tenant_id');
+        }
+
+        if (!$hasTenantId) {
+            // Legacy schema may not have tenant_id yet (single-tenant mode).
+            return $query;
+        }
+
         return $query->where('tenant_id', $tenantId);
     }
 
     public function scopeActive($query)
     {
+        static $hasIsActive = null;
+        if ($hasIsActive === null) {
+            $hasIsActive = Schema::hasColumn($query->getModel()->getTable(), 'is_active');
+        }
+
+        if (!$hasIsActive) {
+            // Treat all OLTs as active when the column doesn't exist yet.
+            return $query;
+        }
+
         return $query->where('is_active', true);
     }
 
@@ -71,6 +92,17 @@ class Olt extends Model
 
     public function updateFspCache(array $fspList): void
     {
+        static $hasColumns = null;
+        if ($hasColumns === null) {
+            $table = $this->getTable();
+            $hasColumns = Schema::hasColumn($table, 'fsp_cache') && Schema::hasColumn($table, 'fsp_cache_at');
+        }
+
+        if (!$hasColumns) {
+            // Legacy schema may not have cache columns yet; keep OLT flow functional without caching.
+            return;
+        }
+
         $this->update([
             'fsp_cache' => $fspList,
             'fsp_cache_at' => now(),
@@ -79,10 +111,18 @@ class Olt extends Model
 
     public function clearCache(): void
     {
-        $this->update([
-            'fsp_cache' => null,
-            'fsp_cache_at' => null,
-        ]);
+        static $hasColumns = null;
+        if ($hasColumns === null) {
+            $table = $this->getTable();
+            $hasColumns = Schema::hasColumn($table, 'fsp_cache') && Schema::hasColumn($table, 'fsp_cache_at');
+        }
+
+        if ($hasColumns) {
+            $this->update([
+                'fsp_cache' => null,
+                'fsp_cache_at' => null,
+            ]);
+        }
         $this->onus()->delete();
     }
 }
