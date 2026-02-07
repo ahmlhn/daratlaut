@@ -15,7 +15,9 @@ return [
     |
     */
 
-    'default' => env('CACHE_STORE', 'database'),
+    // Default to `file` so fresh installs on shared hosting don't require DB cache tables.
+    // Still configurable via CACHE_STORE / legacy CACHE_DRIVER env vars.
+    'default' => env('CACHE_STORE', env('CACHE_DRIVER', 'file')),
 
     /*
     |--------------------------------------------------------------------------

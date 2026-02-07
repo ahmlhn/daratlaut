@@ -15,6 +15,7 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 class ChatController extends Controller
 {
     private const CHAT_HISTORY_CACHE_TTL_SECONDS = 20;
+    private const CONTACTS_CACHE_TTL_SECONDS = 5;
     private static array $colCache = [];
     private static array $autoEndLastRun = [];
     private ?string $dbNowCache = null;
@@ -202,6 +203,21 @@ class ChatController extends Controller
         $lastSync = trim((string) $request->query('last_sync', ''));
         $limit = 100;
 
+        // Cache the "full contacts list" response briefly. This reduces load on shared hosting where
+        // contacts are polled frequently and the list query does a join + aggregates.
+        $contactsCacheKey = '';
+        if ($search === '' && $lastSync === '') {
+            $contactsCacheKey = 'chat:v1:contacts_full:' . $tenantId;
+            try {
+                $cached = Cache::get($contactsCacheKey);
+                if (is_array($cached)) {
+                    return response()->json($cached);
+                }
+            } catch (\Throwable) {
+                // Ignore cache backend failures and fall back to DB path.
+            }
+        }
+
         $hasTenant = $this->hasCustomerColumn('tenant_id');
         $base = DB::table('noci_customers as c');
         if ($hasTenant) {
@@ -378,12 +394,22 @@ class ChatController extends Controller
             ];
         }
 
-        return response()->json([
+        $payload = [
             'status' => 'success',
             'server_time' => $serverTime !== '' ? $serverTime : ($lastSync !== '' ? $lastSync : $this->nowDb()),
             'data' => $data,
             'is_search' => $search !== '',
-        ]);
+        ];
+
+        if ($contactsCacheKey !== '') {
+            try {
+                Cache::put($contactsCacheKey, $payload, now()->addSeconds(self::CONTACTS_CACHE_TTL_SECONDS));
+            } catch (\Throwable) {
+                // ignore
+            }
+        }
+
+        return response()->json($payload);
     }
 
     /**

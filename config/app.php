@@ -120,7 +120,8 @@ return [
 
     'maintenance' => [
         'driver' => env('APP_MAINTENANCE_DRIVER', 'file'),
-        'store' => env('APP_MAINTENANCE_STORE', 'database'),
+        // Default to file so maintenance mode works without DB cache tables.
+        'store' => env('APP_MAINTENANCE_STORE', 'file'),
     ],
 
 ];

@@ -125,16 +125,41 @@ final class HostingSetup
 
         $this->setIfEmpty('APP_ENV', 'production');
         $this->setIfEmpty('APP_DEBUG', 'false');
-        $this->setIfEmpty('SESSION_DRIVER', 'file');
-        $this->setIfEmpty('CACHE_STORE', 'file');
-        $this->setIfEmpty('QUEUE_CONNECTION', 'sync');
-        $this->setIfEmpty('APP_MAINTENANCE_STORE', 'file');
+
+        // Shared-hosting safe defaults.
+        // If `.env` was created from `.env.example`, these are often set to "database"
+        // which fails on many cPanel setups (missing sessions/cache/jobs tables).
+        $this->forceIfIn('SESSION_DRIVER', ['', 'database'], 'file');
+        $this->forceIfIn('CACHE_STORE', ['', 'database'], 'file');
+        $this->forceIfIn('QUEUE_CONNECTION', ['', 'database'], 'sync');
+        $this->forceIfIn('APP_MAINTENANCE_STORE', ['', 'database'], 'file');
+
+        // This project uses MySQL. Avoid SQLite file path failures when `.env` is still the default template.
+        $this->forceIfIn('DB_CONNECTION', ['', 'sqlite'], 'mysql');
 
         $appKey = trim((string) $this->getEnvValue('APP_KEY'));
         if ($appKey === '') {
             $generatedKey = 'base64:' . base64_encode(random_bytes(32));
             $this->setEnvValue('APP_KEY', $generatedKey);
             $this->printLine('Generated missing APP_KEY.');
+        }
+    }
+
+    private function forceIfIn(string $key, array $badValues, string $value): void
+    {
+        $currentRaw = $this->getEnvValue($key);
+        $current = strtolower(trim((string) $currentRaw));
+
+        foreach ($badValues as $bad) {
+            $badNorm = strtolower(trim((string) $bad));
+            if ($badNorm === '' && ($currentRaw === null || trim((string) $currentRaw) === '')) {
+                $this->setEnvValue($key, $value);
+                return;
+            }
+            if ($badNorm !== '' && $current === $badNorm) {
+                $this->setEnvValue($key, $value);
+                return;
+            }
         }
     }
 
@@ -206,6 +231,11 @@ final class HostingSetup
             return $this->laravelKernel;
         }
 
+        // If the deployment previously cached config/routes with bad env values (e.g. sqlite),
+        // artisan commands like `optimize:clear` can fail before they get a chance to clear them.
+        // Clear the cached bootstrap files first using plain file ops (works even on strict hosting).
+        $this->preClearBootstrapCache();
+
         $autoloadPath = $this->rootPath . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'autoload.php';
         if (!is_file($autoloadPath)) {
             throw new RuntimeException('Missing `vendor/autoload.php`. Run `composer install` first.');
@@ -230,6 +260,31 @@ final class HostingSetup
 
         $this->laravelKernel = $kernel;
         return $kernel;
+    }
+
+    private function preClearBootstrapCache(): void
+    {
+        $cacheDir = $this->rootPath . DIRECTORY_SEPARATOR . 'bootstrap' . DIRECTORY_SEPARATOR . 'cache';
+        if (!is_dir($cacheDir)) {
+            return;
+        }
+
+        $paths = [
+            $cacheDir . DIRECTORY_SEPARATOR . 'config.php',
+            $cacheDir . DIRECTORY_SEPARATOR . 'packages.php',
+            $cacheDir . DIRECTORY_SEPARATOR . 'services.php',
+            $cacheDir . DIRECTORY_SEPARATOR . 'events.php',
+            // Laravel 11 route cache filename:
+            $cacheDir . DIRECTORY_SEPARATOR . 'routes-v7.php',
+            // Older variants (safe to attempt):
+            $cacheDir . DIRECTORY_SEPARATOR . 'routes.php',
+        ];
+
+        foreach ($paths as $path) {
+            if (is_file($path)) {
+                @unlink($path);
+            }
+        }
     }
 
     private function syncStoragePublic(): bool

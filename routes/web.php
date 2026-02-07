@@ -21,6 +21,7 @@ use App\Http\Controllers\Web\PlanController;
 use App\Http\Controllers\Web\PopController;
 use App\Http\Controllers\Web\ReportController;
 use App\Http\Controllers\Web\SettingsController;
+use App\Http\Controllers\Web\SystemUpdateController;
 use App\Http\Controllers\Web\TeamController;
 use App\Http\Controllers\Web\TeknisiController;
 use Illuminate\Support\Facades\Route;
@@ -138,6 +139,15 @@ Route::middleware(['auth', 'resolve.tenant'])->group(function () {
     
     // Settings
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
+
+    // System Update (ZIP-based; no shell access required)
+    Route::get('/system-update', [SystemUpdateController::class, 'index'])->name('system_update.index');
+    Route::get('/system-update/status', [SystemUpdateController::class, 'status'])->name('system_update.status');
+    Route::post('/system-update/upload', [SystemUpdateController::class, 'upload'])->name('system_update.upload');
+    Route::post('/system-update/download', [SystemUpdateController::class, 'download'])->name('system_update.download');
+    Route::post('/system-update/start', [SystemUpdateController::class, 'start'])->name('system_update.start');
+    Route::post('/system-update/step', [SystemUpdateController::class, 'step'])->name('system_update.step');
+    Route::post('/system-update/reset', [SystemUpdateController::class, 'reset'])->name('system_update.reset');
     
     // OLT Management
     Route::get('/olts', [OltController::class, 'index'])->name('olts.index');
