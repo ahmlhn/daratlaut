@@ -14,6 +14,12 @@
 
     # Git branch (used only when DeployMode = "git")
     Branch = "main"
+    # GitHub/remote repo URL used for first-time clone on server (git mode)
+    RepoUrl = "https://github.com/USERNAME/REPO.git"
+    # If true and remote folder is not a git repo, auto-clone RepoUrl when folder is empty
+    GitCloneIfMissing = $true
+    # If true and remote folder is non-empty but not a git repo, initialize git in-place and attach RepoUrl
+    GitAdoptExistingNonRepo = $false
 
     # Optional SSH key path (leave empty to use default ssh-agent/key)
     SshKeyPath = ""

@@ -56,13 +56,23 @@ function Escape-DoubleQuotedShell {
     return $Value.Replace('\', '\\').Replace('"', '\"')
 }
 
+function Escape-SingleQuotedShell {
+    param([string]$Value)
+    return $Value.Replace("'", "'""'""'")
+}
+
 function Build-PostDeployScript {
     param([hashtable]$Config)
 
     $lines = @()
     $runEnvPreflight = [bool]$Config.RemoteEnvPreflight
+    $repoUrl = [string]$Config.RepoUrl
+    $repoUrlEscaped = Escape-SingleQuotedShell $repoUrl
 
     if ([string]$Config.DeployMode -eq "git") {
+        if (-not [string]::IsNullOrWhiteSpace($repoUrl)) {
+            $lines += "if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin '$repoUrlEscaped'; else git remote add origin '$repoUrlEscaped'; fi"
+        }
         $lines += "git fetch origin '$($Config.Branch)'"
         $lines += "git checkout '$($Config.Branch)'"
         $lines += "git pull --ff-only origin '$($Config.Branch)'"
@@ -88,6 +98,57 @@ function Build-PostDeployScript {
     return $lines
 }
 
+function Build-GitBootstrapScript {
+    param([hashtable]$Config)
+
+    $remotePathEscaped = Escape-DoubleQuotedShell (Resolve-RemotePath ([string]$Config.RemotePath))
+    $branchEscaped = Escape-SingleQuotedShell ([string]$Config.Branch)
+    $repoUrl = [string]$Config.RepoUrl
+    $repoUrlEscaped = Escape-SingleQuotedShell $repoUrl
+    $canCloneIfMissing = (-not [string]::IsNullOrWhiteSpace($repoUrl)) -and [bool]$Config.GitCloneIfMissing
+    $canAdoptExistingNonRepo = (-not [string]::IsNullOrWhiteSpace($repoUrl)) -and [bool]$Config.GitAdoptExistingNonRepo
+
+    $lines = @(
+        "remote_path=""$remotePathEscaped""",
+        'mkdir -p "$(dirname "$remote_path")"',
+        'if [ ! -d "$remote_path/.git" ]; then'
+    )
+
+    if ($canCloneIfMissing) {
+        $lines += '  if [ -n "$(ls -A "$remote_path" 2>/dev/null)" ]; then'
+        if ($canAdoptExistingNonRepo) {
+            $lines += '    echo "Remote path non-empty and not a git repo. Adopting existing folder into git..."'
+            $lines += '    cd "$remote_path"'
+            $lines += '    git init'
+            $lines += "    if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin '$repoUrlEscaped'; else git remote add origin '$repoUrlEscaped'; fi"
+            $lines += "    git fetch origin '$branchEscaped'"
+            $lines += "    if ! git checkout -B '$branchEscaped' ""origin/$branchEscaped""; then"
+            $lines += '      echo "Checkout failed due to existing untracked files. Running one-time cleanup (preserve .env/.env.* and uploads)..."'
+            $lines += '      git clean -fd -e .env -e .env.* -e public/uploads -e uploads'
+            $lines += "      git checkout -B '$branchEscaped' ""origin/$branchEscaped"""
+            $lines += '    fi'
+            $lines += '    cd - >/dev/null'
+        } else {
+            $lines += '    echo "Remote path exists and is not a git repo. Refusing auto-clone into non-empty directory." >&2'
+            $lines += '    echo "Set GitAdoptExistingNonRepo=true, or clean folder first, or use DeployMode=''upload'' once." >&2'
+            $lines += '    exit 11'
+        }
+        $lines += '  fi'
+        $lines += '  if [ -z "$(ls -A "$remote_path" 2>/dev/null)" ]; then'
+        $lines += "    git clone --branch '$branchEscaped' --single-branch '$repoUrlEscaped' ""`$remote_path"""
+        $lines += '  fi'
+    } elseif (-not [string]::IsNullOrWhiteSpace($repoUrl)) {
+        $lines += '  echo "Remote path is not a git repo and GitCloneIfMissing=false." >&2'
+        $lines += '  exit 10'
+    } else {
+        $lines += '  echo "Remote path is not a git repo and RepoUrl is empty in deploy config." >&2'
+        $lines += '  exit 10'
+    }
+
+    $lines += 'fi'
+    return $lines
+}
+
 function Build-RemoteScript {
     param(
         [hashtable]$Config,
@@ -97,8 +158,7 @@ function Build-RemoteScript {
 
     $remotePath = Escape-DoubleQuotedShell (Resolve-RemotePath ([string]$Config.RemotePath))
     $lines = @(
-        "set -e",
-        "set -x"
+        "set -e"
     )
     $lines += $BeforeCd
     $lines += "cd ""$remotePath"""
@@ -158,8 +218,33 @@ function Invoke-RemoteScript {
         [string[]]$SshArgs
     )
 
-    $output = $RemoteScript | & ssh @SshArgs 2>&1
-    $exitCode = $LASTEXITCODE
+    $prevEap = $ErrorActionPreference
+    $hasNativeEap = $null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
+    if ($hasNativeEap) {
+        $prevNativeEap = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    $ErrorActionPreference = "Continue"
+
+    try {
+        $rawOutput = $RemoteScript | & ssh @SshArgs 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+        if ($hasNativeEap) {
+            $PSNativeCommandUseErrorActionPreference = $prevNativeEap
+        }
+    }
+
+    $output = @(
+        $rawOutput | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                $_.ToString()
+            } else {
+                "$_"
+            }
+        }
+    )
 
     foreach ($line in @($output)) {
         Write-Host $line
@@ -203,7 +288,7 @@ function Run-GitDeploy {
         Write-Info "Skip push enabled."
     }
 
-    $remoteScript = Build-RemoteScript -Config $Config -BeforeCd @() -AfterCd (Build-PostDeployScript -Config $Config)
+    $remoteScript = Build-RemoteScript -Config $Config -BeforeCd (Build-GitBootstrapScript -Config $Config) -AfterCd (Build-PostDeployScript -Config $Config)
     $sshArgs = Get-SshArgs -Config $Config
     $sshArgs += (Get-RemoteExecCommand -Config $Config)
 
@@ -319,6 +404,9 @@ if ($null -eq $config -or $config.GetType().Name -ne "Hashtable") {
 $defaults = @{
     DeployMode = "upload"   # upload | git
     Branch = "main"
+    RepoUrl = ""
+    GitCloneIfMissing = $true
+    GitAdoptExistingNonRepo = $false
     Port = 22
     RemoteComposerInstall = $true
     RemoteHostingSetup = $true
@@ -368,6 +456,12 @@ Write-Info "Target: $($config.User)@$($config.Host):$($config.RemotePath)"
 if ($mode -eq "git") {
     if (-not $config.ContainsKey("Branch") -or [string]::IsNullOrWhiteSpace([string]$config.Branch)) {
         Fail "Missing required config key for git mode: Branch"
+    }
+    if (-not $config.ContainsKey("RepoUrl") -or [string]::IsNullOrWhiteSpace([string]$config.RepoUrl)) {
+        Fail "Missing required config key for git mode: RepoUrl"
+    }
+    if ([string]$config.RepoUrl -match "x-access-token:@") {
+        Fail "RepoUrl contains empty token. Set GITHUB_TOKEN in your terminal first."
     }
     Run-GitDeploy -Config $config -ProjectRoot $projectRoot -SkipPush:$SkipPush -DryRun:$DryRun
 } else {

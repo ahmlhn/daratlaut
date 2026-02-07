@@ -18,6 +18,8 @@ final class HostingSetup
     /** @var string[] */
     private array $envLines = [];
     private bool $envChanged = false;
+    /** @var object|null */
+    private $laravelKernel = null;
 
     public function __construct(string $rootPath, bool $envOnly = false)
     {
@@ -156,14 +158,78 @@ final class HostingSetup
 
     private function runCommand(string $command): int
     {
-        $this->printLine("> {$command}");
+        // Many shared hostings disable process execution functions (passthru/exec/shell_exec/system).
+        // Run artisan tasks internally via the Laravel Console Kernel so setup works even with strict
+        // `disable_functions` policies.
+        $command = trim($command);
+        if (preg_match('/^php\s+artisan\s+(.+)$/', $command, $matches) === 1) {
+            $artisanCommand = trim($matches[1]);
+
+            // Special-case the only command in this script that uses options.
+            if ($artisanCommand === 'migrate --force') {
+                return $this->runArtisan('migrate', ['--force' => true]);
+            }
+
+            return $this->runArtisan($artisanCommand);
+        }
+
+        throw new RuntimeException("Unsupported command in hosting-setup: {$command}");
+    }
+
+    private function runArtisan(string $command, array $parameters = []): int
+    {
+        $this->printLine("> php artisan {$command}");
+
         $cwd = getcwd();
         chdir($this->rootPath);
-        passthru($command, $exitCode);
-        if ($cwd !== false) {
-            chdir($cwd);
+
+        try {
+            $kernel = $this->getLaravelKernel();
+
+            // If symfony/console isn't available for some reason, Laravel will still run the command.
+            $output = null;
+            if (class_exists('Symfony\\Component\\Console\\Output\\ConsoleOutput')) {
+                $output = new Symfony\Component\Console\Output\ConsoleOutput();
+            }
+
+            return (int) $kernel->call($command, $parameters, $output);
+        } finally {
+            if ($cwd !== false) {
+                chdir($cwd);
+            }
         }
-        return (int) $exitCode;
+    }
+
+    private function getLaravelKernel(): object
+    {
+        if (is_object($this->laravelKernel)) {
+            return $this->laravelKernel;
+        }
+
+        $autoloadPath = $this->rootPath . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'autoload.php';
+        if (!is_file($autoloadPath)) {
+            throw new RuntimeException('Missing `vendor/autoload.php`. Run `composer install` first.');
+        }
+
+        require_once $autoloadPath;
+
+        $bootstrapPath = $this->rootPath . DIRECTORY_SEPARATOR . 'bootstrap' . DIRECTORY_SEPARATOR . 'app.php';
+        if (!is_file($bootstrapPath)) {
+            throw new RuntimeException('Missing `bootstrap/app.php`.');
+        }
+
+        $app = require $bootstrapPath;
+        if (!is_object($app)) {
+            throw new RuntimeException('Laravel bootstrap did not return an application instance.');
+        }
+
+        $kernel = $app->make('Illuminate\\Contracts\\Console\\Kernel');
+        if (!is_object($kernel)) {
+            throw new RuntimeException('Unable to resolve Laravel Console Kernel.');
+        }
+
+        $this->laravelKernel = $kernel;
+        return $kernel;
     }
 
     private function syncStoragePublic(): bool
