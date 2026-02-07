@@ -1073,6 +1073,7 @@ final class SystemUpdateService
     {
         return [
             'optimize:clear',
+            'package:discover',
             'migrate --force',
             'config:cache',
             'route:cache',

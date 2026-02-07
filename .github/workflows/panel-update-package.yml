@@ -34,7 +34,8 @@ jobs:
           cache: npm
 
       - name: Install Composer deps (no-dev)
-        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+        # We package vendor/ as an artifact; no need to run Laravel composer scripts on CI.
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress --no-scripts
 
       - name: Install NPM deps
         run: npm ci --no-audit --no-fund
