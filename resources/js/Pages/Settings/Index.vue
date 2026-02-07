@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted, computed } from 'vue';
 import { Head } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
+import SystemUpdatePanel from '@/Pages/Settings/Partials/SystemUpdatePanel.vue';
 
 const API = '/api/v1/settings';
 const loading = ref(true);
@@ -48,6 +49,7 @@ const sections = [
     { id: 'fee', name: 'Fee Teknisi', icon: 'currency' },
     { id: 'public_url', name: 'Link Isolir', icon: 'link' },
     { id: 'logs', name: 'Log Notifikasi', icon: 'clock' },
+    { id: 'system_update', name: 'Update Sistem', icon: 'refresh' },
 ];
 
 // ===== Fetch helpers =====
@@ -735,6 +737,11 @@ onMounted(loadAll);
                                 </table>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- ===== SYSTEM UPDATE ===== -->
+                    <div v-if="activeSection === 'system_update'">
+                        <SystemUpdatePanel embedded />
                     </div>
 
                 </div>
