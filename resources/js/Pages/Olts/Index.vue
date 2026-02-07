@@ -106,8 +106,7 @@ async function selectOlt(olt) {
 // Load FSP list
 async function loadFspList(oltId) {
     try {
-        const res = await fetch(`${API_BASE}/olts/${oltId}/fsp`);
-        const data = await res.json();
+        const data = await fetchJson(`${API_BASE}/olts/${oltId}/fsp`);
         if (data.status === 'ok') {
             fspList.value = data.data;
             if (fspList.value.length > 0) {
@@ -126,13 +125,18 @@ async function loadOnuList() {
     
     loadingOnu.value = true;
     try {
-        const res = await fetch(`${API_BASE}/olts/${selectedOlt.value.id}/registered?fsp=${selectedFsp.value}`);
-        const data = await res.json();
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOlt.value.id}/registered?fsp=${selectedFsp.value}`);
         if (data.status === 'ok') {
             onuList.value = data.data;
         }
     } catch (e) {
         console.error('Failed to load ONUs:', e);
+        // Fall back to cache to keep UI usable on hosting (telnet may be blocked).
+        try {
+            await loadFromCache();
+        } catch {
+            // ignore
+        }
     }
     loadingOnu.value = false;
 }
@@ -147,8 +151,7 @@ async function loadFromCache() {
         if (selectedFsp.value) params.append('fsp', selectedFsp.value);
         if (searchQuery.value) params.append('search', searchQuery.value);
         
-        const res = await fetch(`${API_BASE}/olts/${selectedOlt.value.id}/cache?${params}`);
-        const data = await res.json();
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOlt.value.id}/cache?${params}`);
         if (data.status === 'ok') {
             onuList.value = data.data;
         }
@@ -164,8 +167,7 @@ async function scanUnconfigured() {
     
     loading.value = true;
     try {
-        const res = await fetch(`${API_BASE}/olts/${selectedOlt.value.id}/scan-uncfg`);
-        const data = await res.json();
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOlt.value.id}/scan-uncfg`);
         if (data.status === 'ok') {
             unconfiguredOnus.value = data.data;
             if (data.data.length === 0) {
@@ -183,8 +185,7 @@ async function scanUnconfigured() {
 // Test connection
 async function testConnection(olt) {
     try {
-        const res = await fetch(`${API_BASE}/olts/${olt.id}/test-connection`, { method: 'POST' });
-        const data = await res.json();
+        const data = await fetchJson(`${API_BASE}/olts/${olt.id}/test-connection`, { method: 'POST' });
         alert(data.message || (data.status === 'ok' ? 'Koneksi berhasil!' : 'Koneksi gagal'));
     } catch (e) {
         alert('Error: ' + e.message);
@@ -198,8 +199,7 @@ async function syncAll() {
     
     loading.value = true;
     try {
-        const res = await fetch(`${API_BASE}/olts/${selectedOlt.value.id}/sync-all`, { method: 'POST' });
-        const data = await res.json();
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOlt.value.id}/sync-all`, { method: 'POST' });
         alert(data.message || 'Sync selesai');
         await loadFromCache();
     } catch (e) {
@@ -243,12 +243,11 @@ async function saveOlt() {
     const method = editingOlt.value ? 'PUT' : 'POST';
     
     try {
-        const res = await fetch(url, {
+        const data = await fetchJson(url, {
             method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(formData.value),
         });
-        const data = await res.json();
         
         if (data.status === 'ok') {
             showOltModal.value = false;
@@ -266,8 +265,7 @@ async function deleteOlt(olt) {
     if (!confirm(`Hapus OLT "${olt.nama_olt}"? Semua data ONU akan ikut terhapus.`)) return;
     
     try {
-        const res = await fetch(`${API_BASE}/olts/${olt.id}`, { method: 'DELETE' });
-        const data = await res.json();
+        const data = await fetchJson(`${API_BASE}/olts/${olt.id}`, { method: 'DELETE' });
         
         if (data.status === 'ok') {
             await loadOlts();
@@ -310,12 +308,11 @@ async function doRegisterOnu() {
     
     loading.value = true;
     try {
-        const res = await fetch(`${API_BASE}/olts/${selectedOlt.value.id}/register-onu`, {
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOlt.value.id}/register-onu`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(registerOnu.value),
         });
-        const data = await res.json();
         
         if (data.status === 'ok') {
             showRegisterModal.value = false;
@@ -342,8 +339,7 @@ async function viewOnuDetail(onu) {
             fsp: onu.fsp,
             onu_id: onu.onu_id,
         });
-        const res = await fetch(`${API_BASE}/olts/${selectedOlt.value.id}/onu-detail?${params}`);
-        const data = await res.json();
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOlt.value.id}/onu-detail?${params}`);
         
         if (data.status === 'ok') {
             editingOnu.value = { ...onu, ...data.data };
@@ -363,7 +359,7 @@ async function updateOnuName() {
     
     loading.value = true;
     try {
-        const res = await fetch(`${API_BASE}/olts/${selectedOlt.value.id}/update-onu-name`, {
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOlt.value.id}/update-onu-name`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -372,7 +368,6 @@ async function updateOnuName() {
                 name: editingOnu.value.name,
             }),
         });
-        const data = await res.json();
         
         if (data.status === 'ok') {
             showOnuModal.value = false;
@@ -391,7 +386,7 @@ async function restartOnu(onu) {
     if (!confirm(`Restart ONU ${onu.fsp}:${onu.onu_id}?`)) return;
     
     try {
-        const res = await fetch(`${API_BASE}/olts/${selectedOlt.value.id}/restart-onu`, {
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOlt.value.id}/restart-onu`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -399,7 +394,6 @@ async function restartOnu(onu) {
                 onu_id: onu.onu_id,
             }),
         });
-        const data = await res.json();
         alert(data.message || 'ONU sedang di-restart');
     } catch (e) {
         alert('Error: ' + e.message);
@@ -412,7 +406,7 @@ async function deleteOnu(onu) {
     
     loading.value = true;
     try {
-        const res = await fetch(`${API_BASE}/olts/${selectedOlt.value.id}/delete-onu`, {
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOlt.value.id}/delete-onu`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -420,7 +414,6 @@ async function deleteOnu(onu) {
                 onu_id: onu.onu_id,
             }),
         });
-        const data = await res.json();
         
         if (data.status === 'ok') {
             await loadOnuList();
@@ -435,7 +428,13 @@ async function deleteOnu(onu) {
 
 // Status badge color
 function statusColor(status) {
-    return status === 'online' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+    if (status === 'online') return 'bg-green-100 text-green-800';
+    if (status === 'offline') return 'bg-red-100 text-red-800';
+    return 'bg-gray-100 text-gray-800';
+}
+
+function formatRx(rx) {
+    return rx === null || rx === undefined || rx === '' ? '-' : rx;
 }
 
 // Init
@@ -634,10 +633,10 @@ onMounted(() => {
                                                 class="px-2 py-0.5 rounded text-xs font-medium"
                                                 :class="statusColor(onu.status)"
                                             >
-                                                {{ onu.status }}
+                                                {{ onu.status || '-' }}
                                             </span>
                                         </td>
-                                        <td class="px-3 py-2">{{ onu.rx ?? '-' }}</td>
+                                        <td class="px-3 py-2">{{ formatRx(onu.rx) }}</td>
                                         <td class="px-3 py-2">
                                             <div class="flex gap-1">
                                                 <button 

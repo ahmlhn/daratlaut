@@ -14,6 +14,71 @@ use RuntimeException;
 
 class OltController extends Controller
 {
+    private function onuCacheSnColumn(): string
+    {
+        static $snCol = null;
+        if ($snCol !== null) {
+            return $snCol;
+        }
+
+        $table = (new OltOnu())->getTable();
+        if (Schema::hasColumn($table, 'sn')) {
+            $snCol = 'sn';
+        } elseif (Schema::hasColumn($table, 'serial_number')) {
+            $snCol = 'serial_number';
+        } else {
+            // Fall back; queries may still fail, but this avoids null handling everywhere.
+            $snCol = 'sn';
+        }
+
+        return $snCol;
+    }
+
+    private function formatOnuCacheRow(OltOnu $onu): array
+    {
+        $fsp = (string) ($onu->fsp ?? '');
+        $onuId = (int) ($onu->onu_id ?? 0);
+        $sn = (string) ($onu->sn ?? $onu->getAttribute('serial_number') ?? '');
+        $name = (string) ($onu->onu_name ?? $onu->getAttribute('name') ?? '');
+        $onlineDuration = (string) ($onu->online_duration ?? '');
+        $vlan = (int) ($onu->vlan ?? 0);
+
+        $status = 'offline';
+        $dbStatus = $onu->getAttribute('status');
+        if (is_string($dbStatus) && $dbStatus !== '') {
+            $status = $dbStatus;
+        } else {
+            $state = $onu->getAttribute('state');
+            if (is_string($state) && $state !== '') {
+                $state = strtolower($state);
+                if (in_array($state, ['ready', 'working', 'online'], true)) {
+                    $status = 'online';
+                }
+            }
+        }
+
+        $rx = null;
+        if ($onu->getAttribute('rx') !== null && $onu->getAttribute('rx') !== '') {
+            $rx = $onu->getAttribute('rx');
+        } elseif ($onu->getAttribute('rx_power') !== null && $onu->getAttribute('rx_power') !== '') {
+            $rx = (float) $onu->getAttribute('rx_power');
+        }
+
+        return [
+            'fsp' => $fsp,
+            'onu_id' => $onuId,
+            'interface' => ($fsp !== '' && $onuId > 0) ? "gpon-onu_{$fsp}:{$onuId}" : '',
+            'fsp_onu' => ($fsp !== '' && $onuId > 0) ? "{$fsp}:{$onuId}" : '',
+            'sn' => $sn,
+            'state' => '',
+            'status' => $status,
+            'rx' => $rx,
+            'name' => $name,
+            'online_duration' => $onlineDuration,
+            'vlan' => $vlan,
+        ];
+    }
+
     /**
      * Get all OLT devices with stats
      */
@@ -30,13 +95,14 @@ class OltController extends Controller
 
         $olts = $query->get()
             ->map(function ($olt) {
+                $fspCache = $olt->fsp_cache;
                 return [
                     'id' => $olt->id,
                     'nama_olt' => $olt->nama_olt,
                     'host' => $olt->host,
                     'port' => $olt->port,
                     'is_active' => $olt->is_active ?? true,
-                    'fsp_count' => count($olt->fsp_cache ?? []),
+                    'fsp_count' => is_array($fspCache) ? count($fspCache) : 0,
                     'onu_count' => (int) ($olt->onus_count ?? 0),
                     'last_sync' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
                 ];
@@ -147,7 +213,6 @@ class OltController extends Controller
             'password' => $request->password,
             'tcont_default' => $request->tcont_default ?? 'pppoe',
             'vlan_default' => $request->vlan_default ?? 200,
-            'is_active' => true,
         ]);
 
         return response()->json([
@@ -176,7 +241,11 @@ class OltController extends Controller
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         
-        $data = $request->only(['nama_olt', 'host', 'port', 'username', 'tcont_default', 'vlan_default', 'is_active']);
+        $data = $request->only(['nama_olt', 'host', 'port', 'username', 'tcont_default', 'vlan_default']);
+
+        if (Schema::hasColumn('noci_olts', 'is_active') && $request->has('is_active')) {
+            $data['is_active'] = (bool) $request->is_active;
+        }
         
         // Only update password if provided
         if ($request->filled('password')) {
@@ -202,12 +271,12 @@ class OltController extends Controller
         
         // Delete related ONUs
         if (Schema::hasTable('noci_olt_onu')) {
-            OltOnu::where('olt_id', $id)->delete();
+            OltOnu::forTenant($tenantId)->where('olt_id', $id)->delete();
         }
         
         // Delete logs
         if (Schema::hasTable('noci_olt_logs')) {
-            OltLog::where('olt_id', $id)->delete();
+            OltLog::forTenant($tenantId)->where('olt_id', $id)->delete();
         }
         
         $olt->delete();
@@ -251,12 +320,14 @@ class OltController extends Controller
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         
-        // Check cache first
-        if ($olt->isFspCacheValid()) {
+        // Check cache first (fresh)
+        $cacheList = is_array($olt->fsp_cache) ? $olt->fsp_cache : [];
+        if ($olt->isFspCacheValid() && !empty($cacheList)) {
             return response()->json([
                 'status' => 'ok',
-                'data' => $olt->fsp_cache ?? [],
+                'data' => $cacheList,
                 'cached' => true,
+                'stale' => false,
             ]);
         }
         
@@ -264,7 +335,9 @@ class OltController extends Controller
             $service = new OltService($tenantId);
             $service->connect($olt);
             $fspList = $service->listFsp();
-            $olt->updateFspCache($fspList);
+            if (!empty($fspList)) {
+                $olt->updateFspCache($fspList);
+            }
             $service->disconnect();
             
             return response()->json([
@@ -273,6 +346,47 @@ class OltController extends Controller
                 'cached' => false,
             ]);
         } catch (RuntimeException $e) {
+            // Fallback 1: stale cache (if any)
+            if (!empty($cacheList)) {
+                return response()->json([
+                    'status' => 'ok',
+                    'data' => $cacheList,
+                    'cached' => true,
+                    'stale' => true,
+                    'message' => 'Telnet gagal, menggunakan cache FSP lama.',
+                ]);
+            }
+
+            // Fallback 2: derive FSP list from ONU cache table
+            if (Schema::hasTable('noci_olt_onu')) {
+                $derived = OltOnu::forTenant($tenantId)
+                    ->where('olt_id', $id)
+                    ->whereNotNull('fsp')
+                    ->distinct()
+                    ->pluck('fsp')
+                    ->filter(fn ($v) => is_string($v) && $v !== '')
+                    ->values()
+                    ->all();
+
+                if (!empty($derived)) {
+                    usort($derived, function (string $a, string $b) {
+                        $pa = array_map('intval', explode('/', $a));
+                        $pb = array_map('intval', explode('/', $b));
+                        if (($pa[0] ?? 0) !== ($pb[0] ?? 0)) return ($pa[0] ?? 0) <=> ($pb[0] ?? 0);
+                        if (($pa[1] ?? 0) !== ($pb[1] ?? 0)) return ($pa[1] ?? 0) <=> ($pb[1] ?? 0);
+                        return ($pa[2] ?? 0) <=> ($pb[2] ?? 0);
+                    });
+
+                    return response()->json([
+                        'status' => 'ok',
+                        'data' => $derived,
+                        'cached' => true,
+                        'stale' => true,
+                        'message' => 'Telnet gagal, menggunakan FSP dari cache ONU.',
+                    ]);
+                }
+            }
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
@@ -324,12 +438,83 @@ class OltController extends Controller
             $service->connect($olt);
             $items = $service->loadRegisteredFsp($fsp);
             $service->disconnect();
+
+            // Merge cache data (native parity): fill name/online_duration/vlan from DB cache.
+            if (Schema::hasTable('noci_olt_onu')) {
+                $snCol = $this->onuCacheSnColumn();
+                $snList = [];
+                foreach ($items as $it) {
+                    $sn = (string) ($it['sn'] ?? '');
+                    if ($sn !== '') {
+                        $snList[$sn] = true;
+                    }
+                }
+
+                $sns = array_keys($snList);
+                if (!empty($sns)) {
+                    $rows = OltOnu::forTenant($tenantId)
+                        ->where('olt_id', $id)
+                        ->whereIn($snCol, $sns)
+                        ->get();
+
+                    $map = [];
+                    foreach ($rows as $row) {
+                        $sn = (string) ($row->sn ?? $row->getAttribute('serial_number') ?? '');
+                        if ($sn === '') continue;
+                        $map[$sn] = [
+                            'onu_name' => (string) ($row->onu_name ?? ''),
+                            'online_duration' => (string) ($row->online_duration ?? ''),
+                            'vlan' => (int) ($row->vlan ?? 0),
+                        ];
+                    }
+
+                    if (!empty($map)) {
+                        foreach ($items as &$it) {
+                            $sn = (string) ($it['sn'] ?? '');
+                            if ($sn === '' || !isset($map[$sn])) continue;
+                            $cached = $map[$sn];
+                            if (((string) ($it['name'] ?? '')) === '' && $cached['onu_name'] !== '') {
+                                $it['name'] = $cached['onu_name'];
+                            }
+                            if (((string) ($it['online_duration'] ?? '')) === '' && $cached['online_duration'] !== '') {
+                                $it['online_duration'] = $cached['online_duration'];
+                            }
+                            if (empty($it['vlan']) && !empty($cached['vlan'])) {
+                                $it['vlan'] = (int) $cached['vlan'];
+                            }
+                        }
+                        unset($it);
+                    }
+                }
+            }
             
             return response()->json([
                 'status' => 'ok',
                 'data' => $items,
             ]);
         } catch (RuntimeException $e) {
+            // Telnet may be blocked on hosting; fall back to DB cache (offline-only).
+            if (Schema::hasTable('noci_olt_onu')) {
+                $items = OltOnu::forTenant($tenantId)
+                    ->where('olt_id', $id)
+                    ->where('fsp', $fsp)
+                    ->whereNotNull('onu_id')
+                    ->orderBy('onu_id')
+                    ->get()
+                    ->map(fn (OltOnu $onu) => $this->formatOnuCacheRow($onu))
+                    ->values()
+                    ->all();
+
+                if (!empty($items)) {
+                    return response()->json([
+                        'status' => 'ok',
+                        'data' => $items,
+                        'cached' => true,
+                        'message' => 'Telnet gagal, menggunakan cache ONU.',
+                    ]);
+                }
+            }
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
@@ -344,8 +529,16 @@ class OltController extends Controller
     {
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
-        
-        $query = OltOnu::where('olt_id', $id);
+
+        if (!Schema::hasTable('noci_olt_onu')) {
+            return response()->json([
+                'status' => 'ok',
+                'data' => [],
+            ]);
+        }
+
+        $snCol = $this->onuCacheSnColumn();
+        $query = OltOnu::forTenant($tenantId)->where('olt_id', $id);
         
         if ($request->filled('fsp')) {
             $query->where('fsp', $request->fsp);
@@ -354,18 +547,27 @@ class OltController extends Controller
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('sn', 'like', "%{$search}%");
+                $snCol = $this->onuCacheSnColumn();
+                $q->where($snCol, 'like', "%{$search}%");
+
+                if (Schema::hasColumn((new OltOnu())->getTable(), 'onu_name')) {
+                    $q->orWhere('onu_name', 'like', "%{$search}%");
+                } elseif (Schema::hasColumn((new OltOnu())->getTable(), 'name')) {
+                    $q->orWhere('name', 'like', "%{$search}%");
+                }
             });
         }
         
-        if ($request->filled('status')) {
+        if ($request->filled('status') && Schema::hasColumn((new OltOnu())->getTable(), 'status')) {
             $query->where('status', $request->status);
         }
         
         $items = $query->orderBy('fsp')
             ->orderBy('onu_id')
-            ->get();
+            ->get()
+            ->map(fn (OltOnu $onu) => $this->formatOnuCacheRow($onu))
+            ->values()
+            ->all();
         
         return response()->json([
             'status' => 'ok',
@@ -384,15 +586,33 @@ class OltController extends Controller
         
         $tenantId = $request->user()->tenant_id ?? 1;
         $q = $request->q;
-        
-        $items = OltOnu::where('olt_id', $id)
-            ->where(function ($query) use ($q) {
-                $query->where('name', 'like', "%{$q}%")
-                      ->orWhere('sn', 'like', "%{$q}%");
+
+        if (!Schema::hasTable('noci_olt_onu')) {
+            return response()->json([
+                'status' => 'ok',
+                'data' => [],
+            ]);
+        }
+
+        $snCol = $this->onuCacheSnColumn();
+
+        $items = OltOnu::forTenant($tenantId)
+            ->where('olt_id', $id)
+            ->where(function ($query) use ($q, $snCol) {
+                $query->where($snCol, 'like', "%{$q}%");
+
+                if (Schema::hasColumn((new OltOnu())->getTable(), 'onu_name')) {
+                    $query->orWhere('onu_name', 'like', "%{$q}%");
+                } elseif (Schema::hasColumn((new OltOnu())->getTable(), 'name')) {
+                    $query->orWhere('name', 'like', "%{$q}%");
+                }
             })
-            ->orderBy('name')
+            ->orderBy('updated_at', 'desc')
             ->limit(50)
-            ->get();
+            ->get()
+            ->map(fn (OltOnu $onu) => $this->formatOnuCacheRow($onu))
+            ->values()
+            ->all();
         
         return response()->json([
             'status' => 'ok',
@@ -420,15 +640,29 @@ class OltController extends Controller
             $service->disconnect();
             
             // Also get from DB cache
-            $dbOnu = OltOnu::where('olt_id', $id)
-                ->where('fsp', $request->fsp)
-                ->where('onu_id', $request->onu_id)
-                ->first();
-            
+            $dbOnu = Schema::hasTable('noci_olt_onu')
+                ? OltOnu::forTenant($tenantId)
+                    ->where('olt_id', $id)
+                    ->where('fsp', $request->fsp)
+                    ->where('onu_id', $request->onu_id)
+                    ->first()
+                : null;
+
             if ($dbOnu) {
-                $detail['db_name'] = $dbOnu->name;
-                $detail['db_status'] = $dbOnu->status;
-                $detail['synced_at'] = $dbOnu->synced_at?->format('Y-m-d H:i');
+                // Keep response compatible with existing UI keys.
+                if (((string) ($detail['name'] ?? '')) === '' && (string) ($dbOnu->onu_name ?? '') !== '') {
+                    $detail['name'] = $dbOnu->onu_name;
+                }
+                if (((string) ($detail['sn'] ?? '')) === '' && (string) ($dbOnu->sn ?? '') !== '') {
+                    $detail['sn'] = $dbOnu->sn;
+                }
+                if (((string) ($detail['online_duration'] ?? '')) === '' && (string) ($dbOnu->online_duration ?? '') !== '') {
+                    $detail['online_duration'] = $dbOnu->online_duration;
+                }
+                if (!isset($detail['vlan']) && $dbOnu->vlan !== null) {
+                    $detail['vlan'] = (int) $dbOnu->vlan;
+                }
+                $detail['cached_at'] = $dbOnu->updated_at?->format('Y-m-d H:i');
             }
             
             return response()->json([
@@ -436,6 +670,31 @@ class OltController extends Controller
                 'data' => $detail,
             ]);
         } catch (RuntimeException $e) {
+            // Fallback to cache when telnet fails.
+            if (Schema::hasTable('noci_olt_onu')) {
+                $dbOnu = OltOnu::forTenant($tenantId)
+                    ->where('olt_id', $id)
+                    ->where('fsp', $request->fsp)
+                    ->where('onu_id', $request->onu_id)
+                    ->first();
+
+                if ($dbOnu) {
+                    return response()->json([
+                        'status' => 'ok',
+                        'data' => [
+                            'sn' => (string) ($dbOnu->sn ?? $dbOnu->getAttribute('serial_number') ?? ''),
+                            'name' => (string) ($dbOnu->onu_name ?? ''),
+                            'status' => 'offline',
+                            'online_duration' => (string) ($dbOnu->online_duration ?? ''),
+                            'vlan' => (int) ($dbOnu->vlan ?? 0),
+                            'cached_at' => $dbOnu->updated_at?->format('Y-m-d H:i'),
+                            'cached' => true,
+                        ],
+                        'message' => 'Telnet gagal, menggunakan cache ONU.',
+                    ]);
+                }
+            }
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),

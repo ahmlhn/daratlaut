@@ -28,8 +28,14 @@ class OltOnu extends Model
     ];
 
     protected $casts = [
+        'tenant_id' => 'integer',
+        'olt_id' => 'integer',
         'onu_id' => 'integer',
-        'rx_power' => 'decimal:2',
+        'vlan' => 'integer',
+        'registered_at' => 'datetime',
+        'last_detail_at' => 'datetime',
+        'last_seen_at' => 'datetime',
+        'updated_at' => 'datetime',
     ];
 
     // Scopes
@@ -57,16 +63,6 @@ class OltOnu extends Model
         return $query->where('fsp', $fsp);
     }
 
-    public function scopeOnline($query)
-    {
-        return $query->whereIn('state', ['ready', 'working']);
-    }
-
-    public function scopeOffline($query)
-    {
-        return $query->whereNotIn('state', ['ready', 'working']);
-    }
-
     // Relationships
     public function olt(): BelongsTo
     {
@@ -74,9 +70,15 @@ class OltOnu extends Model
     }
 
     // Helpers
-    public function isOnline(): bool
+    // Keep legacy-friendly aliases for older Laravel code / UI.
+    public function getNameAttribute(): ?string
     {
-        return in_array($this->state, ['ready', 'working']);
+        return $this->onu_name;
+    }
+
+    public function setNameAttribute(?string $value): void
+    {
+        $this->onu_name = $value;
     }
 
     public function getInterfaceName(): string

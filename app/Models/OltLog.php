@@ -9,18 +9,22 @@ class OltLog extends Model
 {
     protected $table = 'noci_olt_logs';
 
+    public $timestamps = false;
+
     protected $fillable = [
         'tenant_id',
+        'created_at',
         'olt_id',
+        'olt_name',
         'action',
-        'command',
-        'response',
         'actor',
-        'success',
+        'status',
+        'summary_json',
+        'log_text',
     ];
 
     protected $casts = [
-        'success' => 'boolean',
+        'created_at' => 'datetime',
     ];
 
     // Scopes
@@ -34,41 +38,32 @@ class OltLog extends Model
         return $query->where('olt_id', $oltId);
     }
 
-    public function scopeSuccessful($query)
-    {
-        return $query->where('success', true);
-    }
-
-    public function scopeFailed($query)
-    {
-        return $query->where('success', false);
-    }
-
     // Relationships
     public function olt(): BelongsTo
     {
         return $this->belongsTo(Olt::class, 'olt_id');
     }
 
-    // Static helper to log an action
+    // Static helper to log an action (best-effort; ignores schema drift by staying close to native table).
     public static function logAction(
-        int $oltId,
+        int $tenantId,
+        ?int $oltId,
+        ?string $oltName,
         string $action,
-        ?string $command = null,
-        ?string $response = null,
-        ?string $actor = null,
-        bool $success = true
+        string $status,
+        ?array $summary = null,
+        ?string $logText = null,
+        ?string $actor = null
     ): self {
-        $olt = Olt::find($oltId);
-        
         return static::create([
-            'tenant_id' => $olt?->tenant_id ?? 1,
+            'tenant_id' => $tenantId,
             'olt_id' => $oltId,
+            'olt_name' => $oltName,
             'action' => $action,
-            'command' => $command,
-            'response' => $response,
+            'status' => $status,
+            'summary_json' => $summary ? json_encode($summary, JSON_UNESCAPED_UNICODE) : null,
+            'log_text' => $logText,
             'actor' => $actor,
-            'success' => $success,
         ]);
     }
 }

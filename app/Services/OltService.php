@@ -5,7 +5,10 @@ namespace App\Services;
 use App\Models\Olt;
 use App\Models\OltOnu;
 use App\Models\OltLog;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use RuntimeException;
+use Throwable;
 
 /**
  * OLT Service for ZTE C320 OLT Management
@@ -178,6 +181,14 @@ class OltService
      */
     public function listFsp(): array
     {
+        // Try "show card" first (native parity + faster on some firmwares).
+        $cardOut = $this->sendCommand('show card');
+        $list = $this->parseFspFromCardOutput($cardOut);
+        if (!empty($list)) {
+            return $list;
+        }
+
+        // Fallback to "show gpon onu state".
         $out = $this->sendCommand('show gpon onu state');
         return $this->parseFspList($out);
     }
@@ -211,7 +222,15 @@ class OltService
     public function getOnuDetail(string $fsp, int $onuId): array
     {
         $out = $this->sendCommand("show gpon onu detail-info gpon-onu_{$fsp}:{$onuId}");
-        return $this->parseOnuDetail($out);
+        $detail = $this->parseOnuDetail($out);
+
+        // Native parity: save detail (name + online_duration) into DB cache when possible.
+        $sn = trim((string)($detail['sn'] ?? $detail['serial'] ?? ''));
+        if ($sn !== '') {
+            $this->saveOnuDetailToDb($sn, $fsp, $onuId, $detail);
+        }
+
+        return $detail;
     }
 
     /**
@@ -274,12 +293,13 @@ class OltService
     {
         $tcont = $this->olt->tcont_default ?? self::DEFAULT_TCONT_PROFILE;
         $vlan = $this->olt->vlan_default ?? self::DEFAULT_VLAN;
+        $spid = $this->olt->service_port_id_default ?? self::DEFAULT_SERVICE_PORT_ID;
         
         // Configure ONU interface
         $this->sendCommand("interface gpon-onu_{$fsp}:{$onuId}");
         $this->sendCommand("tcont 1 profile {$tcont}");
         $this->sendCommand("gemport 1 tcont 1");
-        $this->sendCommand("service-port 1 vport 1 user-vlan {$vlan} vlan {$vlan}");
+        $this->sendCommand("service-port {$spid} vport 1 user-vlan {$vlan} vlan {$vlan}");
         $this->sendCommand('exit');
         
         // Configure PON side
@@ -295,24 +315,56 @@ class OltService
     {
         // Sanitize name
         $name = preg_replace('/\s+/', '', $name);
-        
+
+        // Native parity: prefer "interface gpon-onu_...; name ..."
         $this->sendCommand('configure terminal');
-        $this->sendCommand("interface gpon-olt_{$fsp}");
-        $out = $this->sendCommand("onu {$onuId} name {$name}");
-        $this->sendCommand('exit');
-        $this->sendCommand('exit');
-        
+        $out1 = $this->sendCommand("interface gpon-onu_{$fsp}:{$onuId}");
+        $out2 = $this->sendCommand("name {$name}");
+        $out3 = $this->sendCommand('end');
+        $out = $out1 . "\n" . $out2 . "\n" . $out3;
+
+        // Fallback for some firmwares: "interface gpon-olt_...; onu {id} name ..."
         if (preg_match(self::ERROR_RE, $out)) {
-            throw new RuntimeException("Failed to update ONU name: $out");
+            $this->sendCommand('configure terminal');
+            $this->sendCommand("interface gpon-olt_{$fsp}");
+            $outAlt = $this->sendCommand("onu {$onuId} name {$name}");
+            $this->sendCommand('end');
+            $out .= "\n" . $outAlt;
+
+            if (preg_match(self::ERROR_RE, $outAlt)) {
+                throw new RuntimeException("Failed to update ONU name: $outAlt");
+            }
         }
-        
-        // Update database
-        OltOnu::where('olt_id', $this->olt->id)
-            ->where('fsp', $fsp)
-            ->where('onu_id', $onuId)
-            ->update(['name' => $name]);
-        
-        $this->logAction('update_name', 'success', "ONU {$fsp}:{$onuId} renamed to '{$name}'");
+
+        // Update database cache (best-effort; schema differs across deployments).
+        try {
+            $table = (new OltOnu())->getTable();
+            if (Schema::hasTable($table)) {
+                $updates = [];
+                if (Schema::hasColumn($table, 'onu_name')) $updates['onu_name'] = $name;
+                elseif (Schema::hasColumn($table, 'name')) $updates['name'] = $name;
+
+                $now = now();
+                if (Schema::hasColumn($table, 'last_detail_at')) $updates['last_detail_at'] = $now;
+                if (Schema::hasColumn($table, 'last_seen_at')) $updates['last_seen_at'] = $now;
+
+                if (!empty($updates)) {
+                    $q = OltOnu::where('olt_id', $this->olt->id)
+                        ->where('fsp', $fsp)
+                        ->where('onu_id', $onuId);
+
+                    if (Schema::hasColumn($table, 'tenant_id')) {
+                        $q->where('tenant_id', $this->tenantId);
+                    }
+
+                    $q->update($updates);
+                }
+            }
+        } catch (Throwable $e) {
+            // ignore
+        }
+
+        $this->logAction('update_onu_detail', 'done', "ONU {$fsp}:{$onuId} renamed to '{$name}'");
         
         return true;
     }
@@ -332,13 +384,41 @@ class OltService
             throw new RuntimeException("Failed to delete ONU: $out");
         }
         
-        // Delete from database
-        OltOnu::where('olt_id', $this->olt->id)
-            ->where('fsp', $fsp)
-            ->where('onu_id', $onuId)
-            ->delete();
-        
-        $this->logAction('delete', 'success', "ONU {$fsp}:{$onuId} deleted");
+        // Delete from database cache (best-effort; schema differs across deployments).
+        try {
+            $table = (new OltOnu())->getTable();
+            if (Schema::hasTable($table)) {
+                $q = OltOnu::where('olt_id', $this->olt->id)
+                    ->where('fsp', $fsp)
+                    ->where('onu_id', $onuId);
+
+                if (Schema::hasColumn($table, 'tenant_id')) {
+                    $q->where('tenant_id', $this->tenantId);
+                }
+
+                $row = $q->first();
+                $sn = (string)($row?->sn ?? $row?->getAttribute('serial_number') ?? '');
+
+                $q->delete();
+
+                if ($sn !== '') {
+                    $q2 = OltOnu::where('olt_id', $this->olt->id);
+                    if (Schema::hasColumn($table, 'tenant_id')) {
+                        $q2->where('tenant_id', $this->tenantId);
+                    }
+
+                    if (Schema::hasColumn($table, 'sn')) {
+                        $q2->where('sn', $sn)->delete();
+                    } elseif (Schema::hasColumn($table, 'serial_number')) {
+                        $q2->where('serial_number', $sn)->delete();
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+            // ignore
+        }
+
+        $this->logAction('delete_onu', 'done', "ONU {$fsp}:{$onuId} deleted");
         
         return true;
     }
@@ -400,22 +480,170 @@ class OltService
     /**
      * Save ONU to database
      */
-    private function saveOnuToDb(string $fsp, int $onuId, string $sn, string $name): void
+    private function saveOnuToDb(
+        string $fsp,
+        int $onuId,
+        string $sn,
+        string $name,
+        bool $setRegisteredAt = true,
+        bool $preserveRegisteredAt = true
+    ): void
     {
-        OltOnu::updateOrCreate(
-            [
-                'olt_id' => $this->olt->id,
-                'fsp' => $fsp,
-                'onu_id' => $onuId,
-            ],
-            [
-                'tenant_id' => $this->tenantId,
-                'sn' => $sn,
-                'name' => $name,
-                'status' => 'online',
-                'synced_at' => now(),
-            ]
-        );
+        if (!$this->olt) return;
+
+        $table = (new OltOnu())->getTable();
+        static $tableChecked = null;
+        if ($tableChecked === null) {
+            $tableChecked = Schema::hasTable($table);
+        }
+        if (!$tableChecked) return;
+
+        static $snCol = null;
+        if ($snCol === null) {
+            if (Schema::hasColumn($table, 'sn')) $snCol = 'sn';
+            elseif (Schema::hasColumn($table, 'serial_number')) $snCol = 'serial_number';
+            else $snCol = 'sn';
+        }
+
+        static $nameCol = null;
+        if ($nameCol === null) {
+            if (Schema::hasColumn($table, 'onu_name')) $nameCol = 'onu_name';
+            elseif (Schema::hasColumn($table, 'name')) $nameCol = 'name';
+            else $nameCol = null;
+        }
+
+        static $hasLastSeenAt = null;
+        if ($hasLastSeenAt === null) {
+            $hasLastSeenAt = Schema::hasColumn($table, 'last_seen_at');
+        }
+
+        static $hasRegisteredAt = null;
+        if ($hasRegisteredAt === null) {
+            $hasRegisteredAt = Schema::hasColumn($table, 'registered_at');
+        }
+
+        $key = [
+            'tenant_id' => $this->tenantId,
+            'olt_id' => $this->olt->id,
+            $snCol => $sn,
+        ];
+
+        $now = now();
+
+        $values = [
+            'tenant_id' => $this->tenantId,
+            'olt_id' => $this->olt->id,
+            'fsp' => $fsp,
+            'onu_id' => $onuId,
+        ];
+
+        if ($nameCol && $name !== '') {
+            $values[$nameCol] = $name;
+        }
+
+        if ($hasLastSeenAt) {
+            $values['last_seen_at'] = $now;
+        }
+
+        // Preserve existing registered_at when present (native parity).
+        $shouldSetRegisteredAt = false;
+        if ($setRegisteredAt && $hasRegisteredAt) {
+            if (!$preserveRegisteredAt) {
+                $shouldSetRegisteredAt = true;
+            } else {
+                try {
+                    $exists = DB::table($table)->where($key)->exists();
+                    $shouldSetRegisteredAt = !$exists;
+                } catch (Throwable $e) {
+                    $shouldSetRegisteredAt = true;
+                }
+            }
+        }
+        if ($shouldSetRegisteredAt) {
+            $values['registered_at'] = $now;
+        }
+
+        try {
+            DB::table($table)->updateOrInsert($key, $values);
+        } catch (Throwable $e) {
+            // Best-effort cache write; avoid breaking telnet flow.
+        }
+    }
+
+    private function saveOnuDetailToDb(string $sn, string $fsp, int $onuId, array $detail): void
+    {
+        if (!$this->olt) return;
+
+        $table = (new OltOnu())->getTable();
+        static $tableChecked = null;
+        if ($tableChecked === null) {
+            $tableChecked = Schema::hasTable($table);
+        }
+        if (!$tableChecked) return;
+
+        static $snCol = null;
+        if ($snCol === null) {
+            if (Schema::hasColumn($table, 'sn')) $snCol = 'sn';
+            elseif (Schema::hasColumn($table, 'serial_number')) $snCol = 'serial_number';
+            else $snCol = 'sn';
+        }
+
+        static $nameCol = null;
+        if ($nameCol === null) {
+            if (Schema::hasColumn($table, 'onu_name')) $nameCol = 'onu_name';
+            elseif (Schema::hasColumn($table, 'name')) $nameCol = 'name';
+            else $nameCol = null;
+        }
+
+        static $hasOnlineDuration = null;
+        if ($hasOnlineDuration === null) {
+            $hasOnlineDuration = Schema::hasColumn($table, 'online_duration');
+        }
+
+        static $hasLastDetailAt = null;
+        if ($hasLastDetailAt === null) {
+            $hasLastDetailAt = Schema::hasColumn($table, 'last_detail_at');
+        }
+
+        static $hasLastSeenAt = null;
+        if ($hasLastSeenAt === null) {
+            $hasLastSeenAt = Schema::hasColumn($table, 'last_seen_at');
+        }
+
+        $key = [
+            'tenant_id' => $this->tenantId,
+            'olt_id' => $this->olt->id,
+            $snCol => $sn,
+        ];
+
+        $values = [
+            'tenant_id' => $this->tenantId,
+            'olt_id' => $this->olt->id,
+            'fsp' => $fsp,
+            'onu_id' => $onuId,
+        ];
+
+        $onuName = trim((string)($detail['name'] ?? ''));
+        if ($nameCol && $onuName !== '') {
+            $values[$nameCol] = $onuName;
+        }
+
+        if ($hasOnlineDuration) {
+            $od = trim((string)($detail['online_duration'] ?? ''));
+            if ($od !== '') {
+                $values['online_duration'] = substr($od, 0, 32);
+            }
+        }
+
+        $now = now();
+        if ($hasLastDetailAt) $values['last_detail_at'] = $now;
+        if ($hasLastSeenAt) $values['last_seen_at'] = $now;
+
+        try {
+            DB::table($table)->updateOrInsert($key, $values);
+        } catch (Throwable $e) {
+            // ignore
+        }
     }
 
     /**
@@ -424,15 +652,31 @@ class OltService
     private function logAction(string $action, string $status, string $message): void
     {
         if (!$this->olt) return;
-        
-        OltLog::create([
-            'tenant_id' => $this->tenantId,
-            'olt_id' => $this->olt->id,
-            'action' => $action,
-            'status' => $status,
-            'message' => $message,
-            'user_id' => auth()->id(),
-        ]);
+
+        $actor = null;
+        try {
+            $u = auth()->user();
+            if ($u) {
+                $actor = $u->name ?? $u->username ?? $u->email ?? null;
+            }
+        } catch (Throwable $e) {
+            // ignore
+        }
+
+        try {
+            OltLog::logAction(
+                $this->tenantId,
+                $this->olt->id,
+                $this->olt->nama_olt,
+                $action,
+                $status,
+                ['message' => $message],
+                $message,
+                $actor
+            );
+        } catch (Throwable $e) {
+            // Best-effort logging.
+        }
     }
 
     // ========== Parser Methods ==========
@@ -467,6 +711,86 @@ class OltService
             if ($sn) $items[] = ['fsp' => $fsp, 'sn' => $sn];
         }
         return $items;
+    }
+
+    private function isActiveCardStatus(string $status): bool
+    {
+        $status = strtoupper(trim($status));
+        if ($status === '') return false;
+        return in_array($status, ['INSERVICE', 'ACTIVE', 'WORKING', 'NORMAL', 'RUNNING'], true);
+    }
+
+    private function resolveCardPonPorts(string $cfgType, string $realType): int
+    {
+        $type = strtoupper(trim($realType));
+        if ($type === '') $type = strtoupper(trim($cfgType));
+        if (str_starts_with($type, 'GTGH')) return 16;
+        if (str_starts_with($type, 'GTGO')) return 8;
+        return 0;
+    }
+
+    private function pickFspFrame(int $rack, int $shelf): int
+    {
+        if ($rack > 1) return $rack;
+        if ($shelf > 0) return $shelf;
+        return $rack;
+    }
+
+    private function parseFspFromCardOutput(string $out): array
+    {
+        $list = [];
+        $seen = [];
+        $lines = preg_split('/\r?\n/', $out);
+
+        foreach ($lines as $line) {
+            $raw = trim($line);
+            if ($raw === '') continue;
+            if (stripos($raw, 'Rack') !== false && stripos($raw, 'Shelf') !== false && stripos($raw, 'Slot') !== false) continue;
+            if (preg_match('/^-{3,}/', $raw)) continue;
+
+            $tokens = preg_split('/\s+/', $raw);
+            if (count($tokens) < 4) continue;
+
+            $rack = (int)($tokens[0] ?? 0);
+            $shelf = (int)($tokens[1] ?? 0);
+            $slot = (int)($tokens[2] ?? 0);
+            $cfgType = (string)($tokens[3] ?? '');
+            $status = (string)($tokens[count($tokens) - 1] ?? '');
+
+            if (!$this->isActiveCardStatus($status)) continue;
+
+            $realType = '';
+            if (isset($tokens[4])) {
+                $candidate = (string)$tokens[4];
+                $upper = strtoupper($candidate);
+                if ($candidate !== '' && !ctype_digit($candidate) && !str_starts_with($upper, 'V') && $upper !== strtoupper($status)) {
+                    $realType = $candidate;
+                }
+            }
+
+            $ponCount = $this->resolveCardPonPorts($cfgType, $realType);
+            if ($ponCount <= 0) continue;
+
+            $frame = $this->pickFspFrame($rack, $shelf);
+            if ($frame <= 0 || $slot <= 0) continue;
+
+            for ($p = 1; $p <= $ponCount; $p++) {
+                $fsp = $frame . '/' . $slot . '/' . $p;
+                if (isset($seen[$fsp])) continue;
+                $seen[$fsp] = true;
+                $list[] = $fsp;
+            }
+        }
+
+        usort($list, function ($a, $b) {
+            $pa = array_map('intval', explode('/', $a));
+            $pb = array_map('intval', explode('/', $b));
+            if (($pa[0] ?? 0) !== ($pb[0] ?? 0)) return ($pa[0] ?? 0) <=> ($pb[0] ?? 0);
+            if (($pa[1] ?? 0) !== ($pb[1] ?? 0)) return ($pa[1] ?? 0) <=> ($pb[1] ?? 0);
+            return ($pa[2] ?? 0) <=> ($pb[2] ?? 0);
+        });
+
+        return $list;
     }
 
     private function parseFspList(string $out): array
@@ -579,6 +903,7 @@ class OltService
             'name' => '',
             'status' => 'offline',
             'distance' => '',
+            'online_duration' => '',
             'uptime' => '',
             'rx_power' => '',
             'tx_power' => '',
@@ -589,10 +914,17 @@ class OltService
         $lines = preg_split('/\r?\n/', $out);
         foreach ($lines as $line) {
             $line = trim($line);
-            if (preg_match('/ONU\s*Name\s*[:=]\s*(.+)/i', $line, $m)) {
+            if (preg_match('/^\s*ONU\s*Name\s*[:=]\s*(.+)$/i', $line, $m)) {
                 $detail['name'] = trim($m[1]);
             }
-            if (preg_match('/SN\s*[:=]\s*([A-Z0-9]+)/i', $line, $m)) {
+            if (preg_match('/^\s*Name\s*[:=]\s*(.+)$/i', $line, $m)) {
+                // Some firmwares use "Name:".
+                $detail['name'] = trim($m[1]);
+            }
+            if (preg_match('/^\s*Serial\\s*number\\s*[:=]\\s*([A-Za-z0-9]+)/i', $line, $m)) {
+                $detail['sn'] = trim($m[1]);
+            }
+            if (preg_match('/^\s*SN\\s*[:=]\\s*([A-Za-z0-9]+)/i', $line, $m)) {
                 $detail['sn'] = $m[1];
             }
             if (preg_match('/State\s*[:=]\s*(\w+)/i', $line, $m)) {
@@ -601,6 +933,9 @@ class OltService
             }
             if (preg_match('/Distance\s*[:=]\s*([\d.]+)/i', $line, $m)) {
                 $detail['distance'] = $m[1] . ' m';
+            }
+            if (preg_match('/^\s*Online\\s*Duration\\s*[:=]\\s*(.+)$/i', $line, $m)) {
+                $detail['online_duration'] = trim($m[1]);
             }
             if (preg_match('/Rx\s*(?:optical\s*)?power\s*[:=]\s*(-?[\d.]+)/i', $line, $m)) {
                 $detail['rx_power'] = $m[1] . ' dBm';
@@ -633,21 +968,15 @@ class OltService
         foreach ($fspList as $fsp) {
             $onus = $this->loadRegisteredFsp($fsp);
             foreach ($onus as $onu) {
-                OltOnu::updateOrCreate(
-                    [
-                        'olt_id' => $this->olt->id,
-                        'fsp' => $onu['fsp'],
-                        'onu_id' => $onu['onu_id'],
-                    ],
-                    [
-                        'tenant_id' => $this->tenantId,
-                        'sn' => $onu['sn'] ?? '',
-                        'name' => $onu['name'] ?? '',
-                        'status' => $onu['status'] ?? 'offline',
-                        'rx' => $onu['rx'] ?? null,
-                        'synced_at' => now(),
-                    ]
-                );
+                $sn = trim((string)($onu['sn'] ?? ''));
+                if ($sn === '') continue;
+
+                $onuId = (int)($onu['onu_id'] ?? 0);
+                if ($onuId <= 0) continue;
+
+                $name = trim((string)($onu['name'] ?? ''));
+                // For bulk sync we avoid per-row existence checks.
+                $this->saveOnuToDb($fsp, $onuId, $sn, $name, false, false);
                 $count++;
             }
         }
@@ -655,7 +984,7 @@ class OltService
         // Update FSP cache
         $this->olt->updateFspCache($fspList);
         
-        $this->logAction('sync_all', 'success', "Synced {$count} ONUs");
+        $this->logAction('sync_registered_all', 'done', "Synced {$count} ONUs");
         
         return $count;
     }
