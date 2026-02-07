@@ -18,3 +18,5 @@ yarn-error.log
 /.idea
 /.vscode
 /scripts/deploy.config.ps1
+/update-package.zip
+/update-package.sha256

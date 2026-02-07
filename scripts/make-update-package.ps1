@@ -3,21 +3,54 @@ Param(
     [string]$OutPath = ".\\update-package.zip",
 
     [Parameter(Mandatory = $false)]
-    [bool]$IncludeVendor = $true,
+    [object]$IncludeVendor = $true,
 
     [Parameter(Mandatory = $false)]
-    [bool]$IncludeBuild = $true
+    [object]$IncludeBuild = $true
 )
 
 $ErrorActionPreference = "Stop"
 
-function Normalize-RelPath([string]$base, [string]$full) {
-    $rel = [System.IO.Path]::GetRelativePath($base, $full)
-    return $rel.Replace("\\", "/")
+function ConvertTo-Bool([object]$value, [bool]$defaultValue, [string]$paramName) {
+    if ($null -eq $value) { return $defaultValue }
+    if ($value -is [bool]) { return [bool]$value }
+    if ($value -is [int] -or $value -is [long]) { return ([int64]$value -ne 0) }
+
+    if ($value -is [string]) {
+        $s = $value.Trim()
+        if ([string]::IsNullOrWhiteSpace($s)) { return $defaultValue }
+        switch -Regex ($s.ToLowerInvariant()) {
+            '^(1|true|t|yes|y|on)$' { return $true }
+            '^(0|false|f|no|n|off)$' { return $false }
+        }
+        throw "Invalid value for -${paramName}: '$value' (use true/false or 1/0)."
+    }
+
+    # Last-resort conversion (keeps behavior for odd call-sites).
+    try { return [bool]$value } catch { throw "Invalid value for -${paramName}: '$value' (use true/false or 1/0)." }
 }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $root
+
+$script:RootFull = [System.IO.Path]::GetFullPath($root).TrimEnd("\\")
+$script:RootPrefix = $script:RootFull + "\\"
+
+function Normalize-RelPath([string]$base, [string]$full) {
+    # PowerShell 5.1 / .NET Framework doesn't have Path::GetRelativePath, so
+    # do a fast prefix-strip for paths under root, with a URI fallback.
+    $fullPath = [System.IO.Path]::GetFullPath($full)
+    if ($fullPath.StartsWith($script:RootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $fullPath.Substring($script:RootPrefix.Length).Replace("\\", "/")
+    }
+
+    $baseUri = New-Object System.Uri($script:RootPrefix)
+    $targetUri = New-Object System.Uri($fullPath)
+    return [System.Uri]::UnescapeDataString($baseUri.MakeRelativeUri($targetUri).ToString()).Replace("\\", "/")
+}
+
+$IncludeVendor = ConvertTo-Bool $IncludeVendor $true "IncludeVendor"
+$IncludeBuild = ConvertTo-Bool $IncludeBuild $true "IncludeBuild"
 
 if (-not (Test-Path ".\\vendor\\autoload.php")) {
     throw "Missing vendor/autoload.php. Run: composer install"
