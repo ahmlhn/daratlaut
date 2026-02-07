@@ -3,7 +3,10 @@
 namespace App\Services;
 
 use Illuminate\Http\UploadedFile;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Http;
 use RuntimeException;
 use ZipArchive;
 
@@ -37,6 +40,16 @@ final class SystemUpdateService
     private function logPath(): string
     {
         return $this->baseDir() . DIRECTORY_SEPARATOR . 'log.txt';
+    }
+
+    private function installedPath(): string
+    {
+        return $this->baseDir() . DIRECTORY_SEPARATOR . 'installed.json';
+    }
+
+    private function githubTokenPath(): string
+    {
+        return $this->baseDir() . DIRECTORY_SEPARATOR . 'github_token.enc';
     }
 
     private function ensureDirs(): void
@@ -135,6 +148,118 @@ final class SystemUpdateService
         return $lines;
     }
 
+    private function readInstalled(): ?array
+    {
+        $path = $this->installedPath();
+        if (!is_file($path)) return null;
+
+        $raw = @file_get_contents($path);
+        if (!is_string($raw) || trim($raw) === '') return null;
+
+        $decoded = json_decode($raw, true);
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    private function writeInstalled(array $installed): void
+    {
+        $this->ensureDirs();
+        $installed['installed_at'] = $installed['installed_at'] ?? now()->toIso8601String();
+        @file_put_contents(
+            $this->installedPath(),
+            json_encode($installed, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+        );
+    }
+
+    private function githubEnabled(): bool
+    {
+        return (bool) $this->cfg('github.enabled', false);
+    }
+
+    private function githubOwner(): string
+    {
+        return trim((string) $this->cfg('github.owner', ''));
+    }
+
+    private function githubRepo(): string
+    {
+        return trim((string) $this->cfg('github.repo', ''));
+    }
+
+    private function githubBranch(): string
+    {
+        $b = trim((string) $this->cfg('github.branch', 'main'));
+        return $b !== '' ? $b : 'main';
+    }
+
+    private function githubApiBase(): string
+    {
+        $base = trim((string) $this->cfg('github.api_base', 'https://api.github.com'));
+        return rtrim($base !== '' ? $base : 'https://api.github.com', '/');
+    }
+
+    private function githubApiVersion(): string
+    {
+        $v = trim((string) $this->cfg('github.api_version', '2022-11-28'));
+        return $v !== '' ? $v : '2022-11-28';
+    }
+
+    private function githubTokenFromFile(): ?string
+    {
+        $path = $this->githubTokenPath();
+        if (!is_file($path)) return null;
+
+        $raw = @file_get_contents($path);
+        if (!is_string($raw) || trim($raw) === '') return null;
+
+        try {
+            return Crypt::decryptString($raw);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function githubToken(): ?string
+    {
+        // Prefer env (ops-managed), then fallback to encrypted file set via UI.
+        $env = trim((string) $this->cfg('github.token', ''));
+        if ($env !== '') return $env;
+
+        $fileToken = $this->githubTokenFromFile();
+        $fileToken = is_string($fileToken) ? trim($fileToken) : '';
+        return $fileToken !== '' ? $fileToken : null;
+    }
+
+    private function githubTokenHint(): ?string
+    {
+        $t = $this->githubToken();
+        if (!is_string($t) || $t === '') return null;
+        $len = strlen($t);
+        if ($len <= 4) return str_repeat('*', $len);
+        return str_repeat('*', max(0, $len - 4)) . substr($t, -4);
+    }
+
+    private function githubRequest(): PendingRequest
+    {
+        $req = Http::timeout(90)
+            ->connectTimeout(15)
+            ->withHeaders([
+                'Accept' => 'application/vnd.github+json',
+                'X-GitHub-Api-Version' => $this->githubApiVersion(),
+                // GitHub API expects a User-Agent.
+                'User-Agent' => 'DaratLaut-SystemUpdate/1.0',
+            ])
+            ->withOptions([
+                'allow_redirects' => true,
+            ]);
+
+        $token = $this->githubToken();
+        if (is_string($token) && $token !== '') {
+            $req = $req->withToken($token);
+        }
+
+        return $req;
+    }
+
     public function status(): array
     {
         $state = $this->withLockedState(function (array $state) {
@@ -143,6 +268,16 @@ final class SystemUpdateService
 
         if (!is_array($state)) $state = $this->defaultState();
         $state['log_tail'] = $this->logTail();
+        $state['installed'] = $this->readInstalled();
+        $state['github'] = [
+            'enabled' => $this->githubEnabled(),
+            'owner' => $this->githubOwner(),
+            'repo' => $this->githubRepo(),
+            'branch' => $this->githubBranch(),
+            'configured' => ($this->githubOwner() !== '' && $this->githubRepo() !== ''),
+            'token_present' => $this->githubToken() !== null,
+            'token_hint' => $this->githubTokenHint(),
+        ];
         $state['config'] = [
             'enabled' => (bool) $this->cfg('enabled', false),
             'chunk_size' => (int) $this->cfg('chunk_size', 200),
@@ -152,6 +287,151 @@ final class SystemUpdateService
         ];
 
         return $state;
+    }
+
+    public function githubSaveToken(string $token): array
+    {
+        if (!$this->githubEnabled()) {
+            throw new RuntimeException('GitHub update is disabled.');
+        }
+
+        $token = trim($token);
+        if ($token === '') {
+            throw new RuntimeException('Token is empty.');
+        }
+        if (strlen($token) < 10) {
+            throw new RuntimeException('Token is too short.');
+        }
+
+        $this->ensureDirs();
+        @file_put_contents($this->githubTokenPath(), Crypt::encryptString($token));
+        $this->appendLog('GitHub token updated.');
+        return $this->status();
+    }
+
+    public function githubClearToken(): array
+    {
+        if (!$this->githubEnabled()) {
+            throw new RuntimeException('GitHub update is disabled.');
+        }
+
+        $this->ensureDirs();
+        @unlink($this->githubTokenPath());
+        $this->appendLog('GitHub token cleared (file-based).');
+        return $this->status();
+    }
+
+    public function githubCheckLatest(): array
+    {
+        if (!$this->githubEnabled()) {
+            throw new RuntimeException('GitHub update is disabled.');
+        }
+
+        $owner = $this->githubOwner();
+        $repo = $this->githubRepo();
+        $branch = $this->githubBranch();
+        if ($owner === '' || $repo === '') {
+            throw new RuntimeException('GitHub repo is not configured. Set SYSTEM_UPDATE_GITHUB_OWNER and SYSTEM_UPDATE_GITHUB_REPO.');
+        }
+        if ($this->githubToken() === null) {
+            throw new RuntimeException('GitHub token is missing. Set SYSTEM_UPDATE_GITHUB_TOKEN or save token from the panel.');
+        }
+
+        $url = $this->githubApiBase() . "/repos/{$owner}/{$repo}/commits/{$branch}";
+        $res = $this->githubRequest()->get($url);
+        if (!$res->successful()) {
+            $msg = (string) ($res->json('message') ?? $res->body() ?? '');
+            $msg = trim($msg);
+            throw new RuntimeException('GitHub API error (' . $res->status() . '): ' . ($msg !== '' ? $msg : 'request failed'));
+        }
+
+        $sha = (string) ($res->json('sha') ?? '');
+        if ($sha === '') {
+            throw new RuntimeException('GitHub API response missing sha.');
+        }
+
+        $message = (string) ($res->json('commit.message') ?? '');
+        $firstLine = trim(strtok($message, "\n") ?: $message);
+        $date = (string) ($res->json('commit.committer.date') ?? $res->json('commit.author.date') ?? '');
+        $html = (string) ($res->json('html_url') ?? '');
+
+        $installed = $this->readInstalled();
+        $installedSha = is_array($installed) ? (string) (($installed['github']['sha'] ?? '') ?: '') : '';
+        $upToDate = ($installedSha !== '' && strtolower($installedSha) === strtolower($sha));
+
+        return [
+            'latest' => [
+                'sha' => $sha,
+                'short' => substr($sha, 0, 7),
+                'message' => $firstLine,
+                'date' => $date,
+                'html_url' => $html !== '' ? $html : null,
+                'branch' => $branch,
+            ],
+            'installed' => $installed,
+            'update_available' => ($installedSha === '' ? null : !$upToDate),
+        ];
+    }
+
+    public function githubDownloadLatest(): array
+    {
+        $check = $this->githubCheckLatest();
+        $latest = $check['latest'] ?? null;
+        if (!is_array($latest) || empty($latest['sha'])) {
+            throw new RuntimeException('Latest commit info is missing.');
+        }
+
+        $owner = $this->githubOwner();
+        $repo = $this->githubRepo();
+        $sha = (string) $latest['sha'];
+
+        $id = now()->format('Ymd-His') . '-' . bin2hex(random_bytes(4));
+        $zipName = 'github-' . substr($sha, 0, 7) . '-' . $id . '.zip';
+        $zipPath = $this->packagesDir() . DIRECTORY_SEPARATOR . $zipName;
+
+        $zipUrl = $this->githubApiBase() . "/repos/{$owner}/{$repo}/zipball/{$sha}";
+        $this->appendLog("Downloading GitHub zipball: {$owner}/{$repo}@{$sha}");
+
+        $res = $this->githubRequest()->sink($zipPath)->get($zipUrl);
+        if (!$res->successful()) {
+            @unlink($zipPath);
+            $msg = (string) ($res->json('message') ?? $res->body() ?? '');
+            $msg = trim($msg);
+            throw new RuntimeException('GitHub download error (' . $res->status() . '): ' . ($msg !== '' ? $msg : 'request failed'));
+        }
+
+        $size = @filesize($zipPath);
+        if (!is_numeric($size) || (int) $size <= 0) {
+            @unlink($zipPath);
+            throw new RuntimeException('Downloaded zipball is empty.');
+        }
+
+        $sha256 = @hash_file('sha256', $zipPath) ?: null;
+        $this->appendLog("Downloaded GitHub package: {$zipName}" . ($sha256 ? " (sha256 {$sha256})" : ''));
+
+        $this->withLockedState(function (array $state) use ($id, $zipName, $zipPath, $sha256, $size, $latest) {
+            $state = $this->defaultState();
+            $state['stage'] = 'uploaded';
+            $state['package'] = [
+                'id' => $id,
+                'filename' => $zipName,
+                'zip_path' => $zipPath,
+                'sha256' => $sha256,
+                'size_bytes' => is_numeric($size) ? (int) $size : null,
+                'uploaded_at' => now()->toIso8601String(),
+                'source' => 'github',
+                'github' => [
+                    'owner' => $this->githubOwner(),
+                    'repo' => $this->githubRepo(),
+                    'branch' => (string) ($latest['branch'] ?? $this->githubBranch()),
+                    'sha' => (string) ($latest['sha'] ?? ''),
+                ],
+            ];
+            $state['_save_state'] = true;
+            return $state;
+        });
+
+        return $this->status();
     }
 
     public function reset(): array
@@ -200,6 +480,7 @@ final class SystemUpdateService
                 'sha256' => $sha,
                 'size_bytes' => is_numeric($size) ? (int) $size : null,
                 'uploaded_at' => now()->toIso8601String(),
+                'source' => 'upload',
             ];
             $state['_save_state'] = true;
             return $state;
@@ -250,7 +531,7 @@ final class SystemUpdateService
 
         $this->appendLog("Downloaded package: {$zipName}" . ($sha ? " (sha256 {$sha})" : ''));
 
-        $this->withLockedState(function (array $state) use ($id, $zipName, $zipPath, $sha, $size) {
+        $this->withLockedState(function (array $state) use ($id, $zipName, $zipPath, $sha, $size, $url) {
             $state = $this->defaultState();
             $state['stage'] = 'uploaded';
             $state['package'] = [
@@ -260,6 +541,8 @@ final class SystemUpdateService
                 'sha256' => $sha,
                 'size_bytes' => is_numeric($size) ? (int) $size : null,
                 'uploaded_at' => now()->toIso8601String(),
+                'source' => 'url',
+                'source_url' => $url,
             ];
             $state['_save_state'] = true;
             return $state;
@@ -464,6 +747,27 @@ final class SystemUpdateService
         if ($idx >= count($commands)) {
             $this->appendLog('Finalize done.');
             $state['stage'] = 'done';
+
+            // Record installed version (persists even if the update state is reset).
+            $pkg = $state['package'] ?? null;
+            if (is_array($pkg)) {
+                $installed = [
+                    'source' => (string) ($pkg['source'] ?? 'unknown'),
+                    'package' => [
+                        'filename' => $pkg['filename'] ?? null,
+                        'sha256' => $pkg['sha256'] ?? null,
+                        'size_bytes' => $pkg['size_bytes'] ?? null,
+                    ],
+                ];
+                if (isset($pkg['source_url'])) {
+                    $installed['package']['source_url'] = (string) $pkg['source_url'];
+                }
+                if (isset($pkg['github']) && is_array($pkg['github'])) {
+                    $installed['github'] = $pkg['github'];
+                }
+
+                $this->writeInstalled($installed);
+            }
 
             // Cleanup extracted work dir to save disk (package zip is kept).
             $extractDir = (string) ($state['extracted_path'] ?? '');

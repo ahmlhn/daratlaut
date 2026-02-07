@@ -148,6 +148,10 @@ Route::middleware(['auth', 'resolve.tenant'])->group(function () {
     Route::post('/system-update/start', [SystemUpdateController::class, 'start'])->name('system_update.start');
     Route::post('/system-update/step', [SystemUpdateController::class, 'step'])->name('system_update.step');
     Route::post('/system-update/reset', [SystemUpdateController::class, 'reset'])->name('system_update.reset');
+    Route::post('/system-update/github/check', [SystemUpdateController::class, 'githubCheck'])->name('system_update.github_check');
+    Route::post('/system-update/github/download', [SystemUpdateController::class, 'githubDownload'])->name('system_update.github_download');
+    Route::post('/system-update/github/token', [SystemUpdateController::class, 'githubSaveToken'])->name('system_update.github_token');
+    Route::post('/system-update/github/token/clear', [SystemUpdateController::class, 'githubClearToken'])->name('system_update.github_token_clear');
     
     // OLT Management
     Route::get('/olts', [OltController::class, 'index'])->name('olts.index');

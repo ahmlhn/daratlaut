@@ -17,6 +17,19 @@ return [
     'allow_download' => (bool) env('SYSTEM_UPDATE_ALLOW_DOWNLOAD', false),
     'package_url' => env('SYSTEM_UPDATE_PACKAGE_URL'),
 
+    // GitHub (private repo support).
+    // Used for "check latest on main" + download zipball from GitHub API.
+    'github' => [
+        'enabled' => (bool) env('SYSTEM_UPDATE_GITHUB_ENABLED', true),
+        'owner' => env('SYSTEM_UPDATE_GITHUB_OWNER'),
+        'repo' => env('SYSTEM_UPDATE_GITHUB_REPO'),
+        'branch' => env('SYSTEM_UPDATE_GITHUB_BRANCH', 'main'),
+        // Optional fallback: can also be stored via admin UI (encrypted file under storage/).
+        'token' => env('SYSTEM_UPDATE_GITHUB_TOKEN'),
+        'api_base' => env('SYSTEM_UPDATE_GITHUB_API_BASE', 'https://api.github.com'),
+        'api_version' => env('SYSTEM_UPDATE_GITHUB_API_VERSION', '2022-11-28'),
+    ],
+
     // Paths that should never be overwritten by an update package.
     // Use forward slashes, relative to project root.
     'exclude_paths' => [
@@ -28,4 +41,3 @@ return [
         'public/uploads/',
     ],
 ];
-

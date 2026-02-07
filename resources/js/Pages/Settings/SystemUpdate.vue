@@ -9,10 +9,15 @@ const uploadPct = ref(0)
 const running = ref(false)
 const state = ref(null)
 const fileRef = ref(null)
+const ghBusy = ref(false)
+const ghToken = ref('')
+const ghCheck = ref(null)
 
 const stage = computed(() => state.value?.stage || 'idle')
 const err = computed(() => state.value?.error || '')
 const cfg = computed(() => state.value?.config || {})
+const github = computed(() => state.value?.github || {})
+const installed = computed(() => state.value?.installed || null)
 
 const copyProgress = computed(() => {
   const m = state.value?.manifest
@@ -164,6 +169,93 @@ async function resetUpdate() {
   }
 }
 
+async function githubSaveToken() {
+  const token = (ghToken.value || '').trim()
+  if (!token) return alert('Isi token dulu.')
+
+  ghBusy.value = true
+  try {
+    const res = await window.axios.post('/system-update/github/token', { token })
+    state.value = res?.data?.data?.data || res?.data?.data || state.value
+    ghToken.value = ''
+  } catch (e) {
+    alert(e?.response?.data?.message || e?.message || 'Gagal menyimpan token')
+  } finally {
+    ghBusy.value = false
+    await refreshStatus()
+  }
+}
+
+async function githubClearToken() {
+  if (!confirm('Hapus token GitHub yang disimpan di server (file-based)?')) return
+  ghBusy.value = true
+  try {
+    const res = await window.axios.post('/system-update/github/token/clear')
+    state.value = res?.data?.data?.data || res?.data?.data || state.value
+  } catch (e) {
+    alert(e?.response?.data?.message || e?.message || 'Gagal menghapus token')
+  } finally {
+    ghBusy.value = false
+    await refreshStatus()
+  }
+}
+
+async function githubCheckLatest() {
+  ghBusy.value = true
+  try {
+    const res = await window.axios.post('/system-update/github/check')
+    ghCheck.value = res?.data?.data || null
+  } catch (e) {
+    ghCheck.value = null
+    alert(e?.response?.data?.message || e?.message || 'Gagal cek update GitHub')
+  } finally {
+    ghBusy.value = false
+  }
+}
+
+async function githubDownloadAndUpdate() {
+  const repo = github.value?.owner && github.value?.repo ? `${github.value.owner}/${github.value.repo}` : '(repo belum diset)'
+  const warn = [
+    `Sistem akan download source dari GitHub (${repo}@${github.value?.branch || 'main'}) dan apply update.`,
+    '',
+    'Catatan penting:',
+    '- Zipball GitHub biasanya TIDAK berisi vendor/ dan public/build.',
+    '- Jika ada perubahan dependency/frontend, update bisa tidak sempurna.',
+    '',
+    'Lanjutkan?',
+  ].join('\n')
+  if (!confirm(warn)) return
+
+  running.value = true
+  try {
+    const dl = await window.axios.post('/system-update/github/download')
+    state.value = dl?.data?.data?.data || dl?.data?.data || state.value
+
+    const st = await window.axios.post('/system-update/start')
+    state.value = st?.data?.data?.data || st?.data?.data || state.value
+
+    // Step loop: copy chunks then finalize commands.
+    let guard = 0
+    while (running.value && guard < 2000) {
+      guard++
+      if (stage.value === 'done' || stage.value === 'error' || stage.value === 'idle') break
+      if (!['ready', 'copying', 'finalize'].includes(stage.value)) {
+        await refreshStatus()
+        if (!['ready', 'copying', 'finalize'].includes(stage.value)) break
+      }
+
+      const stepRes = await window.axios.post('/system-update/step')
+      state.value = stepRes?.data?.data?.data || stepRes?.data?.data || state.value
+      await sleep(200)
+    }
+  } catch (e) {
+    alert(e?.response?.data?.message || e?.message || 'Update GitHub gagal')
+  } finally {
+    running.value = false
+    await refreshStatus()
+  }
+}
+
 onMounted(() => {
   refreshStatus()
 })
@@ -266,6 +358,90 @@ onMounted(() => {
           </div>
 
           <div class="card p-5">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h2 class="text-sm font-black text-gray-900 dark:text-white uppercase tracking-wider">GitHub (main)</h2>
+                <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
+                  Cek update terbaru dari GitHub branch <span class="font-semibold">{{ github.branch || 'main' }}</span> dan apply otomatis.
+                </p>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  @click="githubCheckLatest"
+                  class="btn btn-secondary"
+                  :disabled="ghBusy || running || uploading || !github.enabled"
+                >
+                  Cek Update
+                </button>
+                <button
+                  @click="githubDownloadAndUpdate"
+                  class="btn btn-primary"
+                  :disabled="ghBusy || running || uploading || !github.enabled || !github.configured || !github.token_present"
+                >
+                  Download & Update
+                </button>
+              </div>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-gray-700 dark:text-gray-300">
+              <div>
+                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Repo</div>
+                <div class="mt-1 font-semibold">
+                  <span v-if="github.configured">{{ github.owner }}/{{ github.repo }}</span>
+                  <span v-else class="text-amber-700 dark:text-amber-300">Belum diset (isi `SYSTEM_UPDATE_GITHUB_OWNER/REPO` di .env)</span>
+                </div>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Token</div>
+                <div class="mt-1 font-semibold">
+                  <span v-if="github.token_present" class="text-emerald-700 dark:text-emerald-300">Ada ({{ github.token_hint || '****' }})</span>
+                  <span v-else class="text-amber-700 dark:text-amber-300">Belum ada</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <input v-model="ghToken" type="password" class="input sm:col-span-2" placeholder="GitHub token (read-only contents)" />
+              <div class="flex items-center gap-2">
+                <button @click="githubSaveToken" class="btn btn-secondary flex-1" :disabled="ghBusy || running || uploading || !github.enabled">Simpan</button>
+                <button @click="githubClearToken" class="btn btn-danger" :disabled="ghBusy || running || uploading || !github.enabled">Hapus</button>
+              </div>
+            </div>
+
+            <div class="mt-4 text-xs text-gray-500 dark:text-gray-400">
+              <p>
+                Disarankan pakai <span class="font-semibold">Fine-grained PAT</span> dengan akses <span class="font-semibold">Contents: Read</span> ke repo ini saja.
+              </p>
+            </div>
+
+            <div v-if="installed" class="mt-4 text-xs text-gray-500 dark:text-gray-400">
+              <div class="flex flex-wrap gap-x-6 gap-y-1">
+                <span>installed source: <span class="font-semibold">{{ installed.source || '-' }}</span></span>
+                <span v-if="installed.github?.sha">installed sha: <span class="font-mono font-semibold">{{ (installed.github.sha || '').slice(0, 7) }}</span></span>
+                <span v-else>installed sha: <span class="font-semibold">unknown</span></span>
+              </div>
+            </div>
+
+            <div v-if="ghCheck?.latest" class="mt-4 rounded-xl border border-gray-200 dark:border-white/10 p-4 bg-gray-50 dark:bg-dark-950">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Latest</div>
+                  <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">
+                    <span class="font-mono">{{ ghCheck.latest.short }}</span>
+                    <span class="ml-2 text-gray-600 dark:text-gray-300">{{ ghCheck.latest.message }}</span>
+                  </div>
+                  <div v-if="ghCheck.latest.date" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ ghCheck.latest.date }}</div>
+                </div>
+                <div class="text-right text-xs">
+                  <div v-if="ghCheck.update_available === false" class="font-bold text-emerald-700 dark:text-emerald-300">UP TO DATE</div>
+                  <div v-else-if="ghCheck.update_available === true" class="font-bold text-amber-700 dark:text-amber-300">UPDATE AVAILABLE</div>
+                  <div v-else class="font-bold text-gray-500 dark:text-gray-400">UNKNOWN</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card p-5">
             <h2 class="text-sm font-black text-gray-900 dark:text-white uppercase tracking-wider">Paket Update (ZIP)</h2>
             <div class="mt-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
               <input ref="fileRef" type="file" accept=".zip" class="block w-full text-sm text-gray-700 dark:text-gray-300" />
@@ -310,4 +486,3 @@ onMounted(() => {
     </div>
   </AdminLayout>
 </template>
-
