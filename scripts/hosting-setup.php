@@ -1,0 +1,317 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Shared-hosting deploy helper for backend-laravel.
+ *
+ * Usage:
+ *   php scripts/hosting-setup.php
+ */
+final class HostingSetup
+{
+    private string $rootPath;
+    private string $envPath;
+    private string $envExamplePath;
+    private bool $envOnly;
+    /** @var string[] */
+    private array $envLines = [];
+    private bool $envChanged = false;
+
+    public function __construct(string $rootPath, bool $envOnly = false)
+    {
+        $this->rootPath = rtrim($rootPath, DIRECTORY_SEPARATOR);
+        $this->envPath = $this->rootPath . DIRECTORY_SEPARATOR . '.env';
+        $this->envExamplePath = $this->rootPath . DIRECTORY_SEPARATOR . '.env.example';
+        $this->envOnly = $envOnly;
+    }
+
+    public function run(): int
+    {
+        $this->printHeader('Hosting setup started');
+
+        if (!$this->prepareEnvFile()) {
+            return 1;
+        }
+
+        $this->loadEnvLines();
+        $this->normalizeEnv();
+        $this->saveEnvIfChanged();
+
+        if ($this->envOnly) {
+            $this->printHeader('Done');
+            $this->printLine('Environment preflight completed.');
+            return 0;
+        }
+
+        $this->printHeader('Running artisan tasks');
+
+        $commands = [
+            'php artisan optimize:clear',
+            'php artisan migrate --force',
+            'php artisan config:cache',
+            'php artisan route:cache',
+            'php artisan view:cache',
+        ];
+
+        foreach ($commands as $command) {
+            if ($this->runCommand($command) !== 0) {
+                $this->printLine("Failed: {$command}");
+                return 1;
+            }
+        }
+
+        $storageLinked = $this->runCommand('php artisan storage:link') === 0;
+
+        if (!$storageLinked) {
+            $this->printLine('`storage:link` failed. Trying fallback sync to `public/storage` ...');
+            if (!$this->syncStoragePublic()) {
+                $this->printLine('Storage fallback sync failed. Files under /storage/* may be unavailable.');
+                return 1;
+            }
+            $this->printLine('Fallback storage sync completed.');
+        }
+
+        $this->printHeader('Done');
+        $this->printLine('Hosting setup completed successfully.');
+        $this->printLine('If uploads are added and symlink is unavailable, rerun this script to resync public/storage.');
+
+        return 0;
+    }
+
+    private function prepareEnvFile(): bool
+    {
+        if (is_file($this->envPath)) {
+            return true;
+        }
+
+        if (!is_file($this->envExamplePath)) {
+            $this->printLine('Missing both `.env` and `.env.example`.');
+            return false;
+        }
+
+        if (!@copy($this->envExamplePath, $this->envPath)) {
+            $this->printLine('Unable to create `.env` from `.env.example`.');
+            return false;
+        }
+
+        $this->printLine('Created `.env` from `.env.example`.');
+        return true;
+    }
+
+    private function loadEnvLines(): void
+    {
+        $content = file_get_contents($this->envPath);
+        if ($content === false) {
+            throw new RuntimeException('Unable to read `.env`.');
+        }
+
+        $normalized = str_replace(["\r\n", "\r"], "\n", $content);
+        $this->envLines = explode("\n", $normalized);
+    }
+
+    private function normalizeEnv(): void
+    {
+        $appName = $this->getEnvValue('APP_NAME');
+        if ($appName !== null && $appName !== '') {
+            $trimmed = trim($appName);
+            if (!$this->isQuoted($trimmed) && preg_match('/\s/', $trimmed) === 1) {
+                $this->setEnvValue('APP_NAME', $this->quoteValue($trimmed), true);
+            }
+        }
+
+        $this->setIfEmpty('APP_ENV', 'production');
+        $this->setIfEmpty('APP_DEBUG', 'false');
+        $this->setIfEmpty('SESSION_DRIVER', 'file');
+        $this->setIfEmpty('CACHE_STORE', 'file');
+        $this->setIfEmpty('QUEUE_CONNECTION', 'sync');
+        $this->setIfEmpty('APP_MAINTENANCE_STORE', 'file');
+
+        $appKey = trim((string) $this->getEnvValue('APP_KEY'));
+        if ($appKey === '') {
+            $generatedKey = 'base64:' . base64_encode(random_bytes(32));
+            $this->setEnvValue('APP_KEY', $generatedKey);
+            $this->printLine('Generated missing APP_KEY.');
+        }
+    }
+
+    private function saveEnvIfChanged(): void
+    {
+        if (!$this->envChanged) {
+            return;
+        }
+
+        $backupPath = $this->envPath . '.bak-' . date('Ymd-His');
+        @copy($this->envPath, $backupPath);
+
+        $out = implode("\n", $this->envLines);
+        if (!str_ends_with($out, "\n")) {
+            $out .= "\n";
+        }
+
+        file_put_contents($this->envPath, $out);
+        $this->printLine("Updated `.env` (backup: " . basename($backupPath) . ').');
+    }
+
+    private function runCommand(string $command): int
+    {
+        $this->printLine("> {$command}");
+        $cwd = getcwd();
+        chdir($this->rootPath);
+        passthru($command, $exitCode);
+        if ($cwd !== false) {
+            chdir($cwd);
+        }
+        return (int) $exitCode;
+    }
+
+    private function syncStoragePublic(): bool
+    {
+        $source = $this->rootPath . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'app' . DIRECTORY_SEPARATOR . 'public';
+        $target = $this->rootPath . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'storage';
+
+        if (!is_dir($source)) {
+            return false;
+        }
+
+        if (is_link($target) || is_file($target)) {
+            @unlink($target);
+        }
+
+        if (!is_dir($target) && !@mkdir($target, 0775, true) && !is_dir($target)) {
+            return false;
+        }
+
+        return $this->copyDirectory($source, $target);
+    }
+
+    private function copyDirectory(string $source, string $target): bool
+    {
+        $items = @scandir($source);
+        if (!is_array($items)) {
+            return false;
+        }
+
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+
+            $from = $source . DIRECTORY_SEPARATOR . $item;
+            $to = $target . DIRECTORY_SEPARATOR . $item;
+
+            if (is_dir($from)) {
+                if (!is_dir($to) && !@mkdir($to, 0775, true) && !is_dir($to)) {
+                    return false;
+                }
+                if (!$this->copyDirectory($from, $to)) {
+                    return false;
+                }
+                continue;
+            }
+
+            if (!@copy($from, $to)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function setIfEmpty(string $key, string $value): void
+    {
+        $current = $this->getEnvValue($key);
+        if ($current === null || trim($current) === '') {
+            $this->setEnvValue($key, $value);
+        }
+    }
+
+    private function getEnvValue(string $key): ?string
+    {
+        foreach ($this->envLines as $line) {
+            if (!preg_match('/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/', $line, $matches)) {
+                continue;
+            }
+            if ($matches[1] !== $key) {
+                continue;
+            }
+
+            return $matches[2];
+        }
+        return null;
+    }
+
+    private function setEnvValue(string $key, string $value, bool $valueIsRaw = false): void
+    {
+        $serialized = $valueIsRaw ? $value : $this->serializeEnvValue($value);
+        $replacement = $key . '=' . $serialized;
+
+        foreach ($this->envLines as $index => $line) {
+            if (preg_match('/^\s*' . preg_quote($key, '/') . '\s*=/', $line) === 1) {
+                if ($line !== $replacement) {
+                    $this->envLines[$index] = $replacement;
+                    $this->envChanged = true;
+                }
+                return;
+            }
+        }
+
+        $this->envLines[] = $replacement;
+        $this->envChanged = true;
+    }
+
+    private function serializeEnvValue(string $value): string
+    {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return '';
+        }
+
+        if ($this->isQuoted($trimmed)) {
+            return $trimmed;
+        }
+
+        if (preg_match('/\s|#/', $trimmed) === 1) {
+            return $this->quoteValue($trimmed);
+        }
+
+        return $trimmed;
+    }
+
+    private function quoteValue(string $value): string
+    {
+        return '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $value) . '"';
+    }
+
+    private function isQuoted(string $value): bool
+    {
+        $length = strlen($value);
+        if ($length < 2) {
+            return false;
+        }
+        $first = $value[0];
+        $last = $value[$length - 1];
+        return ($first === '"' && $last === '"') || ($first === "'" && $last === "'");
+    }
+
+    private function printHeader(string $label): void
+    {
+        $this->printLine('');
+        $this->printLine('== ' . $label . ' ==');
+    }
+
+    private function printLine(string $message): void
+    {
+        fwrite(STDOUT, $message . PHP_EOL);
+    }
+}
+
+try {
+    $envOnly = in_array('--env-only', $argv, true);
+    $setup = new HostingSetup(dirname(__DIR__), $envOnly);
+    exit($setup->run());
+} catch (Throwable $exception) {
+    fwrite(STDERR, 'Fatal: ' . $exception->getMessage() . PHP_EOL);
+    exit(1);
+}
