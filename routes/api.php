@@ -147,13 +147,18 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::get('/olts/{id}/fsp', [OltController::class, 'listFsp']);
     Route::get('/olts/{id}/scan-uncfg', [OltController::class, 'scanUnconfigured']);
     Route::get('/olts/{id}/registered', [OltController::class, 'loadRegisteredFsp']);
+    Route::post('/olts/{id}/registered-all', [OltController::class, 'loadRegisteredAllBaseinfo']);
     Route::get('/olts/{id}/cache', [OltController::class, 'loadRegisteredCache']);
     Route::get('/olts/{id}/search', [OltController::class, 'searchCache']);
+    Route::post('/olts/{id}/find-onu-by-sn', [OltController::class, 'findOnuBySn']);
     Route::get('/olts/{id}/onu-detail', [OltController::class, 'getOnuDetail']);
     Route::post('/olts/{id}/register-onu', [OltController::class, 'registerOnu']);
     Route::post('/olts/{id}/update-onu-name', [OltController::class, 'updateOnuName']);
     Route::post('/olts/{id}/delete-onu', [OltController::class, 'deleteOnu']);
     Route::post('/olts/{id}/restart-onu', [OltController::class, 'restartOnu']);
+    Route::post('/olts/{id}/write-config', [OltController::class, 'writeConfig']);
+    Route::post('/olts/{id}/auto-register', [OltController::class, 'autoRegister']);
+    Route::post('/olts/{id}/sync-onu-names', [OltController::class, 'syncOnuNames']);
     Route::post('/olts/{id}/sync-all', [OltController::class, 'syncAll']);
     Route::get('/olts/{id}/logs', [OltController::class, 'logs']);
     Route::apiResource('/olts', OltController::class);

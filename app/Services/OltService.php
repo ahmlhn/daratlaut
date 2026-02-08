@@ -198,21 +198,32 @@ class OltService
      */
     public function loadRegisteredFsp(string $fsp): array
     {
-        // Get baseinfo with status
+        // Baseinfo (status + SN) - output format is firmware-sensitive; parser must handle native C320 shapes.
         $out = $this->sendCommand("show gpon onu baseinfo gpon-olt_{$fsp}");
         $items = $this->parseBaseinfoOutput($out, $fsp);
-        
-        // Get RX power
-        $rxOut = $this->sendCommand("show gpon onu optical-info gpon-olt_{$fsp}");
-        $rxMap = $this->parseRxOutput($rxOut);
-        
+
+        // RX power (native parity): try "show pon power onu-rx" first, then fallback to optical-info.
+        $rxMap = [];
+        try {
+            $rxOut = $this->sendCommand("show pon power onu-rx gpon-olt_{$fsp}");
+            $rxMap = $this->parseRxOutput($rxOut, $fsp);
+        } catch (Throwable $e) {
+            // ignore
+        }
+
+        if (empty($rxMap)) {
+            $rxOut = $this->sendCommand("show gpon onu optical-info gpon-olt_{$fsp}");
+            $rxMap = $this->parseRxOutput($rxOut, $fsp);
+        }
+
         foreach ($items as &$item) {
-            $key = $item['fsp'] . ':' . $item['onu_id'];
+            $key = (string)($item['fsp'] ?? '') . ':' . (string)($item['onu_id'] ?? '');
             if (isset($rxMap[$key])) {
                 $item['rx'] = $rxMap[$key];
             }
         }
-        
+        unset($item);
+
         return $items;
     }
 
@@ -238,8 +249,14 @@ class OltService
      */
     public function registerOnu(string $fsp, string $sn, string $name, ?int $onuId = null): array
     {
-        // Sanitize name (no spaces)
+        // Native parity + safety: remove whitespace and unsafe CLI chars; keep it short.
+        $name = trim((string) $name);
         $name = preg_replace('/\s+/', '', $name);
+        $name = preg_replace('/[^A-Za-z0-9_.-]/', '', $name);
+        $name = substr($name, 0, 32);
+        if ($name === '') {
+            throw new RuntimeException('Nama ONU tidak valid (kosong setelah sanitasi).');
+        }
         
         // Find available ONU ID if not specified
         if ($onuId === null) {
@@ -313,8 +330,14 @@ class OltService
      */
     public function updateOnuName(string $fsp, int $onuId, string $name): bool
     {
-        // Sanitize name
+        // Native parity + safety: remove whitespace and unsafe CLI chars; keep it short.
+        $name = trim((string) $name);
         $name = preg_replace('/\s+/', '', $name);
+        $name = preg_replace('/[^A-Za-z0-9_.-]/', '', $name);
+        $name = substr($name, 0, 32);
+        if ($name === '') {
+            throw new RuntimeException('Nama ONU tidak valid (kosong setelah sanitasi).');
+        }
 
         // Native parity: prefer "interface gpon-onu_...; name ..."
         $this->sendCommand('configure terminal');
@@ -825,74 +848,127 @@ class OltService
         return $list;
     }
 
-    private function parseBaseinfoOutput(string $out, string $fsp): array
+    private function parseBaseinfoOutput(string $out, string $fallbackFsp): array
     {
+        // Native C320 baseinfo output typically includes `gpon-onu_{fsp}:{onu_id}` per row.
+        // Some firmwares/table views may start with ONU-ID only. Support both.
         $items = [];
+        $seen = [];
         $lines = preg_split('/\r?\n/', $out);
-        
+
         foreach ($lines as $line) {
             $raw = trim($line);
-            if ($raw === '' || preg_match('/^\s*OnuIndex|^\s*-{3,}|^\s*F\/S\/P/i', $raw)) continue;
-            
-            // Parse line: ONU_ID, SN, STATUS, etc.
-            if (preg_match('/^\s*(\d+)\s+/', $raw, $m)) {
-                $onuId = (int)$m[1];
-                $tokens = preg_split('/\s+/', $raw);
-                
-                $sn = '';
-                $status = 'offline';
-                $name = '';
-                
-                foreach ($tokens as $t) {
-                    if (preg_match(self::SN_STRICT_RE, $t)) $sn = $t;
-                    if (preg_match('/^(ready|working|online)$/i', $t)) $status = 'online';
-                    if (preg_match('/^(offline|los|oos|dying)$/i', $t)) $status = 'offline';
+            if ($raw === '') continue;
+            if (stripos($raw, 'OnuIndex') !== false) continue;
+            if (preg_match('/^-{3,}/', $raw)) continue;
+            if (preg_match('/^\s*F\/S\/P/i', $raw)) continue;
+
+            $fsp = '';
+            $onuId = null;
+
+            if (preg_match(self::GPON_ONU_ID_RE, $raw, $m)) {
+                $fsp = $m[1];
+                $onuId = (int) $m[2];
+            } elseif (preg_match(self::ONU_STATE_FSP_COLON_ID_RE, $raw, $m)) {
+                $fsp = $m[1];
+                $onuId = (int) $m[2];
+            } elseif (preg_match(self::ONU_STATE_FSP_ID_RE, $raw, $m)) {
+                $fsp = $m[1];
+                $onuId = (int) $m[2];
+            } elseif (preg_match('/^\s*(\d+)\s+/', $raw, $m)) {
+                // Fallback: first column is ONU-ID, use provided FSP.
+                $fsp = $fallbackFsp;
+                $onuId = (int) $m[1];
+            }
+
+            if ($fsp === '' || !$onuId) continue;
+
+            $key = $fsp . ':' . $onuId;
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+
+            $sn = '';
+            if (preg_match('/SN:([A-Za-z0-9]+)/i', $raw, $m2)) {
+                $sn = $m2[1];
+            } elseif (preg_match(self::SN_STRICT_RE, $raw, $m2)) {
+                $sn = $m2[0];
+            }
+
+            $tokens = preg_split('/\s+/', $raw);
+            $state = '';
+            if (!empty($tokens)) {
+                $last = $tokens[count($tokens) - 1];
+                if (!preg_match('/^SN:/i', $last)) {
+                    $state = $last;
                 }
-                
-                // Get name from last non-status token
-                for ($i = count($tokens) - 1; $i >= 0; $i--) {
-                    $t = $tokens[$i];
-                    if (!preg_match('/^(\d+|ready|working|online|offline|los|oos|dying|[A-Z]{4}[A-F0-9]{8})$/i', $t)) {
-                        $name = $t;
+            }
+
+            if ($state === '') {
+                foreach ($tokens as $t) {
+                    $tl = strtolower($t);
+                    if (in_array($tl, ['ready', 'working', 'online', 'offline', 'los', 'oos', 'dying'], true)) {
+                        $state = $t;
                         break;
                     }
                 }
-                
-                $items[] = [
-                    'fsp' => $fsp,
-                    'onu_id' => $onuId,
-                    'sn' => $sn,
-                    'status' => $status,
-                    'name' => $name,
-                    'rx' => null,
-                ];
             }
+
+            $status = in_array(strtolower(trim((string) $state)), ['ready', 'working', 'online'], true) ? 'online' : 'offline';
+
+            $items[] = [
+                'fsp' => $fsp,
+                'onu_id' => $onuId,
+                'interface' => "gpon-onu_{$fsp}:{$onuId}",
+                'fsp_onu' => "{$fsp}:{$onuId}",
+                'sn' => $sn,
+                'state' => (string) $state,
+                'status' => $status,
+                'rx' => null,
+                'name' => '',
+                'online_duration' => '',
+                'vlan' => 0,
+            ];
         }
-        
+
         return $items;
     }
 
-    private function parseRxOutput(string $out): array
+    private function parseRxOutput(string $out, string $fallbackFsp = ''): array
     {
+        // Return map keyed by "{fsp}:{onu_id}" to keep consumers stable across RX command variants.
         $rxMap = [];
         $lines = preg_split('/\r?\n/', $out);
-        $currentFsp = '';
-        
+        $currentFsp = $fallbackFsp;
+
         foreach ($lines as $line) {
-            if (preg_match('/gpon-olt_(\d+\/\d+\/\d+)/i', $line, $m)) {
+            $raw = trim($line);
+            if ($raw === '') continue;
+            if (stripos($raw, 'Rx power') !== false) continue;
+            if (preg_match('/^-{3,}/', $raw)) continue;
+
+            if (preg_match('/gpon-olt_(\d+\/\d+\/\d+)/i', $raw, $m)) {
                 $currentFsp = $m[1];
+                continue;
             }
-            
-            if (preg_match('/^\s*(\d+)\s+/', $line, $m)) {
-                $onuId = (int)$m[1];
-                // Look for RX power (negative dBm value)
-                if (preg_match('/-?\d+\.\d+/', $line, $rxMatch)) {
-                    $key = $currentFsp . ':' . $onuId;
-                    $rxMap[$key] = floatval($rxMatch[0]);
+
+            // Native "show pon power onu-rx ..." output: `gpon-onu_{fsp}:{onu_id}  -23.1(dbm)`
+            if (preg_match('/gpon-onu_(\d+\/\d+\/\d+):(\d+)\s+(-?\d+(?:\.\d+)?)/i', $raw, $m)) {
+                $fsp = $m[1];
+                $onuId = (int) $m[2];
+                $val = (float) $m[3];
+                $rxMap[$fsp . ':' . $onuId] = $val;
+                continue;
+            }
+
+            // Some table formats: first column is ONU-ID; best-effort parse using currentFsp.
+            if ($currentFsp !== '' && preg_match('/^\s*(\d+)\s+/', $raw, $m)) {
+                $onuId = (int) $m[1];
+                if (preg_match('/-?\d+(?:\.\d+)?/', $raw, $rxMatch)) {
+                    $rxMap[$currentFsp . ':' . $onuId] = (float) $rxMatch[0];
                 }
             }
         }
-        
+
         return $rxMap;
     }
 
@@ -955,6 +1031,207 @@ class OltService
         }
         
         return $detail;
+    }
+
+    /**
+     * Find ONU by SN using telnet ("show gpon onu by sn {sn}")
+     * Returns null when not found.
+     */
+    public function findOnuBySn(string $sn): ?array
+    {
+        $sn = preg_replace('/[^A-Za-z0-9]/', '', (string) $sn);
+        if ($sn === '') {
+            return null;
+        }
+
+        $out = $this->sendCommand("show gpon onu by sn {$sn}", 25);
+        if (preg_match(self::ERROR_RE, $out) && !preg_match(self::OK_RE, $out)) {
+            return null;
+        }
+
+        if (!preg_match(self::GPON_ONU_ID_RE, $out, $m)) {
+            return null;
+        }
+
+        $fsp = (string) ($m[1] ?? '');
+        $onuId = (int) ($m[2] ?? 0);
+        if ($fsp === '' || $onuId <= 0) {
+            return null;
+        }
+
+        return [
+            'fsp' => $fsp,
+            'onu_id' => $onuId,
+            'interface' => "gpon-onu_{$fsp}:{$onuId}",
+        ];
+    }
+
+    /**
+     * Deep sync ONU names/detail into DB cache in chunks (native parity).
+     *
+     * Must be connected to the OLT before calling this method.
+     */
+    public function syncOnuNamesChunk(string $fsp, int $offset = 0, int $limit = 20, bool $onlyMissing = true): array
+    {
+        $fsp = trim((string) $fsp);
+        if (!preg_match(self::FSP_TOKEN_RE, $fsp)) {
+            throw new RuntimeException('FSP tidak valid.');
+        }
+        if ($offset < 0) {
+            $offset = 0;
+        }
+        if ($limit <= 0) {
+            $limit = 20;
+        }
+        if ($limit > 50) {
+            $limit = 50;
+        }
+
+        $baseOut = $this->sendCommand("show gpon onu baseinfo gpon-olt_{$fsp}", 35);
+        if (preg_match(self::ERROR_RE, $baseOut) && !preg_match(self::OK_RE, $baseOut)) {
+            throw new RuntimeException('Gagal mengambil baseinfo.');
+        }
+
+        $items = $this->parseBaseinfoOutput($baseOut, $fsp);
+        $total = count($items);
+
+        if ($total === 0) {
+            return [
+                'fsp' => $fsp,
+                'total' => 0,
+                'offset' => $offset,
+                'limit' => $limit,
+                'processed' => 0,
+                'updated' => 0,
+                'skipped' => 0,
+                'errors' => 0,
+                'next_offset' => null,
+                'done' => true,
+            ];
+        }
+
+        if ($offset >= $total) {
+            return [
+                'fsp' => $fsp,
+                'total' => $total,
+                'offset' => $offset,
+                'limit' => $limit,
+                'processed' => 0,
+                'updated' => 0,
+                'skipped' => 0,
+                'errors' => 0,
+                'next_offset' => null,
+                'done' => true,
+            ];
+        }
+
+        $slice = array_slice($items, $offset, $limit);
+
+        // Build a quick name map from DB when we only want to fetch missing names.
+        $existingNameBySn = [];
+        if ($onlyMissing && $this->olt) {
+            $table = (new OltOnu())->getTable();
+            if (Schema::hasTable($table)) {
+                static $snCol = null;
+                if ($snCol === null) {
+                    if (Schema::hasColumn($table, 'sn')) $snCol = 'sn';
+                    elseif (Schema::hasColumn($table, 'serial_number')) $snCol = 'serial_number';
+                    else $snCol = 'sn';
+                }
+                static $nameCol = null;
+                if ($nameCol === null) {
+                    if (Schema::hasColumn($table, 'onu_name')) $nameCol = 'onu_name';
+                    elseif (Schema::hasColumn($table, 'name')) $nameCol = 'name';
+                    else $nameCol = null;
+                }
+
+                if ($nameCol) {
+                    $snList = [];
+                    foreach ($slice as $it) {
+                        $sn2 = preg_replace('/[^A-Za-z0-9]/', '', (string) ($it['sn'] ?? ''));
+                        if ($sn2 !== '') $snList[$sn2] = true;
+                    }
+                    $sns = array_keys($snList);
+                    if (!empty($sns)) {
+                        try {
+                            $rows = DB::table($table)
+                                ->where('tenant_id', $this->tenantId)
+                                ->where('olt_id', $this->olt->id)
+                                ->whereIn($snCol, $sns)
+                                ->get([$snCol, $nameCol]);
+                            foreach ($rows as $row) {
+                                $sn3 = (string) ($row->{$snCol} ?? '');
+                                if ($sn3 === '') continue;
+                                $existingNameBySn[$sn3] = trim((string) ($row->{$nameCol} ?? ''));
+                            }
+                        } catch (Throwable $e) {
+                            // ignore
+                        }
+                    }
+                }
+            }
+        }
+
+        $processed = 0;
+        $updated = 0;
+        $skipped = 0;
+        $errors = 0;
+
+        foreach ($slice as $it) {
+            $processed++;
+            $sn4 = preg_replace('/[^A-Za-z0-9]/', '', (string) ($it['sn'] ?? ''));
+            $onuId = (int) ($it['onu_id'] ?? 0);
+            $existsName = $sn4 !== '' ? (string) ($existingNameBySn[$sn4] ?? '') : '';
+
+            if ($onlyMissing && $existsName !== '' && $onuId > 0 && $sn4 !== '') {
+                // Ensure registration fields are up to date without fetching detail-info again.
+                $this->saveOnuToDb($fsp, $onuId, $sn4, $existsName, true, true);
+                $skipped++;
+                continue;
+            }
+
+            if ($onuId <= 0) {
+                $errors++;
+                continue;
+            }
+
+            $detailOut = $this->sendCommand("show gpon onu detail-info gpon-onu_{$fsp}:{$onuId}", 35);
+            if (preg_match(self::ERROR_RE, $detailOut) && !preg_match(self::OK_RE, $detailOut)) {
+                $errors++;
+                continue;
+            }
+
+            $detail = $this->parseOnuDetail($detailOut);
+            $snDetail = trim((string) ($detail['sn'] ?? $detail['serial'] ?? ''));
+            $snDetail = preg_replace('/[^A-Za-z0-9]/', '', $snDetail);
+            if ($snDetail === '') {
+                $snDetail = $sn4;
+            }
+            if ($snDetail === '') {
+                $errors++;
+                continue;
+            }
+
+            $this->saveOnuDetailToDb($snDetail, $fsp, $onuId, $detail);
+            $updated++;
+            usleep(150000);
+        }
+
+        $nextOffset = $offset + count($slice);
+        $done = $nextOffset >= $total;
+
+        return [
+            'fsp' => $fsp,
+            'total' => $total,
+            'offset' => $offset,
+            'limit' => $limit,
+            'processed' => $processed,
+            'updated' => $updated,
+            'skipped' => $skipped,
+            'errors' => $errors,
+            'next_offset' => $done ? null : $nextOffset,
+            'done' => $done,
+        ];
     }
 
     /**

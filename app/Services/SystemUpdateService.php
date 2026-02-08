@@ -1173,14 +1173,42 @@ final class SystemUpdateService
         if ($cmd === 'storage:link') {
             $code = Artisan::call('storage:link');
             $out = trim((string) Artisan::output());
-            if ($out !== '') $this->appendLog($out);
 
-            if ($code !== 0) {
-                $this->appendLog('storage:link failed. Trying fallback sync to public/storage ...');
-                if (!$this->syncStoragePublic()) {
-                    throw new RuntimeException('storage:link failed and fallback sync failed.');
+            $outLower = strtolower($out);
+            $alreadyExists = $outLower !== ''
+                && str_contains($outLower, 'public/storage')
+                && str_contains($outLower, 'already exists');
+
+            if ($alreadyExists) {
+                // Laravel prints "ERROR The [public/storage] link already exists." and returns nonzero.
+                // This is usually benign (idempotent). Avoid scaring users with a false error log.
+                $publicStorage = public_path('storage');
+                $targetStorage = storage_path('app/public');
+
+                $publicReal = @realpath($publicStorage);
+                $targetReal = @realpath($targetStorage);
+                $looksLinked = is_string($publicReal) && is_string($targetReal) && $publicReal !== '' && $publicReal === $targetReal;
+
+                if (is_link($publicStorage) || $looksLinked) {
+                    $this->appendLog('storage:link: public/storage already exists (ok).');
+                } else {
+                    // Some hosts disallow symlinks; keep our directory-based fallback in place.
+                    $this->appendLog('storage:link: public/storage already exists. Trying fallback sync to public/storage ...');
+                    if (!$this->syncStoragePublic()) {
+                        throw new RuntimeException('storage:link exists and fallback sync failed.');
+                    }
+                    $this->appendLog('Fallback storage sync completed.');
                 }
-                $this->appendLog('Fallback storage sync completed.');
+            } else {
+                if ($out !== '') $this->appendLog($out);
+
+                if ($code !== 0) {
+                    $this->appendLog('storage:link failed. Trying fallback sync to public/storage ...');
+                    if (!$this->syncStoragePublic()) {
+                        throw new RuntimeException('storage:link failed and fallback sync failed.');
+                    }
+                    $this->appendLog('Fallback storage sync completed.');
+                }
             }
         } else {
             [$name, $params] = $this->parseArtisan($cmd);

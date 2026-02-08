@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
+use Throwable;
 
 class OltController extends Controller
 {
@@ -101,6 +102,10 @@ class OltController extends Controller
                     'nama_olt' => $olt->nama_olt,
                     'host' => $olt->host,
                     'port' => $olt->port,
+                    'vlan_default' => $olt->vlan_default,
+                    'tcont_default' => $olt->tcont_default,
+                    'onu_type_default' => $olt->onu_type_default,
+                    'service_port_id_default' => $olt->service_port_id_default,
                     'is_active' => $olt->is_active ?? true,
                     'fsp_count' => is_array($fspCache) ? count($fspCache) : 0,
                     'onu_count' => (int) ($olt->onus_count ?? 0),
@@ -179,6 +184,8 @@ class OltController extends Controller
                 'username' => $olt->username,
                 'tcont_default' => $olt->tcont_default,
                 'vlan_default' => $olt->vlan_default,
+                'onu_type_default' => $olt->onu_type_default,
+                'service_port_id_default' => $olt->service_port_id_default,
                 'is_active' => $olt->is_active ?? true,
                 'fsp_cache' => $olt->fsp_cache ?? [],
                 'fsp_cache_at' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
@@ -194,15 +201,29 @@ class OltController extends Controller
     {
         $request->validate([
             'nama_olt' => 'required|string|max:100',
-            'host' => 'required|string|max:100',
+            'host' => 'required|string|max:100|regex:/^[A-Za-z0-9.-]+$/',
             'port' => 'integer|min:1|max:65535',
             'username' => 'required|string|max:100',
             'password' => 'required|string|max:100',
             'tcont_default' => 'nullable|string|max:50',
             'vlan_default' => 'nullable|integer',
+            'onu_type_default' => 'nullable|string|max:50',
+            'service_port_id_default' => 'nullable|integer',
         ]);
 
         $tenantId = $request->user()->tenant_id ?? 1;
+
+        $tcontDefault = preg_replace('/[^A-Za-z0-9_.-]/', '', trim((string) $request->input('tcont_default', '')));
+        if ($tcontDefault === '') $tcontDefault = OltService::DEFAULT_TCONT_PROFILE;
+
+        $vlanDefault = (int) ($request->input('vlan_default') ?? OltService::DEFAULT_VLAN);
+        if ($vlanDefault < 1 || $vlanDefault > 4094) $vlanDefault = OltService::DEFAULT_VLAN;
+
+        $onuTypeDefault = preg_replace('/[^A-Za-z0-9_.-]/', '', trim((string) $request->input('onu_type_default', '')));
+        if ($onuTypeDefault === '') $onuTypeDefault = OltService::DEFAULT_ONU_TYPE;
+
+        $spidDefault = (int) ($request->input('service_port_id_default') ?? OltService::DEFAULT_SERVICE_PORT_ID);
+        if ($spidDefault < 1 || $spidDefault > 65535) $spidDefault = OltService::DEFAULT_SERVICE_PORT_ID;
         
         $olt = Olt::create([
             'tenant_id' => $tenantId,
@@ -211,8 +232,10 @@ class OltController extends Controller
             'port' => $request->port ?? 23,
             'username' => $request->username,
             'password' => $request->password,
-            'tcont_default' => $request->tcont_default ?? 'pppoe',
-            'vlan_default' => $request->vlan_default ?? 200,
+            'tcont_default' => $tcontDefault,
+            'vlan_default' => $vlanDefault,
+            'onu_type_default' => $onuTypeDefault,
+            'service_port_id_default' => $spidDefault,
         ]);
 
         return response()->json([
@@ -229,19 +252,45 @@ class OltController extends Controller
     {
         $request->validate([
             'nama_olt' => 'string|max:100',
-            'host' => 'string|max:100',
+            'host' => 'string|max:100|regex:/^[A-Za-z0-9.-]+$/',
             'port' => 'integer|min:1|max:65535',
             'username' => 'string|max:100',
             'password' => 'nullable|string|max:100',
             'tcont_default' => 'nullable|string|max:50',
             'vlan_default' => 'nullable|integer',
+            'onu_type_default' => 'nullable|string|max:50',
+            'service_port_id_default' => 'nullable|integer',
             'is_active' => 'boolean',
         ]);
 
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         
-        $data = $request->only(['nama_olt', 'host', 'port', 'username', 'tcont_default', 'vlan_default']);
+        $data = $request->only(['nama_olt', 'host', 'port', 'username']);
+
+        if ($request->has('tcont_default')) {
+            $tcontDefault = preg_replace('/[^A-Za-z0-9_.-]/', '', trim((string) $request->input('tcont_default', '')));
+            if ($tcontDefault === '') $tcontDefault = OltService::DEFAULT_TCONT_PROFILE;
+            $data['tcont_default'] = $tcontDefault;
+        }
+
+        if ($request->has('vlan_default')) {
+            $vlanDefault = (int) ($request->input('vlan_default') ?? OltService::DEFAULT_VLAN);
+            if ($vlanDefault < 1 || $vlanDefault > 4094) $vlanDefault = OltService::DEFAULT_VLAN;
+            $data['vlan_default'] = $vlanDefault;
+        }
+
+        if ($request->has('onu_type_default')) {
+            $onuTypeDefault = preg_replace('/[^A-Za-z0-9_.-]/', '', trim((string) $request->input('onu_type_default', '')));
+            if ($onuTypeDefault === '') $onuTypeDefault = OltService::DEFAULT_ONU_TYPE;
+            $data['onu_type_default'] = $onuTypeDefault;
+        }
+
+        if ($request->has('service_port_id_default')) {
+            $spidDefault = (int) ($request->input('service_port_id_default') ?? OltService::DEFAULT_SERVICE_PORT_ID);
+            if ($spidDefault < 1 || $spidDefault > 65535) $spidDefault = OltService::DEFAULT_SERVICE_PORT_ID;
+            $data['service_port_id_default'] = $spidDefault;
+        }
 
         if (Schema::hasColumn('noci_olts', 'is_active') && $request->has('is_active')) {
             $data['is_active'] = (bool) $request->is_active;
@@ -522,6 +571,226 @@ class OltController extends Controller
         }
     }
 
+    private function mergeOnuDbCacheFields(int $tenantId, int $oltId, array $items): array
+    {
+        if (empty($items) || !Schema::hasTable('noci_olt_onu')) {
+            return $items;
+        }
+
+        $snCol = $this->onuCacheSnColumn();
+        $snList = [];
+        foreach ($items as $it) {
+            $sn = (string) ($it['sn'] ?? '');
+            if ($sn !== '') {
+                $snList[$sn] = true;
+            }
+        }
+        $sns = array_keys($snList);
+        if (empty($sns)) {
+            return $items;
+        }
+
+        try {
+            $rows = OltOnu::forTenant($tenantId)
+                ->where('olt_id', $oltId)
+                ->whereIn($snCol, $sns)
+                ->get();
+        } catch (Throwable $e) {
+            return $items;
+        }
+
+        $map = [];
+        foreach ($rows as $row) {
+            $sn = (string) ($row->sn ?? $row->getAttribute('serial_number') ?? '');
+            if ($sn === '') continue;
+            $map[$sn] = [
+                'onu_name' => (string) ($row->onu_name ?? $row->getAttribute('name') ?? ''),
+                'online_duration' => (string) ($row->online_duration ?? ''),
+                'vlan' => (int) ($row->vlan ?? 0),
+            ];
+        }
+
+        if (empty($map)) {
+            return $items;
+        }
+
+        foreach ($items as &$it) {
+            $sn = (string) ($it['sn'] ?? '');
+            if ($sn === '' || !isset($map[$sn])) continue;
+            $cached = $map[$sn];
+            if (((string) ($it['name'] ?? '')) === '' && $cached['onu_name'] !== '') {
+                $it['name'] = $cached['onu_name'];
+            }
+            if (((string) ($it['online_duration'] ?? '')) === '' && $cached['online_duration'] !== '') {
+                $it['online_duration'] = $cached['online_duration'];
+            }
+            if (empty($it['vlan']) && !empty($cached['vlan'])) {
+                $it['vlan'] = (int) $cached['vlan'];
+            }
+        }
+        unset($it);
+
+        return $items;
+    }
+
+    /**
+     * Load registered ONUs (baseinfo) for multiple FSPs in one telnet session (native parity).
+     */
+    public function loadRegisteredAllBaseinfo(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'fsp_list' => 'required|array|min:1',
+            'fsp_list.*' => 'string|regex:/^\\d+\\/\\d+\\/\\d+$/',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+
+        $fspList = array_values(array_unique(array_map('strval', $request->input('fsp_list', []))));
+        $items = [];
+        $failed = [];
+
+        $service = null;
+        try {
+            $service = new OltService($tenantId);
+            $service->connect($olt);
+
+            foreach ($fspList as $fsp) {
+                try {
+                    $list = $service->loadRegisteredFsp($fsp);
+                    if (!empty($list)) {
+                        $items = array_merge($items, $list);
+                    }
+                } catch (RuntimeException $e) {
+                    $failed[] = ['fsp' => $fsp, 'error' => $e->getMessage()];
+                }
+            }
+            $service->disconnect();
+        } catch (RuntimeException $e) {
+            try {
+                if ($service) $service->disconnect();
+            } catch (Throwable $e2) {
+                // ignore
+            }
+
+            // Hosting-safe fallback: return DB cache when telnet fails.
+            if (Schema::hasTable('noci_olt_onu')) {
+                $cached = OltOnu::forTenant($tenantId)
+                    ->where('olt_id', $id)
+                    ->whereIn('fsp', $fspList)
+                    ->whereNotNull('onu_id')
+                    ->orderBy('fsp')
+                    ->orderBy('onu_id')
+                    ->get()
+                    ->map(fn (OltOnu $onu) => $this->formatOnuCacheRow($onu))
+                    ->values()
+                    ->all();
+
+                if (!empty($cached)) {
+                    return response()->json([
+                        'status' => 'ok',
+                        'data' => $cached,
+                        'count' => count($cached),
+                        'fsp_count' => count($fspList),
+                        'failed' => $failed,
+                        'cached' => true,
+                        'message' => 'Telnet gagal, menggunakan cache ONU.',
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+
+        $items = $this->mergeOnuDbCacheFields($tenantId, $id, $items);
+
+        return response()->json([
+            'status' => 'ok',
+            'data' => $items,
+            'count' => count($items),
+            'fsp_count' => count($fspList),
+            'failed' => $failed,
+        ]);
+    }
+
+    /**
+     * Find ONU by SN (telnet)
+     */
+    public function findOnuBySn(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'sn' => 'required|string|min:8|max:20',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $sn = preg_replace('/[^A-Za-z0-9]/', '', (string) $request->sn);
+        if ($sn === '') {
+            return response()->json(['status' => 'ok', 'data' => []]);
+        }
+
+        try {
+            $service = new OltService($tenantId);
+            $service->connect($olt);
+            $found = $service->findOnuBySn($sn);
+            $service->disconnect();
+
+            return response()->json([
+                'status' => 'ok',
+                'data' => $found ?: [],
+            ]);
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Deep sync registered ONU detail in chunks (native parity).
+     */
+    public function syncOnuNames(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'fsp' => 'required|string|regex:/^\\d+\\/\\d+\\/\\d+$/',
+            'offset' => 'nullable|integer|min:0',
+            'limit' => 'nullable|integer|min:1|max:50',
+            'only_missing' => 'nullable|boolean',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $fsp = (string) $request->fsp;
+        $offset = (int) ($request->input('offset') ?? 0);
+        $limit = (int) ($request->input('limit') ?? 20);
+        $onlyMissing = $request->boolean('only_missing', true);
+
+        $service = null;
+        try {
+            $service = new OltService($tenantId);
+            $service->connect($olt);
+            $res = $service->syncOnuNamesChunk($fsp, $offset, $limit, $onlyMissing);
+            $service->disconnect();
+
+            return response()->json(array_merge(['status' => 'ok'], $res));
+        } catch (RuntimeException $e) {
+            try {
+                if ($service) $service->disconnect();
+            } catch (Throwable $e2) {
+                // ignore
+            }
+
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
     /**
      * Get all registered ONUs from cache
      */
@@ -712,11 +981,14 @@ class OltController extends Controller
             'sn' => 'required|string|regex:/^[A-Za-z]{4}[A-Fa-f0-9]{8}$/',
             'name' => 'required|string|max:50',
             'onu_id' => 'nullable|integer|min:1|max:128',
+            'save_config' => 'nullable|boolean',
         ]);
         
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $saveConfig = $request->boolean('save_config', false);
         
+        $service = null;
         try {
             $service = new OltService($tenantId);
             $service->connect($olt);
@@ -726,15 +998,25 @@ class OltController extends Controller
                 $request->name,
                 $request->onu_id
             );
-            $service->writeConfig();
+
+            // Native parity: don't auto write-config unless explicitly requested.
+            if ($saveConfig) {
+                $service->writeConfig();
+            }
+
             $service->disconnect();
-            
+
             return response()->json([
                 'status' => 'ok',
-                'message' => 'ONU berhasil diregistrasi',
+                'message' => $saveConfig ? 'ONU berhasil diregistrasi dan config disimpan (write).' : 'ONU berhasil diregistrasi.',
                 'data' => $result,
             ]);
         } catch (RuntimeException $e) {
+            try {
+                if ($service) $service->disconnect();
+            } catch (Throwable $e2) {
+                // ignore
+            }
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
@@ -831,6 +1113,147 @@ class OltController extends Controller
                 'message' => 'ONU sedang di-restart',
             ]);
         } catch (RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Write config to memory ("write")
+     */
+    public function writeConfig(Request $request, int $id): JsonResponse
+    {
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+
+        try {
+            $service = new OltService($tenantId);
+            $service->connect($olt);
+            $service->writeConfig();
+            $service->disconnect();
+
+            return response()->json([
+                'status' => 'ok',
+                'message' => 'Config berhasil disimpan (write).',
+            ]);
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Auto-register all unconfigured ONUs (native parity)
+     */
+    public function autoRegister(Request $request, int $id): JsonResponse
+    {
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $role = strtolower((string) ($request->user()->role ?? ''));
+        $isTeknisi = in_array($role, ['teknisi', 'svp lapangan'], true);
+
+        if ($isTeknisi) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Teknisi hanya bisa registrasi manual.',
+            ], 403);
+        }
+
+        $request->validate([
+            'name_prefix' => 'nullable|string|max:16',
+            'save_config' => 'nullable|boolean',
+        ]);
+
+        $namePrefix = trim((string) ($request->input('name_prefix') ?? ''));
+        if ($namePrefix !== '') {
+            // Keep it CLI-safe and short.
+            $namePrefix = preg_replace('/[^A-Za-z0-9_-]/', '', $namePrefix);
+            $namePrefix = substr($namePrefix, 0, 16);
+        }
+
+        // Native parity: default is NOT to run write-config; users can click "Simpan Config" separately.
+        $saveConfig = $request->boolean('save_config', false);
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+
+        $service = null;
+        try {
+            $service = new OltService($tenantId);
+            $service->connect($olt);
+
+            $uncfg = $service->scanUnconfigured();
+            if (empty($uncfg)) {
+                $service->disconnect();
+                return response()->json([
+                    'status' => 'ok',
+                    'message' => 'Tidak ada ONU unregistered.',
+                    'summary' => [
+                        'count' => 0,
+                        'success' => 0,
+                        'error' => 0,
+                    ],
+                    'results' => [],
+                ]);
+            }
+
+            $results = [];
+            $succ = 0;
+            $err = 0;
+            foreach ($uncfg as $it) {
+                $fsp = (string) ($it['fsp'] ?? '');
+                $sn = (string) ($it['sn'] ?? '');
+                if ($fsp === '' || $sn === '') continue;
+
+                $onuName = $namePrefix !== '' ? "{$namePrefix}-{$sn}" : "ONU-{$sn}";
+                $onuName = substr($onuName, 0, 32);
+
+                try {
+                    $res = $service->registerOnu($fsp, $sn, $onuName, null);
+                    $succ++;
+                    $results[] = [
+                        'fsp' => $fsp,
+                        'sn' => $sn,
+                        'onu_id' => $res['onu_id'] ?? null,
+                        'name' => $res['name'] ?? $onuName,
+                        'status' => 'success',
+                        'message' => 'Provisioned',
+                    ];
+                } catch (RuntimeException $e) {
+                    $err++;
+                    $results[] = [
+                        'fsp' => $fsp,
+                        'sn' => $sn,
+                        'status' => 'error',
+                        'message' => $e->getMessage(),
+                    ];
+                }
+            }
+
+            if ($saveConfig && $succ > 0) {
+                $service->writeConfig();
+            }
+
+            $service->disconnect();
+
+            return response()->json([
+                'status' => 'ok',
+                'message' => "Auto register selesai. Success {$succ}, error {$err}.",
+                'summary' => [
+                    'count' => $succ + $err,
+                    'success' => $succ,
+                    'error' => $err,
+                ],
+                'results' => $results,
+            ]);
+        } catch (RuntimeException $e) {
+            try {
+                if ($service) $service->disconnect();
+            } catch (Throwable $e2) {
+                // ignore
+            }
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
