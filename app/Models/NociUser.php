@@ -97,7 +97,7 @@ class NociUser extends Authenticatable
         return $this->role === self::ROLE_SVP;
     }
 
-    public function hasRole(string|array $roles): bool
+    public function hasLegacyRole(string|array $roles): bool
     {
         if (is_string($roles)) {
             return $this->role === $roles;
@@ -107,17 +107,17 @@ class NociUser extends Authenticatable
 
     public function canManageTeam(): bool
     {
-        return $this->hasRole([self::ROLE_ADMIN, self::ROLE_OWNER]);
+        return $this->hasLegacyRole([self::ROLE_ADMIN, self::ROLE_OWNER]);
     }
 
     public function canManageFinance(): bool
     {
-        return $this->hasRole([self::ROLE_ADMIN, self::ROLE_OWNER, self::ROLE_KEUANGAN]);
+        return $this->hasLegacyRole([self::ROLE_ADMIN, self::ROLE_OWNER, self::ROLE_KEUANGAN]);
     }
 
     public function canManageOlt(): bool
     {
-        return $this->hasRole([self::ROLE_ADMIN, self::ROLE_OWNER, self::ROLE_CS, self::ROLE_TEKNISI]);
+        return $this->hasLegacyRole([self::ROLE_ADMIN, self::ROLE_OWNER, self::ROLE_CS, self::ROLE_TEKNISI]);
     }
 
     // Relationships
