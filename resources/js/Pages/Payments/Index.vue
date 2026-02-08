@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
+import { Head } from '@inertiajs/vue3'
 import AdminLayout from '../../Layouts/AdminLayout.vue'
 
 const props = defineProps({
@@ -192,6 +193,7 @@ const avgPayment = computed(() => stats.value.count > 0 ? stats.value.total_amou
 </script>
 
 <template>
+  <Head title="Riwayat Pembayaran" />
   <AdminLayout>
     <div class="space-y-6">
       <!-- Page header -->

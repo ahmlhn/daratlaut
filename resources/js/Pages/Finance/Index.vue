@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
+import { Head } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 
 // State
@@ -485,6 +486,7 @@ onMounted(() => {
 </script>
 
 <template>
+    <Head title="Keuangan" />
     <AdminLayout>
         <div class="p-6">
             <div class="mb-6">

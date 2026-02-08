@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { router, usePage } from '@inertiajs/vue3'
+import { Head, router, usePage } from '@inertiajs/vue3'
 
 const page = usePage()
 
@@ -76,6 +76,7 @@ const submit = () => {
 </script>
 
 <template>
+  <Head title="Login Administrator" />
   <div class="bg-slate-50 dark:bg-[#0b1120] text-slate-800 dark:text-white min-h-screen w-full flex items-center justify-center relative overflow-hidden selection:bg-blue-500 selection:text-white transition-colors duration-300">
     
     <!-- Compact Theme Switcher -->

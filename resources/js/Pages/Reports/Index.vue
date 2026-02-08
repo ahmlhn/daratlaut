@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
+import { Head } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 
 // State
@@ -171,6 +172,7 @@ onMounted(() => {
 </script>
 
 <template>
+    <Head title="Laporan & Analitik" />
     <AdminLayout>
         <div class="p-6">
             <div class="flex justify-between items-center mb-6">

@@ -1,4 +1,5 @@
 <template>
+  <Head title="Portal Pembayaran" />
   <div class="min-h-screen bg-gray-100 py-8 px-4">
     <div class="max-w-lg mx-auto">
       <!-- Header -->
@@ -199,6 +200,7 @@
 </template>
 
 <script setup>
+import { Head } from '@inertiajs/vue3'
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 

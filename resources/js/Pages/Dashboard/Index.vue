@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, inject, onUnmounted } from 'vue'
-import { usePage } from '@inertiajs/vue3'
+import { Head } from '@inertiajs/vue3'
 import AdminLayout from '@/Layouts/AdminLayout.vue'
 import LoadingSpinner from '@/Components/LoadingSpinner.vue'
 
@@ -181,6 +181,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <Head title="Dashboard" />
   <AdminLayout>
     <div class="space-y-6">
       <!-- Page header -->

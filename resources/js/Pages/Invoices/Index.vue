@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
+import { Head } from '@inertiajs/vue3'
 import AdminLayout from '../../Layouts/AdminLayout.vue'
 
 const props = defineProps({
@@ -245,6 +246,7 @@ const formatDate = (val) => val ? new Date(val).toLocaleDateString('id-ID') : '-
 </script>
 
 <template>
+  <Head :title="pageTitle" />
   <AdminLayout>
     <div class="space-y-6">
       <!-- Page header -->

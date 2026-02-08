@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
-import { usePage } from '@inertiajs/vue3';
+import { Head, usePage } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 
 const page = usePage();
@@ -1791,6 +1791,7 @@ onMounted(async () => {
 </script>
 
 <template>
+    <Head title="OLT Provisioning" />
     <AdminLayout>
         <div id="olt-root" class="p-6">
             <div class="flex flex-col gap-6 fade-in pb-20 md:pb-0">

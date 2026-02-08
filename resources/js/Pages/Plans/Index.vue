@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
+import { Head } from '@inertiajs/vue3'
 import AdminLayout from '../../Layouts/AdminLayout.vue'
 
 const props = defineProps({
@@ -131,6 +132,7 @@ const modalTitle = computed(() => modalMode.value === 'create' ? 'Tambah Paket' 
 </script>
 
 <template>
+  <Head title="Paket Layanan" />
   <AdminLayout>
     <div class="space-y-6">
       <!-- Header -->
