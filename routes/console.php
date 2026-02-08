@@ -48,3 +48,5 @@ Schedule::command('billing:send-reminders --type=overdue')
     ->dailyAt('10:00')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/billing-reminders.log'));
+
+

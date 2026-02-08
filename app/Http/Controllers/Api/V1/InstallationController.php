@@ -285,22 +285,119 @@ class InstallationController extends Controller
             }
         }
 
-        return $this->waSendBalesotomatis($tenantId, 'personal', $rawTarget, $message, $platform);
+        return $this->waSendFailover($tenantId, 'personal', $rawTarget, $message, $platform);
     }
 
-    private function waSendGroup(int $tenantId, string $groupId, string $message, string $platform = 'WA Group'): array
+    private function waSendWithRetry(array $gateway, string $type, string $target, string $message): array
     {
-        return $this->waSendBalesotomatis($tenantId, 'group', $groupId, $message, $platform);
+        $retryMax = (int) ($gateway['retry_max'] ?? 2);
+        // Force manual mode for now as per native logic implication or config
+        // In native: if mode == auto, retry_max = 0. But let's stick to config.
+        
+        $retryDelay = (int) ($gateway['retry_delay_sec'] ?? 0);
+        
+        $attempts = $retryMax + 1;
+        $lastResult = ['status' => 'failed', 'error' => 'Gagal kirim WA'];
+        
+        for ($i = 0; $i < $attempts; $i++) {
+            // Determine provider
+            $provider = strtolower((string) ($gateway['provider_code'] ?? ''));
+            
+            if ($provider === 'mpwa') {
+                $lastResult = $this->waSendMpwa($gateway['tenant_id'], $type, $target, $message, "WA (MPWA Retry {$i})", (object)$gateway);
+            } else {
+                // Default to balesotomatis logic (using existing method but adapted)
+                // We need to pass the gateway config to waSendBalesotomatis or adapt it.
+                // Since waSendBalesotomatis currently fetches config from DB, we might need a version that accepts config.
+                // For now, let's assume primary is always balesotomatis and we refactor that next.
+                // ACTUALLY: waSendBalesotomatis below uses resolveActiveWaConfig. 
+                // We should make a new method waSendBalesotomatisRaw that takes config.
+                $lastResult = $this->waSendBalesotomatisRaw($gateway['tenant_id'], $type, $target, $message, "WA (Balesotomatis Retry {$i})", (object)$gateway);
+            }
+            
+            if (($lastResult['status'] ?? '') === 'sent') {
+                return $lastResult;
+            }
+            
+            if ($i < $attempts - 1 && $retryDelay > 0) {
+                sleep($retryDelay);
+            }
+        }
+        
+        return $lastResult;
     }
 
-    private function waSendBalesotomatis(int $tenantId, string $type, string $target, string $message, string $platform): array
+    private function waSendFailover(int $tenantId, string $type, string $target, string $message, string $platform = 'WA'): array
     {
-        $conf = $this->resolveActiveWaConfig($tenantId);
-        if (!$conf) {
-            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Config WA belum disetting');
-            return ['status' => 'failed', 'error' => 'Config WA belum disetting'];
+        \Illuminate\Support\Facades\Log::info("DEBUG: waSendFailover hit for {$platform}");
+        
+        // 1. Get Active Gateways (Priority ASC)
+        // Native: wa_gateway_get_active_list
+        $gateways = DB::table('noci_wa_tenant_gateways')
+            ->where('tenant_id', $tenantId)
+            ->where('is_active', 1)
+            ->orderBy('priority', 'asc')
+            ->orderBy('id', 'asc') // consistent sort
+            ->get()
+            ->map(function ($item) {
+                return (array) $item;
+            })
+            ->toArray();
+
+        \Illuminate\Support\Facades\Log::info("DEBUG: Found " . count($gateways) . " active gateways in DB.");
+
+        // If no gateways found in tenant settings, check for legacy config (native fallback)
+        if (empty($gateways)) {
+             $legacy = DB::table('noci_conf_wa')
+                ->where('tenant_id', $tenantId)
+                ->where('is_active', 1)
+                ->first();
+             
+             if ($legacy) {
+                 \Illuminate\Support\Facades\Log::info("DEBUG: Found legacy config, using correct fallback.");
+                 $gateways[] = [
+                    'id' => 0,
+                    'tenant_id' => $tenantId,
+                    'provider_code' => 'balesotomatis',
+                    'label' => 'Legacy',
+                    'base_url' => $legacy->base_url ?? '',
+                    'group_url' => $legacy->group_url ?? '',
+                    'token' => $legacy->token ?? '',
+                    'sender_number' => $legacy->sender_number ?? '',
+                    // native defaults:
+                    'failover_mode' => 'manual',
+                    'retry_max' => 2,
+                    'retry_delay_sec' => 0,
+                 ];
+             } else {
+                 \Illuminate\Support\Facades\Log::warning("DEBUG: No legacy config found either.");
+             }
         }
 
+        if (empty($gateways)) {
+            \Illuminate\Support\Facades\Log::error("DEBUG: No active gateways available for tenant {$tenantId}.");
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Gateway WA tidak aktif');
+            return ['status' => 'failed', 'error' => 'Gateway WA tidak aktif'];
+        }
+
+        $lastResult = ['status' => 'failed', 'error' => 'Gagal kirim WA'];
+        
+        foreach ($gateways as $gw) {
+            \Illuminate\Support\Facades\Log::info("DEBUG: Attempting gateway ID " . ($gw['id'] ?? 'legacy') . " provider: " . ($gw['provider_code'] ?? 'unknown'));
+            $lastResult = $this->waSendWithRetry($gw, $type, $target, $message); // Pass type/platform?
+            \Illuminate\Support\Facades\Log::info("DEBUG: Gateway result: " . json_encode($lastResult));
+            
+            if (($lastResult['status'] ?? '') === 'sent') {
+                return $lastResult;
+            }
+        }
+
+        return $lastResult;
+    }
+
+    // Refactored to accept config object instead of looking it up
+    private function waSendBalesotomatisRaw(int $tenantId, string $type, string $target, string $message, string $platform, object $conf): array
+    {
         $token = trim((string) ($conf->token ?? ''));
         $sender = trim((string) ($conf->sender_number ?? ''));
         if ($token === '' || $sender === '') {
@@ -346,7 +443,11 @@ class InstallationController extends Controller
         }
 
         try {
-            $resp = Http::timeout(10)->post($endpoint, $payload);
+            // Use timeout from config if available (native: timeout_sec)
+            $timeout = (int)($conf->timeout_sec ?? 10);
+            if($timeout <= 0) $timeout = 10;
+
+            $resp = Http::timeout($timeout)->post($endpoint, $payload);
             $body = (string) $resp->body();
 
             $ok = $resp->status() === 200;
@@ -371,6 +472,88 @@ class InstallationController extends Controller
             $this->logNotif($tenantId, $platform, $target, $message, 'failed', $e->getMessage());
             return ['status' => 'failed', 'error' => $e->getMessage()];
         }
+    }
+
+    private function waSendMpwa(int $tenantId, string $type, string $target, string $message, string $platform, object $conf): array
+    {
+        $token = trim((string) ($conf->token ?? ''));
+        $sender = trim((string) ($conf->sender_number ?? ''));
+        $baseUrl = trim((string) ($conf->base_url ?? ''));
+
+        if ($token === '' || $baseUrl === '') {
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Config MPWA tidak lengkap');
+            return ['status' => 'failed', 'error' => 'Config MPWA tidak lengkap'];
+        }
+
+        $number = $target;
+        if ($type !== 'group' && strpos($number, '@') === false) {
+            $number = $this->phoneNo62($target); // Use phoneNo62 for MPWA native parity
+        }
+
+        if ($number === '') {
+             return ['status' => 'failed', 'error' => 'Nomor tujuan kosong'];
+        }
+
+        $extra = !empty($conf->extra_json) ? (json_decode($conf->extra_json, true) ?: []) : [];
+        $footer = $extra['footer'] ?? '';
+
+        $payload = [
+            'api_key' => $token,
+            'sender' => $sender,
+            'number' => $number,
+            'message' => $message,
+        ];
+
+        if (!empty($footer)) {
+            $payload['footer'] = $footer;
+        }
+
+        // Native does NOT send is_group flag for text messages
+        // if ($type === 'group') {
+        //    $payload['is_group'] = true;
+        // }
+
+        try {
+            $resp = Http::timeout(15)->post($baseUrl, $payload);
+            $body = (string) $resp->body();
+            $ok = $resp->successful();
+
+            // Log notification
+            $this->logNotif($tenantId, $platform, $target, $message, $ok ? 'sent' : 'failed', $body ?: ($ok ? 'OK' : 'HTTP error'));
+
+            return ['status' => $ok ? 'sent' : 'failed', 'raw' => $body];
+        } catch (\Throwable $e) {
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', $e->getMessage());
+            return ['status' => 'failed', 'error' => $e->getMessage()];
+        }
+    }
+
+    private function waSendGroup(int $tenantId, string $groupId, string $message, string $platform = 'WA Group'): array
+    {
+        return $this->waSendFailover($tenantId, 'group', $groupId, $message, $platform);
+    }
+
+    private function waSendBalesotomatis(int $tenantId, string $type, string $target, string $message, string $platform): array
+    {
+        return $this->waSendFailover($tenantId, $type, $target, $message, $platform);
+    }
+
+    private function phoneNoBales($raw): string
+    {
+        $clean = preg_replace('/\D/', '', (string) $raw);
+        if ($clean === '') return '';
+        if (substr($clean, 0, 2) === '62') return substr($clean, 2);
+        if (substr($clean, 0, 1) === '0') return substr($clean, 1);
+        return $clean;
+    }
+
+    private function phoneNo62($raw): string
+    {
+        $clean = preg_replace('/\D/', '', (string) $raw);
+        if ($clean === '') return '';
+        if (substr($clean, 0, 2) === '62') return $clean;
+        if (substr($clean, 0, 1) === '0') return '62' . substr($clean, 1);
+        return '62' . $clean;
     }
 
     private function afterSaveNotify(
@@ -1605,6 +1788,7 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
+        \Illuminate\Support\Facades\Log::info("DEBUG: sendPopRecap hit for tenant {$tenantId}");
 
         $role = $this->actorRole($request);
         if (!$this->isPrivileged($role)) {
@@ -1642,7 +1826,10 @@ class InstallationController extends Controller
             return response()->json(['status' => 'error', 'msg' => "Tidak ada data antrian (Baru/Survey/Proses) di POP {$targetPop}."], 422);
         }
 
-        $actor = $this->actorName($request);
+        // $actor = $this->actorName($request);
+        $u = $request->user();
+        $actor = ($u && !empty($u->name)) ? (string) $u->name : (string) (session('admin_name') ?: session('teknisi_name') ?: 'System');
+        \Illuminate\Support\Facades\Log::info("DEBUG: Actor resolved: {$actor}");
         $waktuUpdate = now()->format('d M Y H:i');
 
         $headerMsg = "==================\n";

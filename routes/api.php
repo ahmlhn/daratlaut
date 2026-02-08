@@ -125,9 +125,6 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::get('/settings/tenant-gateways', [SettingsController::class, 'getTenantGateways']);
     Route::get('/settings/pops', [SettingsController::class, 'getPops']);
     Route::post('/settings/pops', [SettingsController::class, 'savePop']);
-    Route::delete('/settings/pops/{id}', [SettingsController::class, 'deletePop']);
-    Route::get('/settings/recap-groups', [SettingsController::class, 'getRecapGroups']);
-    Route::post('/settings/recap-groups', [SettingsController::class, 'saveRecapGroup']);
     Route::delete('/settings/recap-groups/{id}', [SettingsController::class, 'deleteRecapGroup']);
     Route::get('/settings/fee-settings', [SettingsController::class, 'getFeeSettings']);
     Route::post('/settings/fee-settings', [SettingsController::class, 'saveFeeSettings']);
