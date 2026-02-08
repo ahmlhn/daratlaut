@@ -3,11 +3,15 @@ import { ref, reactive, onMounted, computed } from 'vue';
 import { Head } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import SystemUpdatePanel from '@/Pages/Settings/Partials/SystemUpdatePanel.vue';
+import SettingsNavIcon from '@/Pages/Settings/Partials/SettingsNavIcon.vue';
 
 const API = '/api/v1/settings';
 const loading = ref(true);
+const refreshing = ref(false);
 const saving = ref(false);
 const testLoading = ref('');
+const lastLoadedAt = ref(null);
+const navQuery = ref('');
 
 // ===== Reactive State =====
 const gatewayStatus = ref({ wa: {}, tg: {} });
@@ -39,18 +43,41 @@ const logFilter = reactive({ search: '', status: '', range: '' });
 
 const activeSection = ref('status');
 const sections = [
-    { id: 'status', name: 'Gateway Status', icon: 'signal' },
+    { id: 'status', name: 'Gateway Status', icon: 'wifi' },
     { id: 'wa', name: 'WhatsApp', icon: 'chat' },
     { id: 'mpwa', name: 'WA Backup (MPWA)', icon: 'bolt' },
-    { id: 'tg', name: 'Telegram', icon: 'paper' },
-    { id: 'templates', name: 'Template Pesan', icon: 'document' },
-    { id: 'pops', name: 'Manajemen POP', icon: 'location' },
-    { id: 'recap_groups', name: 'Group Rekap', icon: 'users' },
-    { id: 'fee', name: 'Fee Teknisi', icon: 'currency' },
+    { id: 'tg', name: 'Telegram', icon: 'paper-airplane' },
+    { id: 'templates', name: 'Template Pesan', icon: 'document-text' },
+    { id: 'pops', name: 'Manajemen POP', icon: 'map-pin' },
+    { id: 'recap_groups', name: 'Group Rekap', icon: 'user-group' },
+    { id: 'fee', name: 'Fee Teknisi', icon: 'cash' },
     { id: 'public_url', name: 'Link Isolir', icon: 'link' },
     { id: 'logs', name: 'Log Notifikasi', icon: 'clock' },
     { id: 'system_update', name: 'Update Sistem', icon: 'refresh' },
 ];
+
+const sectionGroups = [
+    { title: 'Gateway', items: ['status', 'wa', 'mpwa', 'tg'] },
+    { title: 'Pesan & Notifikasi', items: ['templates', 'logs'] },
+    { title: 'Operasional', items: ['pops', 'recap_groups', 'fee'] },
+    { title: 'System', items: ['public_url', 'system_update'] },
+];
+
+const sectionById = computed(() => Object.fromEntries(sections.map((s) => [s.id, s])));
+
+const filteredSectionGroups = computed(() => {
+    const q = navQuery.value.trim().toLowerCase();
+    const byId = sectionById.value;
+    return sectionGroups
+        .map((g) => {
+            const items = g.items
+                .map((id) => byId[id])
+                .filter(Boolean)
+                .filter((s) => !q || s.name.toLowerCase().includes(q));
+            return { ...g, items };
+        })
+        .filter((g) => g.items.length > 0);
+});
 
 // ===== Fetch helpers =====
 async function api(path, opts = {}) {
@@ -62,8 +89,10 @@ async function api(path, opts = {}) {
 }
 
 // ===== Load all data =====
-async function loadAll() {
-    loading.value = true;
+async function loadAll(opts = {}) {
+    const isRefresh = !!opts.refresh;
+    if (isRefresh) refreshing.value = true;
+    else loading.value = true;
     try {
         const data = await api('');
         // Gateway status
@@ -110,7 +139,9 @@ async function loadAll() {
     } catch (e) {
         console.error('Load settings error:', e);
     } finally {
-        loading.value = false;
+        if (isRefresh) refreshing.value = false;
+        else loading.value = false;
+        lastLoadedAt.value = new Date();
     }
     // Load logs separately
     loadLogs();
@@ -293,445 +324,608 @@ onMounted(loadAll);
 <template>
     <Head title="Pengaturan" />
     <AdminLayout>
-        <div class="space-y-6">
-            <div>
-                <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Pengaturan</h1>
-                <p class="text-gray-500 dark:text-gray-400 text-sm">Konfigurasi Gateway, Notifikasi, Template, POP, dan Fee Teknisi</p>
+        <div class="max-w-7xl mx-auto space-y-8 pb-16">
+            <!-- Header -->
+            <div class="relative overflow-hidden rounded-3xl border border-gray-200/60 dark:border-white/10 bg-white dark:bg-dark-900 shadow-sm">
+                <div class="pointer-events-none absolute inset-0">
+                    <div class="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-gradient-to-br from-primary-500/25 to-primary-700/10 blur-3xl"></div>
+                    <div class="absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 blur-3xl"></div>
+                </div>
+                <div class="relative p-6 sm:p-8">
+                    <div class="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                        <div class="min-w-0">
+                            <h1 class="text-3xl sm:text-4xl font-black tracking-tight text-gray-900 dark:text-white">Pengaturan</h1>
+                            <p class="mt-2 text-sm sm:text-base text-gray-600 dark:text-gray-400 max-w-2xl">
+                                Konfigurasi gateway, notifikasi, template, POP, dan fee teknisi.
+                            </p>
+                            <p v-if="lastLoadedAt" class="mt-3 text-xs text-gray-500 dark:text-gray-500">
+                                Terakhir refresh: <span class="font-semibold">{{ lastLoadedAt.toLocaleString('id-ID') }}</span>
+                            </p>
+                        </div>
+
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button @click="loadAll({ refresh: true })" :disabled="refreshing" class="btn btn-secondary btn-press gap-2">
+                                <SettingsNavIcon name="refresh" className="h-4 w-4" />
+                                <span>{{ refreshing ? 'Refreshing...' : 'Refresh' }}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <!-- Loading -->
-            <div v-if="loading" class="flex items-center justify-center py-20">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-                <span class="ml-3 text-gray-500">Memuat data...</span>
+            <!-- Loading (initial) -->
+            <div v-if="loading" class="card p-0 overflow-hidden rounded-2xl">
+                <div class="p-10 flex items-center justify-center gap-3">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+                    <span class="text-gray-600 dark:text-gray-300 text-sm">Memuat data...</span>
+                </div>
             </div>
 
-            <div v-else class="flex flex-col lg:flex-row gap-6">
-                <!-- Sidebar Nav -->
-                <div class="lg:w-56 flex-shrink-0">
-                    <div class="card p-2 space-y-1 sticky top-20">
-                        <button v-for="s in sections" :key="s.id" @click="activeSection = s.id"
-                            :class="['w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left',
-                                activeSection === s.id ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700']">
-                            {{ s.name }}
-                        </button>
+            <div v-else class="grid grid-cols-1 lg:grid-cols-[260px_1fr] xl:grid-cols-[300px_1fr] gap-6 lg:gap-8">
+                <!-- Nav -->
+                <div class="space-y-4">
+                    <!-- Mobile tabs -->
+                    <div class="lg:hidden">
+                        <div class="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
+                            <button v-for="s in sections" :key="s.id" @click="activeSection = s.id" :class="[
+                                'shrink-0 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition border',
+                                activeSection === s.id
+                                    ? 'bg-primary-600 text-white border-primary-600 shadow-sm shadow-primary-500/20'
+                                    : 'bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 border-gray-200/70 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5'
+                            ]">
+                                <SettingsNavIcon :name="s.icon" :className="activeSection === s.id ? 'h-4 w-4 text-white' : 'h-4 w-4 text-gray-400 dark:text-gray-500'" />
+                                <span class="whitespace-nowrap">{{ s.name }}</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Desktop nav -->
+                    <div class="hidden lg:block">
+                        <div class="card p-0 overflow-hidden rounded-2xl sticky top-24">
+                            <div class="p-4 border-b border-gray-200/70 dark:border-white/10 bg-white/70 dark:bg-dark-900/50 backdrop-blur-xl">
+                                <p class="text-[11px] font-black tracking-widest text-gray-400 dark:text-gray-500 uppercase">Navigasi</p>
+                                <div class="mt-3">
+                                    <input v-model="navQuery" type="text" class="input !rounded-xl" placeholder="Cari pengaturan...">
+                                </div>
+                            </div>
+
+                            <div class="p-2">
+                                <template v-for="group in filteredSectionGroups" :key="group.title">
+                                    <p class="px-3 pt-3 pb-1 text-[10px] font-bold tracking-widest uppercase text-gray-400 dark:text-gray-500">
+                                        {{ group.title }}
+                                    </p>
+
+                                    <button v-for="s in group.items" :key="s.id" @click="activeSection = s.id" :class="[
+                                        'group w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all text-left',
+                                        activeSection === s.id
+                                            ? 'bg-gradient-to-r from-primary-600 to-primary-700 text-white shadow-lg shadow-primary-500/20 ring-1 ring-primary-500/20'
+                                            : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/5'
+                                    ]">
+                                        <SettingsNavIcon :name="s.icon" :className="activeSection === s.id
+                                            ? 'h-4 w-4 text-white'
+                                            : 'h-4 w-4 text-gray-400 group-hover:text-gray-700 dark:text-gray-500 dark:group-hover:text-gray-200'" />
+                                        <span class="flex-1">{{ s.name }}</span>
+                                    </button>
+                                </template>
+
+                                <div v-if="filteredSectionGroups.length === 0" class="p-6 text-sm text-gray-500 dark:text-gray-400">
+                                    Menu tidak ditemukan.
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Content -->
-                <div class="flex-1 min-w-0">
+                <div class="min-w-0 space-y-6 lg:space-y-8">
 
                     <!-- ===== GATEWAY STATUS ===== -->
-                    <div v-if="activeSection === 'status'" class="card p-6 space-y-4">
-                        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Gateway Status</h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Ringkasan kondisi & aktivitas terakhir</p>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div class="border dark:border-gray-700 rounded-xl p-4 space-y-2">
-                                <div class="flex items-center justify-between">
-                                    <span class="font-bold text-gray-900 dark:text-white text-sm">WhatsApp</span>
-                                    <span :class="[statusColor(gatewayStatus.wa?.last_status), 'px-2 py-0.5 rounded-md text-xs font-bold uppercase']">
-                                        {{ gatewayStatus.wa?.last_status || '-' }}
-                                    </span>
+                    <div v-if="activeSection === 'status'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Gateway Status</h2>
+                            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Ringkasan kondisi & aktivitas terakhir</p>
+                        </div>
+                        <div class="px-6 py-6 sm:px-8">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+                                <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 hover:shadow-sm transition">
+                                    <div class="flex items-center justify-between gap-3">
+                                        <div class="flex items-center gap-3 min-w-0">
+                                            <div class="h-10 w-10 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center shrink-0">
+                                                <SettingsNavIcon name="chat" className="h-5 w-5 text-emerald-700 dark:text-emerald-300" />
+                                            </div>
+                                            <div class="min-w-0">
+                                                <div class="text-sm font-bold text-gray-900 dark:text-white">WhatsApp</div>
+                                                <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400 truncate">
+                                                    Last Log: <span class="font-semibold">{{ fmtDate(gatewayStatus.wa?.last_time) }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <span :class="[statusColor(gatewayStatus.wa?.last_status), 'px-2 py-0.5 rounded-md text-xs font-bold uppercase whitespace-nowrap']">
+                                            {{ gatewayStatus.wa?.last_status || '-' }}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div class="text-xs text-gray-500 dark:text-gray-400">
-                                    Last Log: <span class="font-bold">{{ fmtDate(gatewayStatus.wa?.last_time) }}</span>
-                                </div>
-                            </div>
-                            <div class="border dark:border-gray-700 rounded-xl p-4 space-y-2">
-                                <div class="flex items-center justify-between">
-                                    <span class="font-bold text-gray-900 dark:text-white text-sm">Telegram</span>
-                                    <span :class="[statusColor(gatewayStatus.tg?.last_status), 'px-2 py-0.5 rounded-md text-xs font-bold uppercase']">
-                                        {{ gatewayStatus.tg?.last_status || '-' }}
-                                    </span>
-                                </div>
-                                <div class="text-xs text-gray-500 dark:text-gray-400">
-                                    Last Log: <span class="font-bold">{{ fmtDate(gatewayStatus.tg?.last_time) }}</span>
+
+                                <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 hover:shadow-sm transition">
+                                    <div class="flex items-center justify-between gap-3">
+                                        <div class="flex items-center gap-3 min-w-0">
+                                            <div class="h-10 w-10 rounded-2xl bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center shrink-0">
+                                                <SettingsNavIcon name="paper-airplane" className="h-5 w-5 text-blue-700 dark:text-blue-300" />
+                                            </div>
+                                            <div class="min-w-0">
+                                                <div class="text-sm font-bold text-gray-900 dark:text-white">Telegram</div>
+                                                <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400 truncate">
+                                                    Last Log: <span class="font-semibold">{{ fmtDate(gatewayStatus.tg?.last_time) }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <span :class="[statusColor(gatewayStatus.tg?.last_status), 'px-2 py-0.5 rounded-md text-xs font-bold uppercase whitespace-nowrap']">
+                                            {{ gatewayStatus.tg?.last_status || '-' }}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- ===== WHATSAPP PRIMARY ===== -->
-                    <div v-if="activeSection === 'wa'" class="card p-6 space-y-4">
-                        <div class="flex items-center justify-between">
-                            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">WhatsApp (Gateway Utama)</h2>
-                            <label class="flex items-center gap-2 cursor-pointer">
-                                <span class="text-xs text-gray-500">{{ waConfig.is_active ? 'Aktif' : 'Non-aktif' }}</span>
-                                <input type="checkbox" v-model="waConfig.is_active" :true-value="1" :false-value="0" class="rounded text-primary-600 dark:bg-gray-700">
+                    <div v-if="activeSection === 'wa'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur flex items-start justify-between gap-4">
+                            <div class="min-w-0">
+                                <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">WhatsApp (Gateway Utama)</h2>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Gateway utama untuk notifikasi personal dan group.</p>
+                            </div>
+                            <label class="flex items-center gap-2 cursor-pointer select-none">
+                                <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ waConfig.is_active ? 'Aktif' : 'Non-aktif' }}</span>
+                                <input type="checkbox" v-model="waConfig.is_active" :true-value="1" :false-value="0" class="h-5 w-5 rounded-md text-primary-600 dark:bg-gray-700">
                             </label>
                         </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL Pesan Personal</label>
-                                <input v-model="waConfig.base_url" type="url" class="input w-full" placeholder="https://api.balesotomatis.id/v1/send-message">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">API Token</label>
-                                <input v-model="waConfig.token" type="text" class="input w-full" placeholder="Token...">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Device Key (Sender)</label>
-                                <input v-model="waConfig.sender_number" type="text" class="input w-full" placeholder="Device Key...">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Target Tes</label>
-                                <input v-model="waConfig.target_number" type="text" class="input w-full" placeholder="08xxx">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Mode Failover</label>
-                                <select v-model="waConfig.failover_mode" class="input w-full">
-                                    <option value="manual">Manual (tetap gateway aktif)</option>
-                                    <option value="auto">Auto (pindah ke backup jika gagal)</option>
-                                </select>
-                                <p class="text-xs text-gray-400 mt-1">Manual: aktifkan hanya gateway yang ingin dipakai. Auto: gunakan backup bila primary gagal.</p>
-                            </div>
-                        </div>
 
-                        <!-- Advanced Group Settings -->
-                        <details class="border dark:border-gray-700 rounded-xl overflow-hidden">
-                            <summary class="px-4 py-3 cursor-pointer text-sm font-bold text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700">
-                                Pengaturan Group (Advanced) ▸
-                            </summary>
-                            <div class="p-4 space-y-3">
+                        <div class="px-6 py-6 sm:px-8 space-y-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL Pesan Group</label>
-                                    <input v-model="waConfig.group_url" type="url" class="input w-full" placeholder="https://api.balesotomatis.id/v1/send-group-message">
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL Pesan Personal</label>
+                                    <input v-model="waConfig.base_url" type="url" class="input w-full" placeholder="https://api.balesotomatis.id/v1/send-message">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Default Group ID</label>
-                                    <input v-model="waConfig.group_id" type="text" class="input w-full" placeholder="xxx@g.us">
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">API Token</label>
+                                    <input v-model="waConfig.token" type="text" class="input w-full" placeholder="Token...">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Group Laporan Rekap</label>
-                                    <input v-model="waConfig.recap_group_id" type="text" class="input w-full" placeholder="xxx@g.us">
-                                    <p class="text-xs text-gray-400 mt-1">Grup khusus untuk laporan harian teknisi. Jika kosong, gunakan Default Group ID.</p>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Device Key (Sender)</label>
+                                    <input v-model="waConfig.sender_number" type="text" class="input w-full" placeholder="Device Key...">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Target Tes</label>
+                                    <input v-model="waConfig.target_number" type="text" class="input w-full" placeholder="08xxx">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Mode Failover</label>
+                                    <select v-model="waConfig.failover_mode" class="input w-full">
+                                        <option value="manual">Manual (tetap gateway aktif)</option>
+                                        <option value="auto">Auto (pindah ke backup jika gagal)</option>
+                                    </select>
+                                    <p class="text-xs text-gray-400 mt-1">Manual: aktifkan hanya gateway yang ingin dipakai. Auto: gunakan backup bila primary gagal.</p>
                                 </div>
                             </div>
-                        </details>
 
-                        <div class="flex flex-wrap gap-2 pt-4 border-t dark:border-gray-700">
-                            <button @click="doTestWa(false)" :disabled="testLoading === 'wa_personal'" class="btn btn-secondary text-xs">
-                                {{ testLoading === 'wa_personal' ? 'Sending...' : 'Tes Personal' }}
-                            </button>
-                            <button @click="doTestWa(true)" :disabled="testLoading === 'wa_group'" class="btn btn-secondary text-xs">
-                                {{ testLoading === 'wa_group' ? 'Sending...' : 'Tes Group' }}
-                            </button>
-                            <button @click="saveWa" :disabled="saving" class="btn btn-primary text-xs ml-auto">
-                                {{ saving ? 'Menyimpan...' : 'Simpan' }}
-                            </button>
+                            <!-- Advanced Group Settings -->
+                            <details class="rounded-2xl border border-gray-200/70 dark:border-white/10 overflow-hidden bg-gray-50/60 dark:bg-dark-900/30">
+                                <summary class="px-5 py-4 cursor-pointer text-sm font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100/80 dark:hover:bg-white/5">
+                                    Pengaturan Group (Advanced)
+                                </summary>
+                                <div class="p-5 space-y-4 bg-white dark:bg-dark-950 border-t border-gray-200/70 dark:border-white/10">
+                                    <div>
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL Pesan Group</label>
+                                        <input v-model="waConfig.group_url" type="url" class="input w-full" placeholder="https://api.balesotomatis.id/v1/send-group-message">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Default Group ID</label>
+                                        <input v-model="waConfig.group_id" type="text" class="input w-full" placeholder="xxx@g.us">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Group Laporan Rekap</label>
+                                        <input v-model="waConfig.recap_group_id" type="text" class="input w-full" placeholder="xxx@g.us">
+                                        <p class="text-xs text-gray-400 mt-1">Grup khusus untuk laporan harian teknisi. Jika kosong, gunakan Default Group ID.</p>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <div class="flex flex-wrap gap-2 pt-5 border-t border-gray-200/70 dark:border-white/10">
+                                <button @click="doTestWa(false)" :disabled="testLoading === 'wa_personal'" class="btn btn-secondary">
+                                    {{ testLoading === 'wa_personal' ? 'Sending...' : 'Tes Personal' }}
+                                </button>
+                                <button @click="doTestWa(true)" :disabled="testLoading === 'wa_group'" class="btn btn-secondary">
+                                    {{ testLoading === 'wa_group' ? 'Sending...' : 'Tes Group' }}
+                                </button>
+                                <button @click="saveWa" :disabled="saving" class="btn btn-primary ml-auto">
+                                    {{ saving ? 'Menyimpan...' : 'Simpan' }}
+                                </button>
+                            </div>
                         </div>
                     </div>
 
                     <!-- ===== MPWA BACKUP ===== -->
-                    <div v-if="activeSection === 'mpwa'" class="card p-6 space-y-4">
-                        <div class="flex items-center justify-between">
-                            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">WhatsApp Backup (MPWA)</h2>
-                            <label class="flex items-center gap-2 cursor-pointer">
-                                <span class="text-xs text-gray-500">{{ mpwaConfig.is_active ? 'Aktif' : 'Non-aktif' }}</span>
-                                <input type="checkbox" v-model="mpwaConfig.is_active" :true-value="1" :false-value="0" class="rounded text-orange-600 dark:bg-gray-700">
+                    <div v-if="activeSection === 'mpwa'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur flex items-start justify-between gap-4">
+                            <div class="min-w-0">
+                                <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">WhatsApp Backup (MPWA)</h2>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Gateway cadangan untuk failover atau penggunaan manual.</p>
+                            </div>
+                            <label class="flex items-center gap-2 cursor-pointer select-none">
+                                <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ mpwaConfig.is_active ? 'Aktif' : 'Non-aktif' }}</span>
+                                <input type="checkbox" v-model="mpwaConfig.is_active" :true-value="1" :false-value="0" class="h-5 w-5 rounded-md text-orange-600 dark:bg-gray-700">
                             </label>
                         </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL API</label>
-                                <input v-model="mpwaConfig.base_url" type="url" class="input w-full" placeholder="https://app.mpwa.net/send-message">
+
+                        <div class="px-6 py-6 sm:px-8 space-y-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL API</label>
+                                    <input v-model="mpwaConfig.base_url" type="url" class="input w-full" placeholder="https://app.mpwa.net/send-message">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">API Key</label>
+                                    <input v-model="mpwaConfig.token" type="text" class="input w-full">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sender</label>
+                                    <input v-model="mpwaConfig.sender_number" type="text" class="input w-full" placeholder="62888xxxx">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Target Tes</label>
+                                    <input v-model="mpwaConfig.target_number" type="text" class="input w-full" placeholder="62888xxxx atau xxx@g.us">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Default Group ID</label>
+                                    <input v-model="mpwaConfig.group_id" type="text" class="input w-full" placeholder="xxx@g.us">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Footer (Opsional)</label>
+                                    <input v-model="mpwaConfig.footer" type="text" class="input w-full" placeholder="Sent via mpwa">
+                                </div>
                             </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">API Key</label>
-                                <input v-model="mpwaConfig.token" type="text" class="input w-full">
+
+                            <div class="flex flex-wrap gap-2 pt-5 border-t border-gray-200/70 dark:border-white/10">
+                                <button @click="doTestMpwa(false)" :disabled="testLoading === 'mpwa_personal'" class="btn btn-secondary">
+                                    {{ testLoading === 'mpwa_personal' ? 'Sending...' : 'Tes Personal' }}
+                                </button>
+                                <button @click="doTestMpwa(true)" :disabled="testLoading === 'mpwa_group'" class="btn btn-secondary">
+                                    {{ testLoading === 'mpwa_group' ? 'Sending...' : 'Tes Group' }}
+                                </button>
+                                <button @click="saveMpwa" :disabled="saving" class="btn btn-primary ml-auto">
+                                    {{ saving ? 'Menyimpan...' : 'Simpan' }}
+                                </button>
                             </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sender</label>
-                                <input v-model="mpwaConfig.sender_number" type="text" class="input w-full" placeholder="62888xxxx">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Target Tes</label>
-                                <input v-model="mpwaConfig.target_number" type="text" class="input w-full" placeholder="62888xxxx atau xxx@g.us">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Default Group ID</label>
-                                <input v-model="mpwaConfig.group_id" type="text" class="input w-full" placeholder="xxx@g.us">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Footer (Opsional)</label>
-                                <input v-model="mpwaConfig.footer" type="text" class="input w-full" placeholder="Sent via mpwa">
-                            </div>
-                        </div>
-                        <div class="flex flex-wrap gap-2 pt-4 border-t dark:border-gray-700">
-                            <button @click="doTestMpwa(false)" :disabled="testLoading === 'mpwa_personal'" class="btn btn-secondary text-xs">
-                                {{ testLoading === 'mpwa_personal' ? 'Sending...' : 'Tes Personal' }}
-                            </button>
-                            <button @click="doTestMpwa(true)" :disabled="testLoading === 'mpwa_group'" class="btn btn-secondary text-xs">
-                                {{ testLoading === 'mpwa_group' ? 'Sending...' : 'Tes Group' }}
-                            </button>
-                            <button @click="saveMpwa" :disabled="saving" class="btn btn-primary text-xs ml-auto">
-                                {{ saving ? 'Menyimpan...' : 'Simpan' }}
-                            </button>
                         </div>
                     </div>
 
                     <!-- ===== TELEGRAM ===== -->
-                    <div v-if="activeSection === 'tg'" class="card p-6 space-y-4">
-                        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Telegram Backup</h2>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Bot Token</label>
-                                <input v-model="tgConfig.bot_token" type="text" class="input w-full" placeholder="123:ABC...">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Chat ID</label>
-                                <input v-model="tgConfig.chat_id" type="text" class="input w-full" placeholder="-100xxx">
-                            </div>
+                    <div v-if="activeSection === 'tg'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Telegram Backup</h2>
+                            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Backup notifikasi jika WhatsApp bermasalah.</p>
                         </div>
-                        <div class="flex flex-wrap gap-2 pt-4 border-t dark:border-gray-700">
-                            <button @click="doTestTg" :disabled="testLoading === 'tg'" class="btn btn-secondary text-xs">
-                                {{ testLoading === 'tg' ? 'Sending...' : 'Tes Kirim' }}
-                            </button>
-                            <button @click="saveTg" :disabled="saving" class="btn btn-primary text-xs ml-auto">
-                                {{ saving ? 'Menyimpan...' : 'Simpan' }}
-                            </button>
+
+                        <div class="px-6 py-6 sm:px-8 space-y-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Bot Token</label>
+                                    <input v-model="tgConfig.bot_token" type="text" class="input w-full" placeholder="123:ABC...">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Chat ID</label>
+                                    <input v-model="tgConfig.chat_id" type="text" class="input w-full" placeholder="-100xxx">
+                                </div>
+                            </div>
+
+                            <div class="flex flex-wrap gap-2 pt-5 border-t border-gray-200/70 dark:border-white/10">
+                                <button @click="doTestTg" :disabled="testLoading === 'tg'" class="btn btn-secondary">
+                                    {{ testLoading === 'tg' ? 'Sending...' : 'Tes Kirim' }}
+                                </button>
+                                <button @click="saveTg" :disabled="saving" class="btn btn-primary ml-auto">
+                                    {{ saving ? 'Menyimpan...' : 'Simpan' }}
+                                </button>
+                            </div>
                         </div>
                     </div>
 
                     <!-- ===== TEMPLATES ===== -->
-                    <div v-if="activeSection === 'templates'" class="card p-6 space-y-4">
-                        <div class="flex items-center justify-between">
-                            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Template Pesan</h2>
-                            <button @click="openTemplateNew" class="btn btn-primary btn-sm text-xs">+ Tambah</button>
+                    <div v-if="activeSection === 'templates'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur flex items-start justify-between gap-4">
+                            <div class="min-w-0">
+                                <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Template Pesan</h2>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Kelola template notifikasi (WA/Telegram) yang dipakai sistem.</p>
+                            </div>
+                            <button @click="openTemplateNew" class="btn btn-primary shrink-0">+ Tambah</button>
                         </div>
-                        <div class="space-y-3">
-                            <div v-for="tpl in templates" :key="tpl.id || tpl.code" class="border dark:border-gray-700 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-800 transition">
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <h3 class="font-medium text-gray-900 dark:text-white">{{ tpl.code }}</h3>
+
+                        <div class="px-6 py-6 sm:px-8 space-y-4">
+                            <div v-for="tpl in templates" :key="tpl.id || tpl.code" class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 hover:shadow-sm transition">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="min-w-0">
+                                        <h3 class="font-bold text-gray-900 dark:text-white">{{ tpl.code }}</h3>
+                                        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-line">{{ tpl.message }}</p>
                                     </div>
                                 </div>
-                                <p class="mt-2 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-line">{{ tpl.message }}</p>
-                                <div class="mt-3 flex gap-2">
-                                    <button @click="openTemplateEdit(tpl)" class="text-sm text-primary-600 hover:text-primary-800">Edit</button>
-                                    <button @click="deleteTemplate(tpl)" class="text-sm text-red-600 hover:text-red-800">Hapus</button>
+                                <div class="mt-4 flex gap-3">
+                                    <button @click="openTemplateEdit(tpl)" class="text-sm font-semibold text-primary-600 hover:text-primary-800">Edit</button>
+                                    <button @click="deleteTemplate(tpl)" class="text-sm font-semibold text-red-600 hover:text-red-800">Hapus</button>
                                 </div>
                             </div>
-                            <div v-if="templates.length === 0" class="text-center py-8 text-gray-500 dark:text-gray-400">Belum ada template</div>
+                            <div v-if="templates.length === 0" class="text-center py-12 text-gray-500 dark:text-gray-400">Belum ada template</div>
                         </div>
                     </div>
 
                     <!-- ===== POP MANAGEMENT ===== -->
-                    <div v-if="activeSection === 'pops'" class="card p-6 space-y-4">
-                        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Manajemen Data POP</h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Pengaturan Area & Group Notifikasi Spesifik</p>
-
-                        <!-- POP Form -->
-                        <div class="flex flex-col lg:flex-row gap-3 items-end">
-                            <div class="flex-1 w-full">
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Nama POP / Area</label>
-                                <input v-model="popForm.pop_name" type="text" class="input w-full" placeholder="Contoh: Krui Selatan...">
-                            </div>
-                            <div class="w-full lg:w-1/4">
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">WA Admin (PIC)</label>
-                                <input v-model="popForm.wa_number" type="text" class="input w-full" placeholder="08xxx...">
-                            </div>
-                            <div class="w-full lg:w-1/3">
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Group ID (Notif)</label>
-                                <input v-model="popForm.group_id" type="text" class="input w-full" placeholder="xxxx@g.us">
-                            </div>
-                            <div class="flex gap-2">
-                                <button v-if="editingPop" @click="cancelPop" class="btn btn-secondary text-xs">Batal</button>
-                                <button @click="savePop" class="btn btn-primary text-xs whitespace-nowrap">
-                                    {{ editingPop ? 'Update' : '+ Tambah' }}
-                                </button>
-                            </div>
+                    <div v-if="activeSection === 'pops'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Manajemen Data POP</h2>
+                            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Pengaturan area & group notifikasi spesifik.</p>
                         </div>
 
-                        <!-- POP Table -->
-                        <div class="border dark:border-gray-700 rounded-xl overflow-hidden">
-                            <div class="max-h-56 overflow-y-auto">
-                                <table class="w-full text-left">
-                                    <thead class="bg-gray-50 dark:bg-gray-800 text-xs uppercase font-bold text-gray-500 sticky top-0">
-                                        <tr>
-                                            <th class="px-4 py-2">Nama Area</th>
-                                            <th class="px-4 py-2">PIC WA</th>
-                                            <th class="px-4 py-2">Group ID</th>
-                                            <th class="px-4 py-2 text-right">Aksi</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="text-sm divide-y divide-gray-200 dark:divide-gray-700">
-                                        <tr v-for="p in pops" :key="p.id" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-                                            <td class="px-4 py-2 text-gray-900 dark:text-white">{{ p.pop_name }}</td>
-                                            <td class="px-4 py-2 text-gray-500 dark:text-gray-400">{{ p.wa_number || '-' }}</td>
-                                            <td class="px-4 py-2 text-gray-500 dark:text-gray-400 font-mono text-xs">{{ p.group_id || '-' }}</td>
-                                            <td class="px-4 py-2 text-right space-x-2">
-                                                <button @click="editPop(p)" class="text-xs text-primary-600 hover:text-primary-800">Edit</button>
-                                                <button @click="deletePop(p)" class="text-xs text-red-600 hover:text-red-800">Hapus</button>
-                                            </td>
-                                        </tr>
-                                        <tr v-if="pops.length === 0"><td colspan="4" class="px-4 py-6 text-center text-gray-400">Belum ada POP</td></tr>
-                                    </tbody>
-                                </table>
+                        <div class="px-6 py-6 sm:px-8 space-y-6">
+                            <!-- POP Form -->
+                            <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5">
+                                <div class="flex flex-col lg:flex-row gap-4 items-end">
+                                    <div class="flex-1 w-full">
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Nama POP / Area</label>
+                                        <input v-model="popForm.pop_name" type="text" class="input w-full" placeholder="Contoh: Krui Selatan...">
+                                    </div>
+                                    <div class="w-full lg:w-1/4">
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">WA Admin (PIC)</label>
+                                        <input v-model="popForm.wa_number" type="text" class="input w-full" placeholder="08xxx...">
+                                    </div>
+                                    <div class="w-full lg:w-1/3">
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Group ID (Notif)</label>
+                                        <input v-model="popForm.group_id" type="text" class="input w-full" placeholder="xxxx@g.us">
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button v-if="editingPop" @click="cancelPop" class="btn btn-secondary">Batal</button>
+                                        <button @click="savePop" class="btn btn-primary whitespace-nowrap">
+                                            {{ editingPop ? 'Update' : '+ Tambah' }}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- POP Table -->
+                            <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 overflow-hidden">
+                                <div class="max-h-72 overflow-y-auto">
+                                    <table class="w-full text-left">
+                                        <thead class="bg-gray-50/80 dark:bg-dark-900/60 text-[11px] uppercase font-black tracking-widest text-gray-500 sticky top-0">
+                                            <tr>
+                                                <th class="px-4 py-3">Nama Area</th>
+                                                <th class="px-4 py-3">PIC WA</th>
+                                                <th class="px-4 py-3">Group ID</th>
+                                                <th class="px-4 py-3 text-right">Aksi</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="text-sm divide-y divide-gray-200 dark:divide-white/10 bg-white dark:bg-dark-950">
+                                            <tr v-for="p in pops" :key="p.id" class="hover:bg-gray-50/80 dark:hover:bg-white/5">
+                                                <td class="px-4 py-3 text-gray-900 dark:text-white">{{ p.pop_name }}</td>
+                                                <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ p.wa_number || '-' }}</td>
+                                                <td class="px-4 py-3 text-gray-500 dark:text-gray-400 font-mono text-xs">{{ p.group_id || '-' }}</td>
+                                                <td class="px-4 py-3 text-right space-x-3">
+                                                    <button @click="editPop(p)" class="text-sm font-semibold text-primary-600 hover:text-primary-800">Edit</button>
+                                                    <button @click="deletePop(p)" class="text-sm font-semibold text-red-600 hover:text-red-800">Hapus</button>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="pops.length === 0">
+                                                <td colspan="4" class="px-4 py-10 text-center text-gray-500 dark:text-gray-400">Belum ada POP</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- ===== RECAP GROUPS ===== -->
-                    <div v-if="activeSection === 'recap_groups'" class="card p-6 space-y-4">
-                        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Manajemen Group Rekap</h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Kelola grup WhatsApp untuk laporan teknisi</p>
-
-                        <div class="flex flex-col lg:flex-row gap-3 items-end">
-                            <div class="flex-1 w-full">
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Nama Group Rekap</label>
-                                <input v-model="recapForm.name" type="text" class="input w-full" placeholder="Contoh: Rekap Jakarta...">
-                            </div>
-                            <div class="flex-1 w-full">
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Group ID WhatsApp</label>
-                                <input v-model="recapForm.group_id" type="text" class="input w-full" placeholder="xxxx@g.us">
-                            </div>
-                            <div class="flex gap-2">
-                                <button v-if="editingRecap" @click="cancelRecap" class="btn btn-secondary text-xs">Batal</button>
-                                <button @click="saveRecap" class="btn btn-primary text-xs whitespace-nowrap">
-                                    {{ editingRecap ? 'Update' : '+ Tambah' }}
-                                </button>
-                            </div>
+                    <div v-if="activeSection === 'recap_groups'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Manajemen Group Rekap</h2>
+                            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Kelola grup WhatsApp untuk laporan teknisi.</p>
                         </div>
 
-                        <div class="border dark:border-gray-700 rounded-xl overflow-hidden">
-                            <div class="max-h-56 overflow-y-auto">
-                                <table class="w-full text-left">
-                                    <thead class="bg-gray-50 dark:bg-gray-800 text-xs uppercase font-bold text-gray-500 sticky top-0">
-                                        <tr>
-                                            <th class="px-4 py-2">Nama Group</th>
-                                            <th class="px-4 py-2">Group ID</th>
-                                            <th class="px-4 py-2 text-right">Aksi</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="text-sm divide-y divide-gray-200 dark:divide-gray-700">
-                                        <tr v-for="r in recapGroups" :key="r.id" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-                                            <td class="px-4 py-2 text-gray-900 dark:text-white">{{ r.name }}</td>
-                                            <td class="px-4 py-2 text-gray-500 dark:text-gray-400 font-mono text-xs">{{ r.group_id }}</td>
-                                            <td class="px-4 py-2 text-right space-x-2">
-                                                <button @click="editRecap(r)" class="text-xs text-primary-600 hover:text-primary-800">Edit</button>
-                                                <button @click="deleteRecap(r)" class="text-xs text-red-600 hover:text-red-800">Hapus</button>
-                                            </td>
-                                        </tr>
-                                        <tr v-if="recapGroups.length === 0"><td colspan="3" class="px-4 py-6 text-center text-gray-400">Belum ada group</td></tr>
-                                    </tbody>
-                                </table>
+                        <div class="px-6 py-6 sm:px-8 space-y-6">
+                            <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5">
+                                <div class="flex flex-col lg:flex-row gap-4 items-end">
+                                    <div class="flex-1 w-full">
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Nama Group Rekap</label>
+                                        <input v-model="recapForm.name" type="text" class="input w-full" placeholder="Contoh: Rekap Jakarta...">
+                                    </div>
+                                    <div class="flex-1 w-full">
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Group ID WhatsApp</label>
+                                        <input v-model="recapForm.group_id" type="text" class="input w-full" placeholder="xxxx@g.us">
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button v-if="editingRecap" @click="cancelRecap" class="btn btn-secondary">Batal</button>
+                                        <button @click="saveRecap" class="btn btn-primary whitespace-nowrap">
+                                            {{ editingRecap ? 'Update' : '+ Tambah' }}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 overflow-hidden">
+                                <div class="max-h-72 overflow-y-auto">
+                                    <table class="w-full text-left">
+                                        <thead class="bg-gray-50/80 dark:bg-dark-900/60 text-[11px] uppercase font-black tracking-widest text-gray-500 sticky top-0">
+                                            <tr>
+                                                <th class="px-4 py-3">Nama Group</th>
+                                                <th class="px-4 py-3">Group ID</th>
+                                                <th class="px-4 py-3 text-right">Aksi</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="text-sm divide-y divide-gray-200 dark:divide-white/10 bg-white dark:bg-dark-950">
+                                            <tr v-for="r in recapGroups" :key="r.id" class="hover:bg-gray-50/80 dark:hover:bg-white/5">
+                                                <td class="px-4 py-3 text-gray-900 dark:text-white">{{ r.name }}</td>
+                                                <td class="px-4 py-3 text-gray-500 dark:text-gray-400 font-mono text-xs">{{ r.group_id }}</td>
+                                                <td class="px-4 py-3 text-right space-x-3">
+                                                    <button @click="editRecap(r)" class="text-sm font-semibold text-primary-600 hover:text-primary-800">Edit</button>
+                                                    <button @click="deleteRecap(r)" class="text-sm font-semibold text-red-600 hover:text-red-800">Hapus</button>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="recapGroups.length === 0">
+                                                <td colspan="3" class="px-4 py-10 text-center text-gray-500 dark:text-gray-400">Belum ada group</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- ===== FEE SETTINGS ===== -->
-                    <div v-if="activeSection === 'fee'" class="card p-6 space-y-5">
-                        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Konfigurasi Fee Teknisi</h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Atur fee instalasi dan kategori pengeluaran</p>
-
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Fee Instalasi - Teknisi (Rp)</label>
-                                <input v-model.number="feeSettings.teknisi_fee_install" type="number" min="0" class="input w-full" placeholder="0">
-                                <p class="text-xs text-gray-400 mt-1">Fee default untuk setiap teknisi per instalasi</p>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Fee Instalasi - Sales (Rp)</label>
-                                <input v-model.number="feeSettings.sales_fee_install" type="number" min="0" class="input w-full" placeholder="0">
-                                <p class="text-xs text-gray-400 mt-1">Fee default untuk setiap sales per instalasi</p>
-                            </div>
+                    <div v-if="activeSection === 'fee'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Konfigurasi Fee Teknisi</h2>
+                            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Atur fee instalasi dan kategori pengeluaran.</p>
                         </div>
 
-                        <div class="border-t dark:border-gray-700 pt-4">
-                            <h5 class="text-sm font-bold text-gray-700 dark:text-gray-200 mb-3">Kategori Pengeluaran</h5>
-                            <div class="space-y-2">
-                                <div v-for="(cat, idx) in feeSettings.expense_categories" :key="idx" class="flex gap-2">
-                                    <input v-model="feeSettings.expense_categories[idx]" type="text" class="input flex-1" :placeholder="`Kategori ${idx + 1}`">
-                                    <button @click="removeCategory(idx)" class="text-red-500 hover:text-red-700 px-2">✕</button>
+                        <div class="px-6 py-6 sm:px-8 space-y-6">
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Fee Instalasi - Teknisi (Rp)</label>
+                                    <input v-model.number="feeSettings.teknisi_fee_install" type="number" min="0" class="input w-full" placeholder="0">
+                                    <p class="text-xs text-gray-400 mt-1">Fee default untuk setiap teknisi per instalasi</p>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Fee Instalasi - Sales (Rp)</label>
+                                    <input v-model.number="feeSettings.sales_fee_install" type="number" min="0" class="input w-full" placeholder="0">
+                                    <p class="text-xs text-gray-400 mt-1">Fee default untuk setiap sales per instalasi</p>
                                 </div>
                             </div>
-                            <button @click="addCategory" class="mt-3 w-full px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-bold rounded-lg transition border dark:border-gray-700">
-                                + Tambah Kategori
-                            </button>
-                        </div>
 
-                        <div class="pt-4 border-t dark:border-gray-700">
-                            <button @click="saveFee" :disabled="saving" class="btn btn-primary text-xs">
-                                {{ saving ? 'Menyimpan...' : 'Simpan Konfigurasi' }}
-                            </button>
+                            <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5">
+                                <div class="flex items-center justify-between gap-3 mb-4">
+                                    <div>
+                                        <h5 class="text-sm font-black tracking-tight text-gray-900 dark:text-white">Kategori Pengeluaran</h5>
+                                        <p class="text-xs text-gray-500 dark:text-gray-400">Dipakai untuk input pengeluaran teknisi.</p>
+                                    </div>
+                                    <button @click="addCategory" class="btn btn-secondary shrink-0">+ Tambah</button>
+                                </div>
+
+                                <div v-if="feeSettings.expense_categories.length > 0" class="space-y-2">
+                                    <div v-for="(cat, idx) in feeSettings.expense_categories" :key="idx" class="flex items-center gap-2">
+                                        <input v-model="feeSettings.expense_categories[idx]" type="text" class="input flex-1" :placeholder="`Kategori ${idx + 1}`">
+                                        <button @click="removeCategory(idx)" class="h-10 w-10 rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-900 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition" title="Hapus">
+                                            ✕
+                                        </button>
+                                    </div>
+                                </div>
+                                <div v-else class="text-sm text-gray-500 dark:text-gray-400">
+                                    Belum ada kategori. Klik <span class="font-semibold">Tambah</span> untuk membuat.
+                                </div>
+                            </div>
+
+                            <div class="pt-2">
+                                <button @click="saveFee" :disabled="saving" class="btn btn-primary">
+                                    {{ saving ? 'Menyimpan...' : 'Simpan Konfigurasi' }}
+                                </button>
+                            </div>
                         </div>
                     </div>
 
                     <!-- ===== PUBLIC URL ===== -->
-                    <div v-if="activeSection === 'public_url'" class="card p-6 space-y-4">
-                        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Link Isolir (URL Publik)</h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Link tenant untuk halaman isolir/direct/chat</p>
-                        <div class="flex flex-col sm:flex-row gap-2">
-                            <input :value="publicUrl" readonly class="input flex-1 font-mono text-sm bg-gray-50 dark:bg-gray-800" placeholder="Belum tersedia">
-                            <button @click="copyUrl" class="btn btn-primary text-xs">Copy</button>
+                    <div v-if="activeSection === 'public_url'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Link Isolir (URL Publik)</h2>
+                            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Link tenant untuk halaman isolir/direct/chat.</p>
                         </div>
-                        <p class="text-xs text-gray-400">Bagikan link ini ke pelanggan agar masuk ke halaman isolir/chat.</p>
+
+                        <div class="px-6 py-6 sm:px-8 space-y-4">
+                            <div class="flex flex-col sm:flex-row gap-2">
+                                <input :value="publicUrl" readonly class="input flex-1 font-mono text-sm bg-gray-50 dark:bg-gray-800" placeholder="Belum tersedia">
+                                <button @click="copyUrl" class="btn btn-primary shrink-0">Copy</button>
+                            </div>
+                            <p class="text-sm text-gray-500 dark:text-gray-400">Bagikan link ini ke pelanggan agar masuk ke halaman isolir/chat.</p>
+                        </div>
                     </div>
 
                     <!-- ===== LOG NOTIFIKASI ===== -->
-                    <div v-if="activeSection === 'logs'" class="space-y-4">
-                        <!-- Stats -->
-                        <div class="grid grid-cols-3 gap-4">
-                            <div class="card p-4 text-center">
-                                <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ notifStats.total }}</div>
-                                <div class="text-sm text-gray-500">Total</div>
+                    <div v-if="activeSection === 'logs'" class="space-y-6">
+                        <div class="card p-0 overflow-hidden rounded-2xl">
+                            <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                                <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Log Notifikasi</h2>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Monitoring status pengiriman notifikasi (WA/Telegram).</p>
                             </div>
-                            <div class="card p-4 text-center">
-                                <div class="text-2xl font-bold text-green-600">{{ notifStats.sent }}</div>
-                                <div class="text-sm text-gray-500">Terkirim</div>
-                            </div>
-                            <div class="card p-4 text-center">
-                                <div class="text-2xl font-bold text-red-600">{{ notifStats.failed }}</div>
-                                <div class="text-sm text-gray-500">Gagal</div>
-                            </div>
-                        </div>
 
-                        <!-- Filters -->
-                        <div class="flex flex-wrap gap-2">
-                            <select v-model="logFilter.range" @change="loadLogs" class="input text-sm">
-                                <option value="">All Time</option>
-                                <option value="24h">24 Jam</option>
-                                <option value="7d">7 Hari</option>
-                                <option value="30d">30 Hari</option>
-                            </select>
-                            <select v-model="logFilter.status" @change="loadLogs" class="input text-sm">
-                                <option value="">All Status</option>
-                                <option value="success">Success</option>
-                                <option value="failed">Failed</option>
-                            </select>
-                            <input v-model="logFilter.search" @input="loadLogs" type="text" class="input text-sm w-40" placeholder="Search...">
-                            <button @click="loadLogs" class="btn btn-secondary text-xs">Refresh</button>
+                            <div class="px-6 py-6 sm:px-8 space-y-6">
+                                <!-- Stats -->
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 text-center">
+                                        <div class="text-3xl font-black text-gray-900 dark:text-white">{{ notifStats.total }}</div>
+                                        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">Total</div>
+                                    </div>
+                                    <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 text-center">
+                                        <div class="text-3xl font-black text-emerald-600 dark:text-emerald-300">{{ notifStats.sent }}</div>
+                                        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">Terkirim</div>
+                                    </div>
+                                    <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 text-center">
+                                        <div class="text-3xl font-black text-red-600 dark:text-red-300">{{ notifStats.failed }}</div>
+                                        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">Gagal</div>
+                                    </div>
+                                </div>
+
+                                <!-- Filters -->
+                                <div class="flex flex-col sm:flex-row sm:items-end gap-3">
+                                    <div class="flex flex-wrap gap-2">
+                                        <select v-model="logFilter.range" @change="loadLogs" class="input text-sm !rounded-xl">
+                                            <option value="">All Time</option>
+                                            <option value="24h">24 Jam</option>
+                                            <option value="7d">7 Hari</option>
+                                            <option value="30d">30 Hari</option>
+                                        </select>
+                                        <select v-model="logFilter.status" @change="loadLogs" class="input text-sm !rounded-xl">
+                                            <option value="">All Status</option>
+                                            <option value="success">Success</option>
+                                            <option value="failed">Failed</option>
+                                        </select>
+                                        <input v-model="logFilter.search" @input="loadLogs" type="text" class="input text-sm w-56 !rounded-xl" placeholder="Cari...">
+                                    </div>
+                                    <button @click="loadLogs" class="btn btn-secondary sm:ml-auto">Refresh</button>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Log table -->
-                        <div class="card overflow-hidden">
+                        <div class="card p-0 overflow-hidden rounded-2xl">
+                            <div class="px-6 py-4 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-gray-50/80 dark:bg-dark-900/40 backdrop-blur flex items-center justify-between gap-4">
+                                <div>
+                                    <h3 class="text-sm font-black tracking-tight text-gray-900 dark:text-white">Daftar Log</h3>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400">Menampilkan {{ notifLogs.length }} baris</p>
+                                </div>
+                                <button @click="loadLogs" class="btn btn-secondary shrink-0">Refresh</button>
+                            </div>
                             <div class="overflow-x-auto max-h-96">
-                                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                                    <thead class="bg-gray-50 dark:bg-gray-800 sticky top-0">
-                                        <tr>
-                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Waktu</th>
-                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Platform</th>
-                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Target</th>
-                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pesan</th>
-                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Response</th>
+                                <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+                                    <thead class="bg-white/70 dark:bg-dark-950/60 sticky top-0">
+                                        <tr class="text-[11px] uppercase font-black tracking-widest text-gray-500 dark:text-gray-400">
+                                            <th class="px-4 py-3 text-left">Waktu</th>
+                                            <th class="px-4 py-3 text-left">Platform</th>
+                                            <th class="px-4 py-3 text-left">Target</th>
+                                            <th class="px-4 py-3 text-left">Pesan</th>
+                                            <th class="px-4 py-3 text-left">Status</th>
+                                            <th class="px-4 py-3 text-left">Response</th>
                                         </tr>
                                     </thead>
-                                    <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
-                                        <tr v-for="log in notifLogs" :key="log.id" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+                                    <tbody class="bg-white dark:bg-dark-950 divide-y divide-gray-200 dark:divide-white/10">
+                                        <tr v-for="log in notifLogs" :key="log.id" class="hover:bg-gray-50/80 dark:hover:bg-white/5">
                                             <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{{ fmtDate(log.timestamp) }}</td>
                                             <td class="px-4 py-3 text-xs text-gray-900 dark:text-gray-200">{{ log.platform }}</td>
                                             <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{{ log.target }}</td>
-                                            <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 max-w-[200px] truncate">{{ log.message }}</td>
+                                            <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 max-w-[260px] truncate">{{ log.message }}</td>
                                             <td class="px-4 py-3">
-                                                <span :class="[statusColor(log.normalized_status || log.status), 'px-2 py-1 text-xs rounded-full font-bold']">
+                                                <span :class="[statusColor(log.normalized_status || log.status), 'px-2 py-1 text-xs rounded-full font-bold uppercase']">
                                                     {{ log.normalized_status || log.status }}
                                                 </span>
                                             </td>
-                                            <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 max-w-[200px] truncate">{{ log.response_log || '-' }}</td>
+                                            <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 max-w-[260px] truncate">{{ log.response_log || '-' }}</td>
                                         </tr>
                                         <tr v-if="notifLogs.length === 0">
-                                            <td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">Tidak ada log</td>
+                                            <td colspan="6" class="px-4 py-12 text-center text-gray-500 dark:text-gray-400">Tidak ada log</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -740,8 +934,14 @@ onMounted(loadAll);
                     </div>
 
                     <!-- ===== SYSTEM UPDATE ===== -->
-                    <div v-if="activeSection === 'system_update'">
-                        <SystemUpdatePanel embedded />
+                    <div v-if="activeSection === 'system_update'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Update Sistem</h2>
+                            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Update panel via ZIP atau paket build dari GitHub.</p>
+                        </div>
+                        <div class="px-6 py-6 sm:px-8">
+                            <SystemUpdatePanel embedded />
+                        </div>
                     </div>
 
                 </div>
