@@ -324,14 +324,14 @@ onMounted(loadAll);
 <template>
     <Head title="Pengaturan" />
     <AdminLayout>
-        <div class="max-w-7xl mx-auto space-y-8 pb-16">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 pb-16">
             <!-- Header -->
             <div class="relative overflow-hidden rounded-3xl border border-gray-200/60 dark:border-white/10 bg-white dark:bg-dark-900 shadow-sm">
                 <div class="pointer-events-none absolute inset-0">
                     <div class="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-gradient-to-br from-primary-500/25 to-primary-700/10 blur-3xl"></div>
                     <div class="absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 blur-3xl"></div>
                 </div>
-                <div class="relative p-6 sm:p-8">
+                <div class="relative p-7 sm:p-10">
                     <div class="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
                         <div class="min-w-0">
                             <h1 class="text-3xl sm:text-4xl font-black tracking-tight text-gray-900 dark:text-white">Pengaturan</h1>

@@ -40,7 +40,11 @@ async function fetchJson(url, options = {}) {
             data && (data.message || data.error)
                 ? String(data.message || data.error)
                 : `HTTP ${res.status}`;
-        throw new Error(msg);
+        const err = new Error(msg);
+        err.status = res.status;
+        err.data = data;
+        err.body = text;
+        throw err;
     }
 
     if (data === null) {
@@ -686,12 +690,15 @@ async function writeConfig() {
     try {
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/write-config`, { method: 'POST' });
         if (data.status !== 'ok') throw new Error(data.message || 'Write gagal');
+        if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
         setUncfgStatus(data.message || 'Write selesai.', 'success');
-        await loadLogs();
         return true;
     } catch (e) {
+        if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setUncfgStatus(e.message || 'Write gagal', 'error');
         return false;
+    } finally {
+        loadLogs().catch(() => {});
     }
 }
 
@@ -724,6 +731,7 @@ async function autoRegister() {
             body: JSON.stringify({ name_prefix: prefix }),
         });
         if (data.status !== 'ok') throw new Error(data.message || 'Auto register gagal');
+        if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
 
         const s = data.summary || {};
         setUncfgStatus(data.message || `Auto register selesai. Success ${s.success || 0}, error ${s.error || 0}.`, 'success');
@@ -735,11 +743,12 @@ async function autoRegister() {
 
         regFilterFsp.value = 'all';
         await changeRegFsp();
-        await loadLogs();
     } catch (e) {
+        if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setUncfgStatus(e.message || 'Auto register gagal', 'error');
     } finally {
         registerBusy.value = false;
+        loadLogs().catch(() => {});
     }
 }
 
@@ -771,6 +780,7 @@ async function registerSelectedOnu() {
         });
 
         if (data.status !== 'ok') throw new Error(data.message || 'Gagal register');
+        if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
 
         // Remove from uncfg list
         uncfg.value = uncfg.value.filter(o => String(o.sn) !== String(item.sn));
@@ -778,7 +788,6 @@ async function registerSelectedOnu() {
         storeUncfgCache(selectedOltId.value);
         setUncfgStatus('ONU berhasil diregistrasi.', 'success');
         if (isTeknisi.value) teknisiWriteReady.value = true;
-        await loadLogs();
 
         const res = data?.data || {};
         const fsp = String(res.fsp || item.fsp || '');
@@ -793,11 +802,20 @@ async function registerSelectedOnu() {
         if (fsp && onuId > 0) {
             upsertRegisteredAfterRegister({ fsp, onu_id: onuId, sn, name: savedName });
         }
+
+        // Native parity: auto-switch to the FSP where this ONU was registered so it appears instantly.
+        if (fsp) {
+            regFilterFsp.value = fsp;
+            await changeRegFsp();
+            if (onuId > 0) setRegHighlight(`gpon-onu_${fsp}:${onuId}`);
+        }
     } catch (e) {
+        if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setUncfgStatus(e.message || 'Gagal register', 'error');
     } finally {
         registerBusy.value = false;
         manualRegisterActive.value = false;
+        loadLogs().catch(() => {});
     }
 }
 
@@ -1494,6 +1512,7 @@ async function saveEditOnuName(onu) {
             }),
         });
         if (data.status !== 'ok') throw new Error(data.message || 'Gagal update nama');
+        if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
 
         const idx = registered.value.findIndex(it => onuKey(it) === key);
         if (idx >= 0) {
@@ -1509,11 +1528,13 @@ async function saveEditOnuName(onu) {
 
         cancelEditOnuName();
         setRegStatus('Nama ONU berhasil diupdate.', 'success');
-        await loadLogs();
+        if (isTeknisi.value) teknisiWriteReady.value = true;
     } catch (e) {
+        if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setRegStatus(e.message || 'Gagal update nama', 'error');
     } finally {
         setRowActionLoading(key, 'rename', false);
+        loadLogs().catch(() => {});
     }
 }
 
@@ -1546,12 +1567,14 @@ async function restartRegisteredOnu(onu) {
             body: JSON.stringify({ fsp: String(onu.fsp || ''), onu_id: Number(onu.onu_id || 0) }),
         });
         if (data.status !== 'ok') throw new Error(data.message || 'Restart gagal');
+        if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
         setRegStatus(data.message || 'ONU sedang di-restart.', 'success');
-        await loadLogs();
     } catch (e) {
+        if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setRegStatus(e.message || 'Restart gagal', 'error');
     } finally {
         setRowActionLoading(key, 'restart', false);
+        loadLogs().catch(() => {});
     }
 }
 
@@ -1569,21 +1592,26 @@ async function deleteRegisteredOnu(onu) {
             body: JSON.stringify({ fsp: String(onu.fsp || ''), onu_id: Number(onu.onu_id || 0) }),
         });
         if (data.status !== 'ok') throw new Error(data.message || 'Hapus gagal');
+        if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
 
         registered.value = registered.value.filter(it => onuKey(it) !== key);
         if (regExpandedKey.value === key) regExpandedKey.value = '';
         setRegStatus('ONU berhasil dihapus.', 'success');
-        await loadLogs();
+        if (isTeknisi.value) teknisiWriteReady.value = true;
     } catch (e) {
+        if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setRegStatus(e.message || 'Hapus gagal', 'error');
     } finally {
         setRowActionLoading(key, 'delete', false);
+        loadLogs().catch(() => {});
     }
 }
 
 // ========== Logs ==========
 const logs = ref([]);
 const logsLoading = ref(false);
+const logView = ref('latest'); // latest | history
+const lastLogExcerpt = ref('');
 
 function formatLogsText(list) {
     const items = Array.isArray(list) ? list : [];
@@ -1600,12 +1628,30 @@ function formatLogsText(list) {
         .join('\n\n');
 }
 
+const logPanelText = computed(() => {
+    if (logView.value === 'history') {
+        return formatLogsText(logs.value);
+    }
+    if (lastLogExcerpt.value) {
+        return String(lastLogExcerpt.value);
+    }
+    if (Array.isArray(logs.value) && logs.value.length) {
+        const t = logs.value[0]?.log_text ? String(logs.value[0].log_text) : '';
+        return t || 'Log akan tampil di sini.';
+    }
+    return 'Log akan tampil di sini.';
+});
+
 async function loadLogs() {
     if (!selectedOltId.value || isTeknisi.value) return;
     logsLoading.value = true;
     try {
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/logs`);
         logs.value = data.status === 'ok' ? (Array.isArray(data.data) ? data.data : []) : [];
+        if (Array.isArray(logs.value) && logs.value.length) {
+            const t = logs.value[0]?.log_text ? String(logs.value[0].log_text) : '';
+            if (t) lastLogExcerpt.value = t;
+        }
     } catch {
         logs.value = [];
     } finally {
@@ -1615,6 +1661,18 @@ async function loadLogs() {
 
 function clearLogs() {
     logs.value = [];
+    lastLogExcerpt.value = '';
+    logView.value = 'latest';
+}
+
+async function copyCurrentLog() {
+    const text = String(logPanelText.value || '').trim();
+    if (!text) return;
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch {
+        // ignore
+    }
 }
 
 function storeRegisteredMemoryCache(oltId) {
@@ -1705,6 +1763,8 @@ async function onOltChanged(newId, prevId) {
     setRegStatus(newId ? 'Pilih F/S/P dulu.' : '', 'info');
 
     logs.value = [];
+    lastLogExcerpt.value = '';
+    logView.value = 'latest';
 
     if (!newId) return;
 
@@ -2360,11 +2420,53 @@ onMounted(async () => {
                     v-if="selectedOlt && !isTeknisi"
                     class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-white/10 overflow-hidden"
                 >
-                    <div class="p-4 border-b border-slate-100 dark:border-white/5 flex items-center justify-between">
-                        <div class="text-xs font-black text-slate-700 dark:text-slate-200 uppercase">Log Command</div>
-                        <button type="button" class="text-xs font-bold text-slate-500 hover:text-slate-700" @click="clearLogs()">Clear</button>
+                    <div class="p-4 border-b border-slate-100 dark:border-white/5 flex items-center justify-between gap-3">
+                        <div class="flex items-center gap-2">
+                            <div class="text-xs font-black text-slate-700 dark:text-slate-200 uppercase">Log Command</div>
+                            <span v-if="logsLoading" class="inline-flex items-center gap-2 text-[11px] text-slate-400">
+                                <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                </svg>
+                                Loading
+                            </span>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <div class="inline-flex rounded-lg border border-slate-200 dark:border-white/10 overflow-hidden">
+                                <button
+                                    type="button"
+                                    class="h-8 px-3 text-[11px] font-bold transition"
+                                    :class="logView === 'latest' ? 'bg-slate-900 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/40'"
+                                    @click="logView = 'latest'"
+                                >
+                                    Terakhir
+                                </button>
+                                <button
+                                    type="button"
+                                    class="h-8 px-3 text-[11px] font-bold transition border-l border-slate-200 dark:border-white/10"
+                                    :class="logView === 'history' ? 'bg-slate-900 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/40'"
+                                    @click="logView = 'history'"
+                                >
+                                    History
+                                </button>
+                            </div>
+                            <button
+                                type="button"
+                                class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
+                                @click="copyCurrentLog()"
+                            >
+                                Copy
+                            </button>
+                            <button
+                                type="button"
+                                class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
+                                @click="clearLogs()"
+                            >
+                                Clear
+                            </button>
+                        </div>
                     </div>
-                    <pre class="p-4 text-[11px] bg-slate-900 text-slate-100 overflow-x-auto max-h-80 whitespace-pre-wrap">{{ formatLogsText(logs) }}</pre>
+                    <pre class="p-4 text-[11px] bg-slate-900 text-slate-100 overflow-x-auto max-h-80 whitespace-pre-wrap">{{ logPanelText }}</pre>
                 </div>
                 <div v-if="showOltModal" class="fixed inset-0 z-[80]">
                     <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showOltModal = false"></div>

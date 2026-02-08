@@ -9,6 +9,7 @@ use App\Models\OltLog;
 use App\Services\OltService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Throwable;
@@ -78,6 +79,17 @@ class OltController extends Controller
             'online_duration' => $onlineDuration,
             'vlan' => $vlan,
         ];
+    }
+
+    private function actorName(Request $request): ?string
+    {
+        try {
+            $u = $request->user();
+            if (!$u) return null;
+            return $u->name ?? $u->username ?? $u->email ?? null;
+        } catch (Throwable $e) {
+            return null;
+        }
     }
 
     /**
@@ -987,11 +999,16 @@ class OltController extends Controller
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         $saveConfig = $request->boolean('save_config', false);
+        $actor = $this->actorName($request);
         
         $service = null;
+        $logExcerpt = '';
+        $logId = null;
         try {
             $service = new OltService($tenantId);
+            $service->setSuppressActionLog(true);
             $service->connect($olt);
+            $service->startTrace();
             $result = $service->registerOnu(
                 $request->fsp,
                 $request->sn,
@@ -1004,22 +1021,74 @@ class OltController extends Controller
                 $service->writeConfig();
             }
 
+            $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+
+            $summary = [
+                'count' => 1,
+                'success' => 1,
+                'error' => 0,
+                'fsp' => (string) ($result['fsp'] ?? $request->fsp),
+                'onu_id' => (int) ($result['onu_id'] ?? ($request->onu_id ?? 0)),
+                'sn' => (string) ($result['sn'] ?? $request->sn),
+                'onu_name' => (string) ($result['name'] ?? $request->name),
+                'save_config' => $saveConfig,
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'register',
+                'done',
+                $summary,
+                $logExcerpt,
+                $actor
+            );
 
             return response()->json([
                 'status' => 'ok',
                 'message' => $saveConfig ? 'ONU berhasil diregistrasi dan config disimpan (write).' : 'ONU berhasil diregistrasi.',
                 'data' => $result,
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ]);
         } catch (RuntimeException $e) {
             try {
-                if ($service) $service->disconnect();
+                if ($service) {
+                    $logExcerpt = $service->getTraceText(20000);
+                    $service->disconnect();
+                }
             } catch (Throwable $e2) {
                 // ignore
             }
+
+            $summary = [
+                'count' => 1,
+                'success' => 0,
+                'error' => 1,
+                'fsp' => (string) $request->fsp,
+                'onu_id' => (int) ($request->onu_id ?? 0),
+                'sn' => (string) $request->sn,
+                'onu_name' => (string) $request->name,
+                'save_config' => $saveConfig,
+                'message' => $e->getMessage(),
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'register',
+                'error',
+                $summary,
+                $logExcerpt !== '' ? $logExcerpt : $e->getMessage(),
+                $actor
+            );
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ], 422);
         }
     }
@@ -1037,22 +1106,76 @@ class OltController extends Controller
         
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $actor = $this->actorName($request);
         
+        $service = null;
+        $logExcerpt = '';
+        $logId = null;
         try {
             $service = new OltService($tenantId);
+            $service->setSuppressActionLog(true);
             $service->connect($olt);
+            $service->startTrace();
             $service->updateOnuName($request->fsp, $request->onu_id, $request->name);
-            $service->writeConfig();
+            $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+
+            $summary = [
+                'fsp' => (string) $request->fsp,
+                'onu_id' => (int) $request->onu_id,
+                'onu_name' => (string) $request->name,
+                'status' => 'success',
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'update_onu_detail',
+                'done',
+                $summary,
+                $logExcerpt,
+                $actor
+            );
             
             return response()->json([
                 'status' => 'ok',
                 'message' => 'Nama ONU berhasil diupdate',
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ]);
         } catch (RuntimeException $e) {
+            try {
+                if ($service) {
+                    $logExcerpt = $service->getTraceText(20000);
+                    $service->disconnect();
+                }
+            } catch (Throwable $e2) {
+                // ignore
+            }
+
+            $summary = [
+                'fsp' => (string) $request->fsp,
+                'onu_id' => (int) $request->onu_id,
+                'onu_name' => (string) $request->name,
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'update_onu_detail',
+                'error',
+                $summary,
+                $logExcerpt !== '' ? $logExcerpt : $e->getMessage(),
+                $actor
+            );
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ], 422);
         }
     }
@@ -1069,22 +1192,74 @@ class OltController extends Controller
         
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $actor = $this->actorName($request);
         
+        $service = null;
+        $logExcerpt = '';
+        $logId = null;
         try {
             $service = new OltService($tenantId);
+            $service->setSuppressActionLog(true);
             $service->connect($olt);
+            $service->startTrace();
             $service->deleteOnu($request->fsp, $request->onu_id);
-            $service->writeConfig();
+            $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+
+            $summary = [
+                'fsp' => (string) $request->fsp,
+                'onu_id' => (int) $request->onu_id,
+                'status' => 'success',
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'delete_onu',
+                'done',
+                $summary,
+                $logExcerpt,
+                $actor
+            );
             
             return response()->json([
                 'status' => 'ok',
                 'message' => 'ONU berhasil dihapus',
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ]);
         } catch (RuntimeException $e) {
+            try {
+                if ($service) {
+                    $logExcerpt = $service->getTraceText(20000);
+                    $service->disconnect();
+                }
+            } catch (Throwable $e2) {
+                // ignore
+            }
+
+            $summary = [
+                'fsp' => (string) $request->fsp,
+                'onu_id' => (int) $request->onu_id,
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'delete_onu',
+                'error',
+                $summary,
+                $logExcerpt !== '' ? $logExcerpt : $e->getMessage(),
+                $actor
+            );
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ], 422);
         }
     }
@@ -1101,21 +1276,74 @@ class OltController extends Controller
         
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $actor = $this->actorName($request);
         
+        $service = null;
+        $logExcerpt = '';
+        $logId = null;
         try {
             $service = new OltService($tenantId);
+            $service->setSuppressActionLog(true);
             $service->connect($olt);
+            $service->startTrace();
             $service->restartOnu($request->fsp, $request->onu_id);
+            $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+
+            $summary = [
+                'fsp' => (string) $request->fsp,
+                'onu_id' => (int) $request->onu_id,
+                'status' => 'success',
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'restart_onu',
+                'done',
+                $summary,
+                $logExcerpt,
+                $actor
+            );
             
             return response()->json([
                 'status' => 'ok',
                 'message' => 'ONU sedang di-restart',
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ]);
         } catch (RuntimeException $e) {
+            try {
+                if ($service) {
+                    $logExcerpt = $service->getTraceText(20000);
+                    $service->disconnect();
+                }
+            } catch (Throwable $e2) {
+                // ignore
+            }
+
+            $summary = [
+                'fsp' => (string) $request->fsp,
+                'onu_id' => (int) $request->onu_id,
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'restart_onu',
+                'error',
+                $summary,
+                $logExcerpt !== '' ? $logExcerpt : $e->getMessage(),
+                $actor
+            );
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ], 422);
         }
     }
@@ -1127,21 +1355,84 @@ class OltController extends Controller
     {
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $actor = $this->actorName($request);
 
+        $service = null;
+        $logExcerpt = '';
+        $logId = null;
         try {
             $service = new OltService($tenantId);
+            $service->setSuppressActionLog(true);
             $service->connect($olt);
-            $service->writeConfig();
+            $service->startTrace();
+            $out = $service->sendCommand('write', 60);
+            $hasErr = preg_match(OltService::ERROR_RE, $out) && !preg_match(OltService::OK_RE, $out);
+            $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+
+            $summary = [
+                'count' => 1,
+                'success' => $hasErr ? 0 : 1,
+                'error' => $hasErr ? 1 : 0,
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'write',
+                $hasErr ? 'error' : 'done',
+                $summary,
+                $logExcerpt,
+                $actor
+            );
+
+            if ($hasErr) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Write gagal. Cek log.',
+                    'log_id' => $logId,
+                    'log_excerpt' => $logExcerpt,
+                ], 422);
+            }
 
             return response()->json([
                 'status' => 'ok',
                 'message' => 'Config berhasil disimpan (write).',
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ]);
         } catch (RuntimeException $e) {
+            try {
+                if ($service) {
+                    $logExcerpt = $service->getTraceText(20000);
+                    $service->disconnect();
+                }
+            } catch (Throwable $e2) {
+                // ignore
+            }
+
+            $summary = [
+                'count' => 1,
+                'success' => 0,
+                'error' => 1,
+                'message' => $e->getMessage(),
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'write',
+                'error',
+                $summary,
+                $logExcerpt !== '' ? $logExcerpt : $e->getMessage(),
+                $actor
+            );
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ], 422);
         }
     }
@@ -1177,11 +1468,16 @@ class OltController extends Controller
         // Native parity: default is NOT to run write-config; users can click "Simpan Config" separately.
         $saveConfig = $request->boolean('save_config', false);
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $actor = $this->actorName($request);
 
         $service = null;
+        $logExcerpt = '';
+        $logId = null;
         try {
             $service = new OltService($tenantId);
+            $service->setSuppressActionLog(true);
             $service->connect($olt);
+            $service->startTrace();
 
             $uncfg = $service->scanUnconfigured();
             if (empty($uncfg)) {
@@ -1235,28 +1531,65 @@ class OltController extends Controller
                 $service->writeConfig();
             }
 
+            $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+
+            $summary = [
+                'count' => $succ + $err,
+                'success' => $succ,
+                'error' => $err,
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'register_auto',
+                'done',
+                $summary,
+                $logExcerpt,
+                $actor
+            );
 
             return response()->json([
                 'status' => 'ok',
                 'message' => "Auto register selesai. Success {$succ}, error {$err}.",
-                'summary' => [
-                    'count' => $succ + $err,
-                    'success' => $succ,
-                    'error' => $err,
-                ],
+                'summary' => $summary,
                 'results' => $results,
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ]);
         } catch (RuntimeException $e) {
             try {
-                if ($service) $service->disconnect();
+                if ($service) {
+                    $logExcerpt = $service->getTraceText(20000);
+                    $service->disconnect();
+                }
             } catch (Throwable $e2) {
                 // ignore
             }
 
+            $summary = [
+                'count' => 0,
+                'success' => 0,
+                'error' => 1,
+                'message' => $e->getMessage(),
+            ];
+            $logId = OltLog::logAction(
+                $tenantId,
+                $olt->id,
+                $olt->nama_olt,
+                'register_auto',
+                'error',
+                $summary,
+                $logExcerpt !== '' ? $logExcerpt : $e->getMessage(),
+                $actor
+            );
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
+                'log_id' => $logId,
+                'log_excerpt' => $logExcerpt,
             ], 422);
         }
     }
@@ -1294,12 +1627,67 @@ class OltController extends Controller
     public function logs(Request $request, int $id): JsonResponse
     {
         $tenantId = $request->user()->tenant_id ?? 1;
-        
-        $logs = OltLog::where('olt_id', $id)
+
+        $table = (new OltLog())->getTable();
+        if (!Schema::hasTable($table)) {
+            return response()->json(['status' => 'ok', 'data' => []]);
+        }
+
+        $cols = [];
+        try {
+            $cols = Schema::getColumnListing($table);
+        } catch (Throwable $e) {
+            $cols = [];
+        }
+        $colSet = array_fill_keys($cols, true);
+
+        $orderCol = isset($colSet['created_at']) ? 'created_at' : (isset($colSet['id']) ? 'id' : null);
+        $query = DB::table($table)
             ->where('tenant_id', $tenantId)
-            ->orderBy('created_at', 'desc')
-            ->limit(100)
-            ->get();
+            ->where('olt_id', $id);
+
+        if ($orderCol) {
+            $query->orderBy($orderCol, 'desc');
+        }
+
+        $rows = $query->limit(100)->get();
+
+        $logs = [];
+        foreach ($rows as $row) {
+            $logText = '';
+            if (isset($colSet['log_text'])) {
+                $logText = (string) ($row->log_text ?? '');
+            } elseif (isset($colSet['response'])) {
+                $logText = (string) ($row->response ?? '');
+            }
+
+            $status = '';
+            if (isset($colSet['status'])) {
+                $status = (string) ($row->status ?? '');
+            } elseif (isset($colSet['success'])) {
+                $status = ((int) ($row->success ?? 1)) === 1 ? 'done' : 'error';
+            }
+
+            $summaryJson = null;
+            if (isset($colSet['summary_json'])) {
+                $summaryJson = $row->summary_json ?? null;
+            } elseif (isset($colSet['command'])) {
+                $summaryJson = $row->command ?? null;
+            }
+
+            $logs[] = [
+                'id' => $row->id ?? null,
+                'tenant_id' => $row->tenant_id ?? null,
+                'created_at' => $row->created_at ?? null,
+                'olt_id' => $row->olt_id ?? null,
+                'olt_name' => $row->olt_name ?? null,
+                'action' => $row->action ?? null,
+                'actor' => $row->actor ?? null,
+                'status' => $status,
+                'summary_json' => $summaryJson,
+                'log_text' => $logText,
+            ];
+        }
         
         return response()->json([
             'status' => 'ok',

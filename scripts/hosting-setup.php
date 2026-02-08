@@ -64,7 +64,14 @@ final class HostingSetup
             }
         }
 
-        $storageLinked = $this->runCommand('php artisan storage:link') === 0;
+        $storageCode = $this->runCommand('php artisan storage:link');
+        $storageLinked = $storageCode === 0;
+        if (!$storageLinked && $this->publicStorageLooksLinked()) {
+            // Laravel prints "ERROR The [public/storage] link already exists." and returns nonzero.
+            // This is usually benign (idempotent). Avoid treating it as a failure.
+            $this->printLine('storage:link: public/storage already exists (ok).');
+            $storageLinked = true;
+        }
 
         if (!$storageLinked) {
             $this->printLine('`storage:link` failed. Trying fallback sync to `public/storage` ...');
@@ -260,6 +267,18 @@ final class HostingSetup
 
         $this->laravelKernel = $kernel;
         return $kernel;
+    }
+
+    private function publicStorageLooksLinked(): bool
+    {
+        $publicStorage = $this->rootPath . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'storage';
+        $targetStorage = $this->rootPath . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'app' . DIRECTORY_SEPARATOR . 'public';
+
+        $publicReal = @realpath($publicStorage);
+        $targetReal = @realpath($targetStorage);
+
+        $looksLinked = is_string($publicReal) && is_string($targetReal) && $publicReal !== '' && $publicReal === $targetReal;
+        return is_link($publicStorage) || $looksLinked;
     }
 
     private function preClearBootstrapCache(): void

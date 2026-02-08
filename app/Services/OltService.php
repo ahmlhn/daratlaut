@@ -41,9 +41,82 @@ class OltService
     private ?Olt $olt = null;
     private int $tenantId;
 
+    // When enabled by controller, we suppress per-method logging and/or collect a command transcript.
+    private bool $suppressActionLog = false;
+    private bool $traceEnabled = false;
+    private array $trace = [];
+
     public function __construct(int $tenantId)
     {
         $this->tenantId = $tenantId;
+    }
+
+    public function setSuppressActionLog(bool $flag): void
+    {
+        $this->suppressActionLog = $flag;
+    }
+
+    public function startTrace(): void
+    {
+        $this->traceEnabled = true;
+        $this->trace = [];
+    }
+
+    public function stopTrace(): void
+    {
+        $this->traceEnabled = false;
+    }
+
+    public function getTraceText(int $max = 20000): string
+    {
+        if (empty($this->trace)) {
+            return '';
+        }
+
+        $parts = [];
+        foreach ($this->trace as $it) {
+            $cmd = (string) ($it['cmd'] ?? '');
+            $out = trim((string) ($it['out'] ?? ''));
+            if ($cmd === '') continue;
+            $parts[] = ">>> {$cmd}\n{$out}";
+        }
+
+        $text = trim(implode("\n\n", $parts));
+        if ($text === '') return '';
+        if (strlen($text) <= $max) return $text;
+        return substr($text, 0, $max) . "\n...[TRUNCATED]...";
+    }
+
+    private function traceAdd(string $cmd, string $out): void
+    {
+        if (!$this->traceEnabled) return;
+
+        $c = strtolower(trim((string) $cmd));
+        if ($c === '') return;
+
+        // Native parity: keep logs focused on config-changing commands.
+        // Skip "show ..." commands unless they contain an error (usually short and useful).
+        if (str_starts_with($c, 'show ')) {
+            if (!preg_match(self::ERROR_RE, $out) || preg_match(self::OK_RE, $out)) {
+                return;
+            }
+        }
+
+        // Avoid noise from paging/terminal tweaks.
+        if (in_array($c, [
+            'terminal length 0',
+            'terminal page 0',
+            'scroll 0',
+            'screen-length 0 temporary',
+            'screen-length 0 permanent',
+        ], true)) {
+            return;
+        }
+
+        $this->trace[] = [
+            'cmd' => $cmd,
+            'out' => $out,
+        ];
     }
 
     /**
@@ -64,7 +137,9 @@ class OltService
             
             return true;
         } catch (RuntimeException $e) {
-            $this->logAction('connect', 'failed', $e->getMessage());
+            if (!$this->suppressActionLog) {
+                $this->logAction('connect', 'failed', $e->getMessage());
+            }
             throw $e;
         }
     }
@@ -135,7 +210,9 @@ class OltService
     {
         $this->client->write($cmd . "\n");
         $raw = $this->client->readUntilPrompt($timeout);
-        return str_replace("\r", "", $raw);
+        $out = str_replace("\r", "", $raw);
+        $this->traceAdd($cmd, $out);
+        return $out;
     }
 
     /**
@@ -153,6 +230,7 @@ class OltService
             $out .= "\n" . str_replace("\r", "", $rawMore);
             $tries++;
         }
+        $this->traceAdd($cmd, $out);
         return $out;
     }
 
@@ -293,7 +371,9 @@ class OltService
         $this->saveOnuToDb($fsp, $onuId, $sn, $name);
         
         // Log action
-        $this->logAction('register', 'success', "ONU {$fsp}:{$onuId} ({$sn}) registered as '{$name}'");
+        if (!$this->suppressActionLog) {
+            $this->logAction('register', 'success', "ONU {$fsp}:{$onuId} ({$sn}) registered as '{$name}'");
+        }
         
         return [
             'fsp' => $fsp,
@@ -387,7 +467,9 @@ class OltService
             // ignore
         }
 
-        $this->logAction('update_onu_detail', 'done', "ONU {$fsp}:{$onuId} renamed to '{$name}'");
+        if (!$this->suppressActionLog) {
+            $this->logAction('update_onu_detail', 'done', "ONU {$fsp}:{$onuId} renamed to '{$name}'");
+        }
         
         return true;
     }
@@ -441,7 +523,9 @@ class OltService
             // ignore
         }
 
-        $this->logAction('delete_onu', 'done', "ONU {$fsp}:{$onuId} deleted");
+        if (!$this->suppressActionLog) {
+            $this->logAction('delete_onu', 'done', "ONU {$fsp}:{$onuId} deleted");
+        }
         
         return true;
     }
@@ -457,7 +541,9 @@ class OltService
         $this->sendCommand('exit');
         $this->sendCommand('exit');
         
-        $this->logAction('restart', 'success', "ONU {$fsp}:{$onuId} restarted");
+        if (!$this->suppressActionLog) {
+            $this->logAction('restart_onu', 'done', "ONU {$fsp}:{$onuId} restarted");
+        }
         
         return true;
     }
@@ -467,8 +553,11 @@ class OltService
      */
     public function writeConfig(): bool
     {
-        $out = $this->sendCommand('write');
-        $this->logAction('write_config', 'success', 'Configuration saved');
+        // "write" may take a while on some OLTs; use a longer timeout (native uses ~60s).
+        $out = $this->sendCommand('write', 60);
+        if (!$this->suppressActionLog) {
+            $this->logAction('write', 'done', 'Configuration saved');
+        }
         return true;
     }
 
@@ -1261,7 +1350,9 @@ class OltService
         // Update FSP cache
         $this->olt->updateFspCache($fspList);
         
-        $this->logAction('sync_registered_all', 'done', "Synced {$count} ONUs");
+        if (!$this->suppressActionLog) {
+            $this->logAction('sync_registered_all', 'done', "Synced {$count} ONUs");
+        }
         
         return $count;
     }
