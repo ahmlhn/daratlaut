@@ -1,0 +1,1 @@
+import{c as t,a as e,u as a,h as r,m as s,F as m,j as _}from"./app-Ci7n3qCe.js";import{_ as o}from"./AdminLayout-BTf2uWiW.js";import n from"./SystemUpdatePanel-DL6Pyt0y.js";import"./LoadingSpinner-DR8I-POx.js";const h={__name:"SystemUpdate",setup(c){return(l,p)=>(_(),t(m,null,[e(a(r),{title:"Update Sistem"}),e(o,null,{default:s(()=>[e(n)]),_:1})],64))}};export{h as default};

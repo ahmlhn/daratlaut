@@ -201,7 +201,7 @@ onMounted(() => {
 
                     <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-                    <div class="inline-block align-bottom bg-white dark:bg-dark-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
+                    <div class="inline-block align-bottom bg-white dark:bg-dark-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full relative z-10">
                         <div class="bg-white dark:bg-dark-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                             <div class="flex justify-between items-center mb-5">
                                 <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-white">
