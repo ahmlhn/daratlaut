@@ -208,6 +208,9 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::get('/reports/plan-popularity', [ReportController::class, 'planPopularity']);
     Route::get('/reports/top-customers', [ReportController::class, 'topCustomers']);
     Route::get('/reports/export', [ReportController::class, 'exportCsv']);
+    // Role Management
+    Route::apiResource('/roles', \App\Http\Controllers\Api\V1\RoleController::class);
+    Route::get('/permissions', [\App\Http\Controllers\Api\V1\RoleController::class, 'permissions']);
 });
 
 // Midtrans webhook (no auth)
