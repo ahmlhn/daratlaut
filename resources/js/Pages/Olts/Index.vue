@@ -1759,7 +1759,7 @@ onMounted(async () => {
                             >
                                 <option value="">-- Pilih OLT --</option>
                                 <option v-for="olt in olts" :key="olt.id" :value="String(olt.id)">
-                                    {{ olt.nama_olt }} ({{ olt.host }}:{{ olt.port }})
+                                    {{ olt.nama_olt || `OLT #${olt.id}` }}
                                 </option>
                             </select>
                         </div>
