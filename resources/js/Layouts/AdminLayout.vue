@@ -297,11 +297,12 @@ const breadcrumbs = computed(() => {
         <Link href="/dashboard" class="flex items-center gap-3 group">
           <div class="relative">
             <div class="absolute inset-0 bg-primary-500 blur-lg opacity-20 group-hover:opacity-40 transition"></div>
-            <div class="relative w-10 h-10 rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 flex items-center justify-center shadow-lg shadow-primary-500/30 group-hover:scale-110 transition-transform duration-300">
-              <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" />
-              </svg>
-            </div>
+            <img
+              src="/assets/favicon.svg"
+              alt="Logo"
+              class="relative w-8 h-8 drop-shadow-md group-hover:scale-110 transition-transform duration-300"
+              onerror="this.style.display='none'"
+            />
           </div>
           <div v-if="!sidebarCollapsed" class="flex flex-col">
             <h1 class="text-lg font-black text-gray-800 dark:text-white tracking-tight leading-none">
@@ -475,8 +476,14 @@ const breadcrumbs = computed(() => {
         </button>
         <!-- Logo -->
         <Link href="/dashboard" class="flex items-center gap-2">
-          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-600 to-primary-700 flex items-center justify-center">
-            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" /></svg>
+          <div class="relative">
+            <div class="absolute inset-0 bg-primary-500 blur-lg opacity-20"></div>
+            <img
+              src="/assets/favicon.svg"
+              alt="Logo"
+              class="relative w-8 h-8 drop-shadow-sm"
+              onerror="this.style.display='none'"
+            />
           </div>
           <span class="text-sm font-black text-gray-800 dark:text-white">DARAT<span class="text-primary-600 dark:text-primary-500">LAUT</span></span>
         </Link>

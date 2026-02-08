@@ -109,14 +109,12 @@ const submit = () => {
         <!-- Logo & Title -->
         <div class="text-center mb-8">
           <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-50 dark:bg-white/5 mb-4 shadow-inner ring-1 ring-slate-100 dark:ring-white/10">
-            <svg class="w-10 h-10 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
-            </svg>
+            <img src="/assets/favicon.svg" alt="Logo" class="w-10 h-10 drop-shadow-md" onerror="this.style.display='none'">
           </div>
           <h1 class="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-            ISP <span class="text-blue-600 dark:text-blue-500">ADMIN</span>
+            DARAT<span class="text-blue-600 dark:text-blue-500">LAUT</span>
           </h1>
-          <p class="text-xs text-slate-500 dark:text-slate-400 font-bold tracking-widest uppercase mt-1">Billing System</p>
+          <p class="text-xs text-slate-500 dark:text-slate-400 font-bold tracking-widest uppercase mt-1">Network System</p>
         </div>
 
         <!-- Error Message -->
