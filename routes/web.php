@@ -139,6 +139,9 @@ Route::middleware(['auth', 'resolve.tenant'])->group(function () {
     
     // Settings
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
+    Route::get('/settings/roles', function () {
+        return \Inertia\Inertia::render('Settings/Roles/Index');
+    })->name('settings.roles');
 
     // System Update UI lives under Settings, but keep legacy /system-update path as redirect.
     Route::get('/settings/system-update', [SystemUpdateController::class, 'index'])->name('system_update.index');
