@@ -26,6 +26,18 @@ const ghCheck = ref(null)
 
 const logBoxRef = ref(null)
 
+// Helper: merge incoming state without losing enriched fields (config/github/installed/log_tail)
+// that only the full status() endpoint returns.
+function applyState(incoming) {
+  if (!incoming) return
+  const prev = state.value
+  if (prev && !incoming.config && prev.config) incoming.config = prev.config
+  if (prev && !incoming.github && prev.github) incoming.github = prev.github
+  if (prev && !incoming.installed && prev.installed) incoming.installed = prev.installed
+  if (prev && !incoming.log_tail && prev.log_tail) incoming.log_tail = prev.log_tail
+  state.value = incoming
+}
+
 const stage = computed(() => state.value?.stage || 'idle')
 const err = computed(() => state.value?.error || '')
 const cfg = computed(() => state.value?.config || {})
@@ -136,9 +148,10 @@ async function refreshStatus() {
   statusLoading.value = true
   try {
     const res = await window.axios.get('/system-update/status')
+    // Full status response includes config/github/installed — safe to overwrite entirely
     state.value = res?.data?.data?.data || res?.data?.data || null
   } catch (e) {
-    state.value = { stage: 'error', error: e?.response?.data?.message || e?.message || 'Failed to load status' }
+    state.value = { stage: 'error', error: e?.response?.data?.message || e?.message || 'Failed to load status', config: state.value?.config, github: state.value?.github }
   } finally {
     statusLoading.value = false
   }
@@ -161,7 +174,7 @@ async function uploadPackage() {
         uploadPct.value = Math.round((evt.loaded / evt.total) * 100)
       },
     })
-    state.value = res?.data?.data?.data || res?.data?.data || null
+    applyState(res?.data?.data?.data || res?.data?.data || null)
     uploadPct.value = 100
     notify('success', 'Paket ZIP berhasil diunggah.')
   } catch (e) {
@@ -177,7 +190,7 @@ async function downloadConfigured() {
   running.value = true
   try {
     const res = await window.axios.post('/system-update/download')
-    state.value = res?.data?.data?.data || res?.data?.data || null
+    applyState(res?.data?.data?.data || res?.data?.data || null)
     notify('success', 'Download paket update selesai.')
   } catch (e) {
     notify('error', e?.response?.data?.message || e?.message || 'Download gagal')
@@ -191,7 +204,7 @@ async function prepare() {
   running.value = true
   try {
     const res = await window.axios.post('/system-update/start')
-    state.value = res?.data?.data?.data || res?.data?.data || null
+    applyState(res?.data?.data?.data || res?.data?.data || null)
     notify('info', 'Prepare berhasil. Siap jalankan update.')
   } catch (e) {
     notify('error', e?.response?.data?.message || e?.message || 'Prepare gagal')
@@ -225,7 +238,7 @@ async function runSteps() {
       if (!['ready', 'copying', 'finalize'].includes(stage.value)) break
 
       const res = await window.axios.post('/system-update/step')
-      state.value = res?.data?.data?.data || res?.data?.data || null
+      applyState(res?.data?.data?.data || res?.data?.data || null)
 
       // Small delay so the UI feels responsive and we don't hammer the server.
       await sleep(200)
@@ -247,7 +260,7 @@ async function resetUpdate() {
   running.value = true
   try {
     const res = await window.axios.post('/system-update/reset')
-    state.value = res?.data?.data?.data || res?.data?.data || null
+    applyState(res?.data?.data?.data || res?.data?.data || null)
     ghCheck.value = null
     notify('info', 'State update di-reset.')
   } catch (e) {
@@ -265,7 +278,7 @@ async function githubSaveToken() {
   ghBusy.value = true
   try {
     const res = await window.axios.post('/system-update/github/token', { token })
-    state.value = res?.data?.data?.data || res?.data?.data || state.value
+    applyState(res?.data?.data?.data || res?.data?.data || null)
     ghToken.value = ''
     notify('success', 'Token GitHub tersimpan.')
   } catch (e) {
@@ -281,7 +294,7 @@ async function githubClearToken() {
   ghBusy.value = true
   try {
     const res = await window.axios.post('/system-update/github/token/clear')
-    state.value = res?.data?.data?.data || res?.data?.data || state.value
+    applyState(res?.data?.data?.data || res?.data?.data || null)
     notify('info', 'Token GitHub dihapus.')
   } catch (e) {
     notify('error', e?.response?.data?.message || e?.message || 'Gagal menghapus token')
@@ -323,15 +336,17 @@ async function githubDownloadAndUpdate() {
   running.value = true
   try {
     const dl = await window.axios.post('/system-update/github/download')
-    state.value = dl?.data?.data?.data || dl?.data?.data || state.value
+    applyState(dl?.data?.data?.data || dl?.data?.data || null)
 
     const st = await window.axios.post('/system-update/start')
-    state.value = st?.data?.data?.data || st?.data?.data || state.value
+    applyState(st?.data?.data?.data || st?.data?.data || null)
 
     // Step loop: copy chunks then finalize commands.
     let guard = 0
     while (running.value && guard < 2000) {
       guard++
+      await refreshStatus()
+
       if (stage.value === 'done' || stage.value === 'error' || stage.value === 'idle') break
       if (!['ready', 'copying', 'finalize'].includes(stage.value)) {
         await refreshStatus()
@@ -339,7 +354,7 @@ async function githubDownloadAndUpdate() {
       }
 
       const stepRes = await window.axios.post('/system-update/step')
-      state.value = stepRes?.data?.data?.data || stepRes?.data?.data || state.value
+      applyState(stepRes?.data?.data?.data || stepRes?.data?.data || null)
       await sleep(200)
     }
 
@@ -428,7 +443,7 @@ onMounted(() => {
                 </p>
 
                 <div
-                  v-if="!cfg.enabled"
+                  v-if="!statusLoading && state && !cfg.enabled"
                   class="mt-3 text-sm rounded-xl border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200 p-3"
                 >
                   Fitur update dinonaktifkan di server. Set <span class="font-mono font-semibold">SYSTEM_UPDATE_ENABLED=true</span>.
