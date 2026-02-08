@@ -192,65 +192,67 @@ onMounted(() => {
         </div>
 
         <!-- Form Modal -->
-        <div v-if="showForm" class="fixed inset-0 z-50 overflow-y-auto">
-            <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-                <div class="fixed inset-0 transition-opacity" aria-hidden="true" @click="showForm = false">
-                    <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
-                </div>
+        <Teleport to="body">
+            <div v-if="showForm" class="fixed inset-0 z-[100] overflow-y-auto">
+                <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                    <div class="fixed inset-0 transition-opacity" aria-hidden="true" @click="showForm = false">
+                        <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+                    </div>
 
-                <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-                <div class="inline-block align-bottom bg-white dark:bg-dark-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
-                    <div class="bg-white dark:bg-dark-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                        <div class="flex justify-between items-center mb-5">
-                            <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-white">
-                                {{ isEditing ? 'Edit Role: ' + form.name : 'Tambah Role Baru' }}
-                            </h3>
-                            <button @click="showForm = false" class="text-gray-400 hover:text-gray-500">
-                                <span class="text-2xl">&times;</span>
-                            </button>
-                        </div>
-
-                        <div class="space-y-4">
-                            <!-- Role Name -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Nama Role</label>
-                                <input v-model="form.name" type="text" class="input w-full mt-1" placeholder="Contoh: staff_gudang" :disabled="isEditing && ['admin', 'owner'].includes(form.name)">
-                                <p v-if="isEditing && ['admin', 'owner'].includes(form.name)" class="text-xs text-yellow-600 mt-1">
-                                    Nama role sistem tidak bisa diubah.
-                                </p>
+                    <div class="inline-block align-bottom bg-white dark:bg-dark-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
+                        <div class="bg-white dark:bg-dark-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                            <div class="flex justify-between items-center mb-5">
+                                <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-white">
+                                    {{ isEditing ? 'Edit Role: ' + form.name : 'Tambah Role Baru' }}
+                                </h3>
+                                <button @click="showForm = false" class="text-gray-400 hover:text-gray-500">
+                                    <span class="text-2xl">&times;</span>
+                                </button>
                             </div>
 
-                            <!-- Permissions Grid -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Permissions</label>
-                                <div class="h-96 overflow-y-auto custom-scrollbar border border-gray-200 dark:border-gray-700 rounded-md p-4">
-                                    <div v-for="(perms, group) in groupedPermissions" :key="group" class="mb-6">
-                                        <h4 class="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider mb-2 border-b border-gray-100 dark:border-gray-800 pb-1">
-                                            {{ group }}
-                                        </h4>
-                                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                            <label v-for="perm in perms" :key="perm.id" class="flex items-center space-x-2 cursor-pointer p-2 hover:bg-gray-50 dark:hover:bg-dark-800 rounded">
-                                                <input type="checkbox" :checked="form.permissions.includes(perm.name)" @change="togglePermission(perm.name)" class="rounded text-primary-600 focus:ring-primary-500">
-                                                <span class="text-sm text-gray-700 dark:text-gray-300">{{ perm.name }}</span>
-                                            </label>
+                            <div class="space-y-4">
+                                <!-- Role Name -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Nama Role</label>
+                                    <input v-model="form.name" type="text" class="input w-full mt-1" placeholder="Contoh: staff_gudang" :disabled="isEditing && ['admin', 'owner'].includes(form.name)">
+                                    <p v-if="isEditing && ['admin', 'owner'].includes(form.name)" class="text-xs text-yellow-600 mt-1">
+                                        Nama role sistem tidak bisa diubah.
+                                    </p>
+                                </div>
+
+                                <!-- Permissions Grid -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Permissions</label>
+                                    <div class="h-96 overflow-y-auto custom-scrollbar border border-gray-200 dark:border-gray-700 rounded-md p-4">
+                                        <div v-for="(perms, group) in groupedPermissions" :key="group" class="mb-6">
+                                            <h4 class="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider mb-2 border-b border-gray-100 dark:border-gray-800 pb-1">
+                                                {{ group }}
+                                            </h4>
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                                <label v-for="perm in perms" :key="perm.id" class="flex items-center space-x-2 cursor-pointer p-2 hover:bg-gray-50 dark:hover:bg-dark-800 rounded">
+                                                    <input type="checkbox" :checked="form.permissions.includes(perm.name)" @change="togglePermission(perm.name)" class="rounded text-primary-600 focus:ring-primary-500">
+                                                    <span class="text-sm text-gray-700 dark:text-gray-300">{{ perm.name }}</span>
+                                                </label>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="bg-gray-50 dark:bg-dark-800 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                        <button @click="saveRole" :disabled="processing" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-primary-600 text-base font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:ml-3 sm:w-auto sm:text-sm">
-                            {{ processing ? 'Menyimpan...' : 'Simpan' }}
-                        </button>
-                        <button @click="showForm = false" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2 bg-white dark:bg-dark-900 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-dark-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
-                            Batal
-                        </button>
+                        <div class="bg-gray-50 dark:bg-dark-800 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                            <button @click="saveRole" :disabled="processing" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-primary-600 text-base font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:ml-3 sm:w-auto sm:text-sm">
+                                {{ processing ? 'Menyimpan...' : 'Simpan' }}
+                            </button>
+                            <button @click="showForm = false" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2 bg-white dark:bg-dark-900 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-dark-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                                Batal
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
+        </Teleport>
     </AdminLayout>
 </template>
