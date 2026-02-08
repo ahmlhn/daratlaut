@@ -1,8 +1,7 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { Head } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
-import { useForm } from '@inertiajs/vue3';
 
 // State
 const roles = ref([]);
@@ -11,6 +10,7 @@ const loading = ref(false);
 const showForm = ref(false);
 const isEditing = ref(false);
 const processing = ref(false);
+const searchQuery = ref('');
 
 const form = ref({
     id: null,
@@ -47,6 +47,7 @@ function openCreateForm() {
     isEditing.value = false;
     form.value = { id: null, name: '', permissions: [] };
     showForm.value = true;
+    searchQuery.value = '';
 }
 
 function openEditForm(role) {
@@ -57,9 +58,11 @@ function openEditForm(role) {
         permissions: role.permissions.map(p => p.name)
     };
     showForm.value = true;
+    searchQuery.value = '';
 }
 
 async function saveRole() {
+    if (!form.value.name) return;
     processing.value = true;
     try {
         const url = isEditing.value ? `${API_BASE}/roles/${form.value.id}` : `${API_BASE}/roles`;
@@ -87,7 +90,7 @@ async function saveRole() {
 }
 
 async function deleteRole(role) {
-    if (!confirm(`Hapus role ${role.name}?`)) return;
+    if (!confirm(`Yakin ingin menghapus role "${role.name}"? Tindakan ini tidak dapat dibatalkan.`)) return;
 
     try {
         const response = await fetch(`${API_BASE}/roles/${role.id}`, {
@@ -106,22 +109,50 @@ async function deleteRole(role) {
     }
 }
 
-// Group permissions for better UI
+// Group permissions logic with search filtering
 const groupedPermissions = computed(() => {
     const groups = {};
+    const query = searchQuery.value.toLowerCase();
+    
     permissions.value.forEach(p => {
+        // Filter based on search
+        if (query && !p.name.toLowerCase().includes(query)) return;
+
         const parts = p.name.split(' ');
-        const entity = parts.length > 1 ? parts.slice(1).join(' ') : 'Other'; // e.g. "view users" -> "users"
-        if (!groups[entity]) groups[entity] = [];
-        groups[entity].push(p);
+        const entity = parts.length > 1 ? parts.slice(1).join(' ') : 'System'; 
+        const groupName = entity.charAt(0).toUpperCase() + entity.slice(1);
+        
+        if (!groups[groupName]) groups[groupName] = [];
+        groups[groupName].push(p);
     });
-    return groups;
+    
+    // Sort groups alphabetically
+    return Object.keys(groups).sort().reduce((acc, key) => {
+        acc[key] = groups[key];
+        return acc;
+    }, {});
 });
 
 function togglePermission(name) {
     const idx = form.value.permissions.indexOf(name);
     if (idx === -1) form.value.permissions.push(name);
     else form.value.permissions.splice(idx, 1);
+}
+
+function toggleGroup(groupName, perms) {
+    const allSelected = perms.every(p => form.value.permissions.includes(p.name));
+    if (allSelected) {
+        // Unselect all
+        perms.forEach(p => {
+            const idx = form.value.permissions.indexOf(p.name);
+            if (idx !== -1) form.value.permissions.splice(idx, 1);
+        });
+    } else {
+        // Select all
+        perms.forEach(p => {
+            if (!form.value.permissions.includes(p.name)) form.value.permissions.push(p.name);
+        });
+    }
 }
 
 onMounted(() => {
@@ -134,125 +165,228 @@ onMounted(() => {
     <Head title="Kelola Role" />
 
     <AdminLayout>
-        <div class="space-y-6">
-            <!-- Header -->
-            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div class="space-y-8 animate-fade-in">
+            <!-- Header Section -->
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white dark:bg-dark-800 p-6 rounded-2xl shadow-card border border-gray-100 dark:border-dark-700">
                 <div>
-                    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Kelola Role & Permission</h1>
-                    <p class="text-gray-500 dark:text-gray-400 text-sm">Atur hak akses pengguna dalam sistem</p>
+                    <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-primary-600 to-primary-400">
+                        Role & Permissions
+                    </h1>
+                    <p class="text-gray-500 dark:text-gray-400 mt-1">
+                        Atur akses dan keamanan sistem dengan mudah.
+                    </p>
                 </div>
-                <button @click="openCreateForm" class="btn btn-primary">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                <button @click="openCreateForm" 
+                    class="group relative inline-flex items-center justify-center px-6 py-3 text-sm font-medium text-white transition-all duration-200 bg-primary-600 border border-transparent rounded-xl hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 shadow-glow-blue hover:shadow-glow-blue-lg overflow-hidden">
+                    <span class="absolute inset-0 w-full h-full -mt-1 rounded-lg opacity-30 bg-gradient-to-b from-transparent via-transparent to-black"></span>
+                    <svg class="w-5 h-5 mr-2 -ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                     </svg>
-                    Tambah Role
+                    <span>Tambah Role Baru</span>
                 </button>
             </div>
 
-            <!-- Role List -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <!-- Loading State -->
-                <div v-if="loading" class="col-span-full text-center py-10 text-gray-500">
-                    Loading roles...
-                </div>
+            <!-- Content Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                <!-- Loading Skeleton -->
+                <template v-if="loading">
+                    <div v-for="n in 3" :key="n" class="h-48 bg-gray-100 dark:bg-dark-800 rounded-2xl animate-pulse"></div>
+                </template>
 
-                <!-- Role Card -->
-                <div v-for="role in roles" :key="role.id" class="card p-6 flex flex-col justify-between hover:shadow-md transition-shadow dark:bg-dark-800">
+                <!-- Role Cards -->
+                <div v-else v-for="role in roles" :key="role.id" 
+                    class="group relative flex flex-col justify-between bg-white dark:bg-dark-800 rounded-2xl p-6 shadow-card hover:shadow-card-hover transition-all duration-300 border border-transparent hover:border-primary-100 dark:hover:border-primary-900/30">
+                    
+                    <!-- Card Decoration -->
+                    <div class="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                        <svg class="w-24 h-24 text-primary-600 transform rotate-12" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 2L2 7l10 5 10-5-10-5zm0 9l2.5-1.25L12 8.5l-2.5 1.25L12 11zm0 2.5l-5-2.5-5 2.5L12 22l10-8.5-5-2.5-5 2.5z"/>
+                        </svg>
+                    </div>
+
                     <div>
-                        <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-lg font-bold text-gray-900 dark:text-white capitalize">{{ role.name }}</h3>
-                            <span class="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-1 rounded-full">
-                                {{ role.permissions.length }} Permissions
-                            </span>
+                        <div class="flex items-start justify-between mb-4">
+                            <div class="flex items-center space-x-3">
+                                <div class="p-3 rounded-lg bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 group-hover:scale-110 transition-transform duration-300">
+                                    <svg v-if="role.name === 'admin' || role.name === 'owner'" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                                    <svg v-else class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                                </div>
+                                <div>
+                                    <h3 class="text-xl font-bold text-gray-900 dark:text-white capitalize tracking-tight">{{ role.name.replace(/_/g, ' ') }}</h3>
+                                    <span class="text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                        {{ role.name === 'owner' ? 'Super Admin' : 'Role Sistem' }}
+                                    </span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="flex flex-wrap gap-2 mb-4">
-                            <span v-for="perm in role.permissions.slice(0, 5)" :key="perm.id" 
-                                  class="text-xs px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded border border-blue-100 dark:border-blue-800">
-                                {{ perm.name }}
-                            </span>
-                            <span v-if="role.permissions.length > 5" class="text-xs text-gray-400">
-                                +{{ role.permissions.length - 5 }} lainnya...
-                            </span>
-                            <span v-if="role.permissions.length === 0" class="text-xs text-gray-400 italic">
-                                Belum ada permission
-                            </span>
+
+                        <div class="space-y-3 relative z-10">
+                            <div class="flex items-center justify-between text-sm">
+                                <span class="text-gray-500 dark:text-gray-400">Akses Permission</span>
+                                <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                                    {{ role.permissions.length }} Item
+                                </span>
+                            </div>
+                            
+                            <div class="flex flex-wrap gap-1.5 h-20 overflow-hidden content-start">
+                                <span v-for="perm in role.permissions.slice(0, 6)" :key="perm.id" 
+                                    class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-50 dark:bg-dark-700 text-gray-600 dark:text-gray-300 border border-gray-100 dark:border-gray-600">
+                                    {{ perm.name }}
+                                </span>
+                                <span v-if="role.permissions.length > 6" class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400">
+                                    +{{ role.permissions.length - 6 }} lainnya
+                                </span>
+                                <span v-if="role.permissions.length === 0" class="text-xs text-gray-400 italic py-2">
+                                    Tidak ada permission khusus.
+                                </span>
+                            </div>
                         </div>
                     </div>
-                    
-                    <div class="flex justify-end gap-2 pt-4 border-t border-gray-100 dark:border-gray-700 mt-auto">
-                        <button @click="openEditForm(role)" class="text-sm text-primary-600 hover:text-primary-800 font-medium p-2 hover:bg-primary-50 dark:hover:bg-primary-900/10 rounded">
-                            Edit Akses
+
+                    <div class="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700 flex justify-end items-center gap-3 relative z-10">
+                        <button @click="openEditForm(role)" 
+                            class="flex-1 inline-flex justify-center items-center px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-dark-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-dark-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors">
+                            <svg class="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                            Edit
                         </button>
-                        <button v-if="!['admin', 'owner'].includes(role.name)" @click="deleteRole(role)" class="text-sm text-red-600 hover:text-red-800 font-medium p-2 hover:bg-red-50 dark:hover:bg-red-900/10 rounded">
-                            Hapus
+                        
+                        <button v-if="!['admin', 'owner'].includes(role.name)" @click="deleteRole(role)" 
+                            class="inline-flex justify-center items-center px-4 py-2 text-sm font-medium text-red-600 bg-red-50 dark:bg-red-900/20 border border-transparent rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                         </button>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Form Modal -->
+        <!-- Modern Modal with Teleport -->
         <Teleport to="body">
-            <div v-if="showForm" class="fixed inset-0 z-[100] overflow-y-auto">
-                <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-                    <div class="fixed inset-0 transition-opacity" aria-hidden="true" @click="showForm = false">
-                        <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
-                    </div>
+            <Transition
+                enter-active-class="transition duration-200 ease-out"
+                enter-from-class="opacity-0"
+                enter-to-class="opacity-100"
+                leave-active-class="transition duration-150 ease-in"
+                leave-from-class="opacity-100"
+                leave-to-class="opacity-0"
+            >
+                <div v-if="showForm" class="fixed inset-0 z-[100] overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+                    <!-- Backdrop with blur -->
+                    <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                        <div class="fixed inset-0 bg-gray-900/50 dark:bg-black/70 backdrop-blur-sm transition-opacity" aria-hidden="true" @click="showForm = false"></div>
 
-                    <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+                        <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-                    <div class="inline-block align-bottom bg-white dark:bg-dark-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full w-full relative z-10">
-                        <div class="bg-white dark:bg-dark-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                            <div class="flex justify-between items-center mb-5">
-                                <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-white">
-                                    {{ isEditing ? 'Edit Role: ' + form.name : 'Tambah Role Baru' }}
-                                </h3>
-                                <button @click="showForm = false" class="text-gray-400 hover:text-gray-500">
-                                    <span class="text-2xl">&times;</span>
+                        <!-- Modal Panel -->
+                        <div class="inline-block align-bottom bg-white dark:bg-dark-900 rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl w-full relative z-10 animate-scale-in">
+                            <!-- Modal Header -->
+                            <div class="px-6 py-5 border-b border-gray-100 dark:border-dark-800 flex justify-between items-center bg-gray-50/50 dark:bg-dark-800/50">
+                                <div>
+                                    <h3 class="text-xl font-bold text-gray-900 dark:text-white" id="modal-title">
+                                        {{ isEditing ? 'Edit Konfigurasi Role' : 'Buat Role Baru' }}
+                                    </h3>
+                                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                                        {{ isEditing ? `Mengubah akses untuk role: ${form.name}` : 'Tentukan nama dan hak akses untuk role baru.' }}
+                                    </p>
+                                </div>
+                                <button @click="showForm = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors p-2 rounded-full hover:bg-gray-100 dark:hover:bg-dark-700">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                                 </button>
                             </div>
 
-                            <div class="space-y-4">
-                                <!-- Role Name -->
+                            <div class="px-6 py-6 space-y-6">
+                                <!-- Role Name Field -->
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Nama Role</label>
-                                    <input v-model="form.name" type="text" class="input w-full mt-1" placeholder="Contoh: staff_gudang" :disabled="isEditing && ['admin', 'owner'].includes(form.name)">
-                                    <p v-if="isEditing && ['admin', 'owner'].includes(form.name)" class="text-xs text-yellow-600 mt-1">
-                                        Nama role sistem tidak bisa diubah.
+                                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                                        Nama Identitas Role <span class="text-red-500">*</span>
+                                    </label>
+                                    <div class="relative rounded-md shadow-sm">
+                                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" /></svg>
+                                        </div>
+                                        <input v-model="form.name" type="text" 
+                                            class="input w-full pl-10 py-2.5 border-gray-300 dark:border-dark-600 focus:ring-primary-500 focus:border-primary-500 rounded-lg dark:bg-dark-800 dark:text-white" 
+                                            placeholder="Contoh: staff_admin, supervisor_teknisi" 
+                                            :disabled="isEditing && ['admin', 'owner'].includes(form.name)">
+                                    </div>
+                                    <p v-if="isEditing && ['admin', 'owner'].includes(form.name)" class="text-xs text-amber-600 mt-2 flex items-center">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                                        Role sistem tidak dapat diubah namanya.
                                     </p>
                                 </div>
 
-                                <!-- Permissions Grid -->
+                                <!-- Permissions Section -->
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Permissions</label>
-                                    <div class="h-[60vh] sm:h-96 overflow-y-auto custom-scrollbar border border-gray-200 dark:border-gray-700 rounded-md p-4">
-                                        <div v-for="(perms, group) in groupedPermissions" :key="group" class="mb-6">
-                                            <h4 class="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider mb-2 border-b border-gray-100 dark:border-gray-800 pb-1">
-                                                {{ group }}
-                                            </h4>
-                                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                                <label v-for="perm in perms" :key="perm.id" class="flex items-center space-x-2 cursor-pointer p-2 hover:bg-gray-50 dark:hover:bg-dark-800 rounded">
-                                                    <input type="checkbox" :checked="form.permissions.includes(perm.name)" @change="togglePermission(perm.name)" class="rounded text-primary-600 focus:ring-primary-500">
-                                                    <span class="text-sm text-gray-700 dark:text-gray-300">{{ perm.name }}</span>
+                                    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-4">
+                                        <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                                            Akses & Permissions
+                                        </label>
+                                        <!-- Search Filter -->
+                                        <div class="relative w-full sm:w-64">
+                                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                            </div>
+                                            <input v-model="searchQuery" type="text" 
+                                                class="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-300 dark:border-dark-600 rounded-lg focus:ring-primary-500 focus:border-primary-500 dark:bg-dark-800 dark:text-white" 
+                                                placeholder="Cari izin akses..." />
+                                        </div>
+                                    </div>
+
+                                    <div class="h-[60vh] sm:h-96 overflow-y-auto custom-scrollbar border border-gray-200 dark:border-dark-700 rounded-xl bg-gray-50/50 dark:bg-dark-800/50 p-4 space-y-4">
+                                        <div v-for="(perms, group) in groupedPermissions" :key="group" class="bg-white dark:bg-dark-800 rounded-lg border border-gray-100 dark:border-dark-700 p-4 shadow-sm">
+                                            <div class="flex items-center justify-between mb-3 border-b border-gray-100 dark:border-dark-700 pb-2">
+                                                <h4 class="text-sm font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider flex items-center">
+                                                    <span class="w-1.5 h-4 bg-primary-500 rounded-full mr-2"></span>
+                                                    {{ group }}
+                                                </h4>
+                                                <button @click="toggleGroup(group, perms)" class="text-xs text-primary-600 hover:text-primary-700 font-medium hover:underline">
+                                                    Toggle Semua
+                                                </button>
+                                            </div>
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                <label v-for="perm in perms" :key="perm.id" 
+                                                    class="group flex items-start space-x-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-dark-700 cursor-pointer transition-colors border border-transparent hover:border-gray-200 dark:hover:border-dark-600">
+                                                    <input type="checkbox" :checked="form.permissions.includes(perm.name)" @change="togglePermission(perm.name)" 
+                                                        class="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer">
+                                                    <span class="text-sm text-gray-600 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white transition-colors select-none">
+                                                        {{ perm.name }}
+                                                    </span>
                                                 </label>
                                             </div>
                                         </div>
+                                        
+                                        <!-- Keep empty state if search returns nothing -->
+                                        <div v-if="Object.keys(groupedPermissions).length === 0" class="text-center py-12 text-gray-500">
+                                            <svg class="w-12 h-12 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                            <p>Tidak ada permission yang cocok dengan pencarian.</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flex justify-between items-center mt-2 text-xs text-gray-500">
+                                        <span>Total Terpilih: {{ form.permissions.length }}</span>
+                                        <span>Total Tersedia: {{ permissions.length }}</span>
                                     </div>
                                 </div>
                             </div>
-                        </div>
 
-                        <div class="bg-gray-50 dark:bg-dark-800 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                            <button @click="saveRole" :disabled="processing" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-primary-600 text-base font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:ml-3 sm:w-auto sm:text-sm">
-                                {{ processing ? 'Menyimpan...' : 'Simpan' }}
-                            </button>
-                            <button @click="showForm = false" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2 bg-white dark:bg-dark-900 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-dark-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
-                                Batal
-                            </button>
+                            <!-- Modal Footer -->
+                            <div class="bg-gray-50 dark:bg-dark-800 px-6 py-4 flex flex-col-reverse sm:flex-row sm:justify-end gap-3 border-t border-gray-100 dark:border-dark-700">
+                                <button @click="showForm = false" 
+                                    class="w-full sm:w-auto inline-flex justify-center rounded-xl border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2.5 bg-white dark:bg-dark-700 text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 sm:text-sm transition-all">
+                                    Batal
+                                </button>
+                                <button @click="saveRole" :disabled="processing" 
+                                    class="w-full sm:w-auto inline-flex justify-center rounded-xl border border-transparent shadow-glow-blue px-6 py-2.5 bg-primary-600 text-base font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:text-sm transition-all disabled:opacity-70 disabled:cursor-not-allowed">
+                                    <svg v-if="processing" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    {{ processing ? 'Menyimpan Perubahan...' : 'Simpan Konfigurasi' }}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            </Transition>
         </Teleport>
     </AdminLayout>
 </template>
