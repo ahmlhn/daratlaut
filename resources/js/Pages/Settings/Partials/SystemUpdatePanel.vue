@@ -20,11 +20,21 @@ const uploadPct = ref(0)
 const running = ref(false)
 const state = ref(null)
 const fileRef = ref(null)
+const zipFile = ref(null)
 const ghBusy = ref(false)
 const ghToken = ref('')
 const ghCheck = ref(null)
 
 const logBoxRef = ref(null)
+
+// UI state (Option 1: simplified panel)
+const sourceMode = ref('zip') // zip | github
+const sourceTouched = ref(false)
+const detailsOpen = ref(false)
+const logOpen = ref(false)
+const autoFollow = ref(true)
+const dangerOpen = ref(false)
+const resetText = ref('')
 
 // Helper: merge incoming state without losing enriched fields (config/github/installed/log_tail)
 // that only the full status() endpoint returns.
@@ -43,6 +53,24 @@ const err = computed(() => state.value?.error || '')
 const cfg = computed(() => state.value?.config || {})
 const github = computed(() => state.value?.github || {})
 const installed = computed(() => state.value?.installed || null)
+const pkg = computed(() => state.value?.package || null)
+
+function formatDateTime(iso) {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleString()
+  } catch (e) {
+    return String(iso)
+  }
+}
+
+function formatBytes(bytes) {
+  const n = Number(bytes)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  const mb = n / 1024 / 1024
+  if (mb < 1024) return `${Math.round(mb)} MB`
+  return `${(mb / 1024).toFixed(1)} GB`
+}
 
 const copyProgress = computed(() => {
   const m = state.value?.manifest
@@ -89,9 +117,10 @@ const stagePill = computed(() => {
 const isBusy = computed(() => statusLoading.value || uploading.value || running.value || ghBusy.value)
 
 const sectionClass = computed(() => {
-  const base = 'rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-dark-950'
-  const shadow = props.embedded ? '' : 'shadow-sm'
-  return `${base} ${shadow} p-5`
+  if (props.embedded) {
+    return 'rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-dark-900/40 p-5'
+  }
+  return 'rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-dark-950 shadow-sm p-5'
 })
 
 const mutedBoxClass = computed(() => {
@@ -100,13 +129,90 @@ const mutedBoxClass = computed(() => {
 
 const canPrepare = computed(() => {
   if (!cfg.value?.enabled) return false
-  return !isBusy.value && ['uploaded', 'error', 'idle', 'ready', 'copying', 'finalize', 'done'].includes(stage.value)
+  if (isBusy.value) return false
+  if (!pkg.value) return false
+  return ['uploaded', 'error', 'ready', 'copying', 'finalize', 'done'].includes(stage.value)
 })
 
 const canApply = computed(() => {
   if (!cfg.value?.enabled) return false
-  return !isBusy.value && ['uploaded', 'ready', 'copying', 'finalize'].includes(stage.value)
+  if (isBusy.value) return false
+  return ['uploaded', 'ready', 'copying', 'finalize', 'error'].includes(stage.value)
 })
+
+const hasStagedPackage = computed(() => {
+  const s = stage.value
+  if (['uploaded', 'ready', 'copying', 'finalize'].includes(s)) return true
+  if (s === 'error') return !!(pkg.value || state.value?.manifest || state.value?.finalize)
+  return false
+})
+
+const canPrimary = computed(() => {
+  if (!cfg.value?.enabled) return false
+  if (isBusy.value) return false
+  if (hasStagedPackage.value) return true
+
+  if (sourceMode.value === 'github') {
+    return !!(github.value?.enabled && github.value?.configured && github.value?.token_present)
+  }
+  return !!zipFile.value
+})
+
+const primaryLabel = computed(() => {
+  if (running.value) return 'Memproses...'
+  if (stage.value === 'error') return 'Coba Lagi'
+  if (['ready', 'copying', 'finalize'].includes(stage.value)) return 'Lanjutkan'
+  if (stage.value === 'done' && sourceMode.value === 'github') return 'Update Lagi'
+  return 'Mulai Update'
+})
+
+const primaryHint = computed(() => {
+  if (!cfg.value?.enabled) return 'Fitur update dinonaktifkan di server.'
+  if (isBusy.value) return ''
+
+  if (hasStagedPackage.value) {
+    const name = pkg.value?.filename ? `Paket: ${pkg.value.filename}` : 'Ada update yang belum selesai.'
+    return `${name} Klik untuk melanjutkan.`
+  }
+
+  if (sourceMode.value === 'github') {
+    if (!github.value?.enabled) return 'GitHub update dinonaktifkan di server.'
+    if (!github.value?.configured) return 'Repo GitHub belum diset di .env server.'
+    if (!github.value?.token_present) return 'Token GitHub belum ada. Simpan token dulu.'
+    return 'Akan download paket build dari GitHub Release lalu apply otomatis.'
+  }
+
+  if (!zipFile.value) {
+    if (cfg.value?.allow_download && cfg.value?.package_url_set) return 'Pilih file ZIP, atau gunakan \"Download dari URL\".'
+    return 'Pilih file ZIP untuk memulai.'
+  }
+  return `Siap: ${zipFile.value?.name || 'package.zip'}`
+})
+
+function setSourceMode(mode) {
+  sourceMode.value = mode
+  sourceTouched.value = true
+}
+
+function guessDefaultMode() {
+  const installedSource = String(installed.value?.source || '').toLowerCase()
+  if (installedSource.startsWith('github')) return 'github'
+
+  const pkgSource = String(pkg.value?.source || '').toLowerCase()
+  if (pkgSource.startsWith('github')) return 'github'
+
+  if (github.value?.enabled && github.value?.configured && github.value?.token_present) return 'github'
+  return 'zip'
+}
+
+watch(
+  () => [installed.value?.source, pkg.value?.source, github.value?.enabled, github.value?.configured, github.value?.token_present],
+  () => {
+    if (sourceTouched.value) return
+    sourceMode.value = guessDefaultMode()
+  },
+  { immediate: true }
+)
 
 const stepper = computed(() => {
   const steps = [
@@ -158,7 +264,7 @@ async function refreshStatus() {
 }
 
 async function uploadPackage() {
-  const file = fileRef.value?.files?.[0]
+  const file = zipFile.value || fileRef.value?.files?.[0]
   if (!file) return notify('warning', 'Pilih file ZIP dulu.')
 
   uploading.value = true
@@ -186,7 +292,6 @@ async function uploadPackage() {
 }
 
 async function downloadConfigured() {
-  if (!confirm('Download paket update dari URL yang sudah diset di server?')) return
   running.value = true
   try {
     const res = await window.axios.post('/system-update/download')
@@ -218,31 +323,39 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function runSteps() {
+async function runStepLoop() {
+  // Step loop: copy chunks then finalize commands.
+  let guard = 0
+  while (running.value && guard < 2000) {
+    guard++
+    await refreshStatus()
+
+    if (stage.value === 'done' || stage.value === 'error' || stage.value === 'idle') break
+    if (!['ready', 'copying', 'finalize'].includes(stage.value)) break
+
+    const res = await window.axios.post('/system-update/step')
+    applyState(res?.data?.data?.data || res?.data?.data || null)
+
+    // Small delay so the UI feels responsive and we don't hammer the server.
+    await sleep(200)
+  }
+}
+
+async function runSteps(opts = {}) {
+  const autoPrepare = !!opts.autoPrepare
+
   running.value = true
   try {
     await refreshStatus()
-    if (stage.value === 'uploaded') {
-      const ok = confirm('Paket sudah diunggah tapi belum diproses. Jalankan Prepare sekarang?')
-      if (!ok) return
-      await prepare()
+
+    // Auto-prepare so the flow can be a single click.
+    if (stage.value === 'uploaded' || (stage.value === 'error' && autoPrepare && pkg.value)) {
+      if (!autoPrepare && !confirm('Jalankan Prepare sekarang?')) return
+      const st = await window.axios.post('/system-update/start')
+      applyState(st?.data?.data?.data || st?.data?.data || null)
     }
 
-    // Step loop: copy chunks then finalize commands.
-    let guard = 0
-    while (running.value && guard < 2000) {
-      guard++
-      await refreshStatus()
-
-      if (stage.value === 'done' || stage.value === 'error' || stage.value === 'idle') break
-      if (!['ready', 'copying', 'finalize'].includes(stage.value)) break
-
-      const res = await window.axios.post('/system-update/step')
-      applyState(res?.data?.data?.data || res?.data?.data || null)
-
-      // Small delay so the UI feels responsive and we don't hammer the server.
-      await sleep(200)
-    }
+    await runStepLoop()
 
     await refreshStatus()
     if (stage.value === 'done') notify('success', 'Update selesai.')
@@ -256,12 +369,13 @@ async function runSteps() {
 }
 
 async function resetUpdate() {
-  if (!confirm('Reset state update? Ini tidak menghapus paket ZIP yang sudah diunggah, hanya state/workdir.')) return
   running.value = true
   try {
     const res = await window.axios.post('/system-update/reset')
     applyState(res?.data?.data?.data || res?.data?.data || null)
     ghCheck.value = null
+    resetText.value = ''
+    dangerOpen.value = false
     notify('info', 'State update di-reset.')
   } catch (e) {
     notify('error', e?.response?.data?.message || e?.message || 'Reset gagal')
@@ -317,21 +431,20 @@ async function githubCheckLatest() {
   }
 }
 
-async function githubDownloadAndUpdate() {
+async function githubDownloadAndUpdate(opts = {}) {
+  const skipConfirm = !!opts.skipConfirm
   const repo = github.value?.owner && github.value?.repo ? `${github.value.owner}/${github.value.repo}` : '(repo belum diset)'
   const tag = github.value?.release_tag || 'panel-main-latest'
   const asset = github.value?.release_asset || 'update-package.zip'
-  const warn = [
-    `Sistem akan download paket build dari GitHub Release (${repo} tag ${tag}).`,
-    `Asset: ${asset}`,
-    '',
-    'Catatan penting:',
-    '- Paket ini di-build oleh GitHub Actions setiap push ke main (termasuk vendor/ + public/build).',
-    '- Jika build belum selesai, sistem akan menolak update sampai artifact siap.',
-    '',
-    'Lanjutkan?',
-  ].join('\n')
-  if (!confirm(warn)) return
+  if (!skipConfirm) {
+    const warn = [
+      `Sistem akan download paket build dari GitHub Release (${repo} tag ${tag}).`,
+      `Asset: ${asset}`,
+      '',
+      'Lanjutkan?',
+    ].join('\n')
+    if (!confirm(warn)) return
+  }
 
   running.value = true
   try {
@@ -341,22 +454,7 @@ async function githubDownloadAndUpdate() {
     const st = await window.axios.post('/system-update/start')
     applyState(st?.data?.data?.data || st?.data?.data || null)
 
-    // Step loop: copy chunks then finalize commands.
-    let guard = 0
-    while (running.value && guard < 2000) {
-      guard++
-      await refreshStatus()
-
-      if (stage.value === 'done' || stage.value === 'error' || stage.value === 'idle') break
-      if (!['ready', 'copying', 'finalize'].includes(stage.value)) {
-        await refreshStatus()
-        if (!['ready', 'copying', 'finalize'].includes(stage.value)) break
-      }
-
-      const stepRes = await window.axios.post('/system-update/step')
-      applyState(stepRes?.data?.data?.data || stepRes?.data?.data || null)
-      await sleep(200)
-    }
+    await runStepLoop()
 
     await refreshStatus()
     if (stage.value === 'done') notify('success', 'Update GitHub selesai.')
@@ -389,10 +487,65 @@ async function copyLog() {
 watch(
   () => (state.value?.log_tail || []).length,
   async () => {
+    if (!logOpen.value || !autoFollow.value) return
     await nextTick()
     scrollLogToBottom()
   }
 )
+
+watch(
+  () => stage.value,
+  (s) => {
+    if (s === 'error') logOpen.value = true
+  }
+)
+
+watch(
+  () => logOpen.value,
+  async (v) => {
+    if (!v) return
+    await nextTick()
+    scrollLogToBottom()
+  }
+)
+
+function onZipFileChange(e) {
+  zipFile.value = e?.target?.files?.[0] || null
+}
+
+async function startPrimaryAction() {
+  if (!cfg.value?.enabled) return notify('warning', 'Fitur update dinonaktifkan di server.')
+  if (isBusy.value) return
+
+  await refreshStatus()
+
+  // If there is a staged update, continue it first (source selection is only for starting fresh).
+  if (hasStagedPackage.value) {
+    await runSteps({ autoPrepare: true })
+    return
+  }
+
+  if (sourceMode.value === 'github') {
+    if (!github.value?.enabled) return notify('warning', 'GitHub update dinonaktifkan di server.')
+    if (!github.value?.configured) return notify('warning', 'Repo GitHub belum diset di server.')
+    if (!github.value?.token_present) return notify('warning', 'Token GitHub belum ada. Simpan token dulu.')
+    await githubDownloadAndUpdate({ skipConfirm: true })
+    return
+  }
+
+  const file = zipFile.value || fileRef.value?.files?.[0]
+  if (!file) {
+    return notify(
+      'warning',
+      cfg.value?.allow_download && cfg.value?.package_url_set
+        ? 'Pilih file ZIP atau gunakan \"Download dari URL\".'
+        : 'Pilih file ZIP dulu.'
+    )
+  }
+
+  await uploadPackage()
+  await runSteps({ autoPrepare: true })
+}
 
 onMounted(() => {
   refreshStatus()
@@ -400,37 +553,38 @@ onMounted(() => {
 </script>
 
 <template>
-  <div :class="embedded ? 'card p-6' : ''">
-    <div class="space-y-6">
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div class="min-w-0">
-          <h2 v-if="embedded" class="text-lg font-semibold text-gray-900 dark:text-white">Update Sistem</h2>
-          <h1 v-else class="text-2xl font-black text-gray-900 dark:text-white">Update Sistem</h1>
-          <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Update lewat panel tanpa <span class="font-semibold">git pull</span> / <span class="font-semibold">composer</span>.
-            Saran: gunakan paket build (sudah termasuk <span class="font-semibold">vendor</span> dan <span class="font-semibold">public/build</span>).
-          </p>
-          <div v-if="installed?.source" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-            Installed: <span class="font-semibold">{{ installed.source }}</span>
-            <span v-if="installed.github?.sha" class="ml-2">
-              sha <span class="font-mono font-semibold">{{ (installed.github.sha || '').slice(0, 7) }}</span>
-            </span>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <span :class="['px-2.5 py-1 rounded-full text-xs font-black tracking-wider', stagePill.klass]">
-            {{ stagePill.text }}
+  <div class="space-y-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div v-if="!embedded" class="min-w-0">
+        <h1 class="text-2xl font-black text-gray-900 dark:text-white">Update Sistem</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          Update lewat panel tanpa <span class="font-semibold">git pull</span> / <span class="font-semibold">composer</span>.
+          Saran: gunakan paket build (sudah termasuk <span class="font-semibold">vendor</span> dan <span class="font-semibold">public/build</span>).
+        </p>
+        <div v-if="installed?.source" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+          Installed: <span class="font-semibold">{{ installed.source }}</span>
+          <span v-if="installed.github?.sha" class="ml-2">
+            sha <span class="font-mono font-semibold">{{ (installed.github.sha || '').slice(0, 7) }}</span>
           </span>
-          <button @click="refreshStatus" class="btn btn-secondary" :disabled="isBusy">
-            <span v-if="statusLoading" class="mr-2"><LoadingSpinner size="sm" /></span>
-            Refresh
-          </button>
-          <button @click="resetUpdate" class="btn btn-danger" :disabled="isBusy">
-            Reset
-          </button>
+          <span v-if="installed.installed_at" class="ml-2">
+            at {{ formatDateTime(installed.installed_at) }}
+          </span>
         </div>
       </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <span :class="['px-2.5 py-1 rounded-full text-xs font-black tracking-wider', stagePill.klass]">
+          {{ stagePill.text }}
+        </span>
+        <button @click="refreshStatus" class="btn btn-secondary" :disabled="isBusy" type="button">
+          <span v-if="statusLoading" class="mr-2"><LoadingSpinner size="sm" /></span>
+          Refresh
+        </button>
+        <button @click="detailsOpen = !detailsOpen" class="btn btn-secondary" type="button">
+          {{ detailsOpen ? 'Tutup Detail' : 'Detail' }}
+        </button>
+      </div>
+    </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-2 space-y-6">
@@ -457,18 +611,53 @@ onMounted(() => {
                 </div>
               </div>
 
-              <div class="flex items-center gap-2">
-                <button @click="prepare" class="btn btn-secondary" :disabled="!canPrepare">
-                  Prepare
-                </button>
-                <button @click="runSteps" class="btn btn-primary" :disabled="!canApply">
+              <div class="flex flex-col items-end gap-2">
+                <div class="inline-flex rounded-xl border border-gray-200 dark:border-white/10 bg-white/60 dark:bg-dark-950/60 p-1">
+                  <button
+                    type="button"
+                    @click="setSourceMode('zip')"
+                    :class="[
+                      'px-3 py-1.5 text-xs font-bold rounded-lg transition',
+                      sourceMode === 'zip' ? 'bg-white dark:bg-dark-950 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white',
+                    ]"
+                  >
+                    ZIP
+                  </button>
+                  <button
+                    type="button"
+                    @click="setSourceMode('github')"
+                    :disabled="!github.enabled"
+                    :class="[
+                      'px-3 py-1.5 text-xs font-bold rounded-lg transition',
+                      !github.enabled ? 'opacity-50 cursor-not-allowed' : '',
+                      sourceMode === 'github' ? 'bg-white dark:bg-dark-950 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white',
+                    ]"
+                  >
+                    GitHub
+                  </button>
+                </div>
+
+                <button @click="startPrimaryAction" class="btn btn-primary" :disabled="!canPrimary" type="button">
                   <span v-if="running" class="mr-2"><LoadingSpinner size="sm" color="primary" /></span>
-                  {{ running ? 'Memproses...' : (stage === 'copying' || stage === 'finalize' ? 'Lanjutkan' : 'Apply Update') }}
+                  {{ primaryLabel }}
                 </button>
+
+                <div v-if="primaryHint" class="text-xs text-gray-500 dark:text-gray-400 text-right max-w-xs">
+                  {{ primaryHint }}
+                </div>
               </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div v-if="detailsOpen" class="mt-4 flex flex-wrap items-center gap-2">
+              <button @click="prepare" class="btn btn-secondary px-3 py-2 text-xs" :disabled="!canPrepare" type="button">
+                Prepare
+              </button>
+              <button @click="runSteps({ autoPrepare: true })" class="btn btn-secondary px-3 py-2 text-xs" :disabled="!canApply" type="button">
+                Run Steps
+              </button>
+            </div>
+
+            <div v-if="detailsOpen" class="mt-5 grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div
                 v-for="st in stepper"
                 :key="st.id"
@@ -517,7 +706,7 @@ onMounted(() => {
               </div>
             </div>
 
-            <div v-if="state?.manifest" class="mt-5" :class="mutedBoxClass">
+            <div v-if="detailsOpen && state?.manifest" class="mt-5" :class="mutedBoxClass">
               <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                 <div class="flex items-center justify-between sm:block">
                   <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">vendor</div>
@@ -557,7 +746,7 @@ onMounted(() => {
             </div>
           </div>
 
-          <div :class="sectionClass">
+          <div v-if="sourceMode === 'github'" :class="sectionClass">
             <div class="flex items-start justify-between gap-4">
               <div>
                 <h3 class="text-base font-semibold text-gray-900 dark:text-white">GitHub (main)</h3>
@@ -566,15 +755,8 @@ onMounted(() => {
                 </p>
               </div>
               <div class="flex items-center gap-2">
-                <button @click="githubCheckLatest" class="btn btn-secondary px-3 py-2 text-xs" :disabled="isBusy || !github.enabled">
+                <button @click="githubCheckLatest" class="btn btn-secondary px-3 py-2 text-xs" :disabled="isBusy || !github.enabled || !github.configured || !github.token_present" type="button">
                   Cek
-                </button>
-                <button
-                  @click="githubDownloadAndUpdate"
-                  class="btn btn-primary px-3 py-2 text-xs"
-                  :disabled="isBusy || !github.enabled || !github.configured || !github.token_present"
-                >
-                  Update
                 </button>
               </div>
             </div>
@@ -617,7 +799,7 @@ onMounted(() => {
               </div>
             </div>
 
-            <div class="mt-4" :class="mutedBoxClass">
+            <div v-if="detailsOpen || !github.token_present" class="mt-4" :class="mutedBoxClass">
               <div class="flex items-start justify-between gap-3">
                 <div>
                   <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Simpan Token</div>
@@ -625,13 +807,13 @@ onMounted(() => {
                     Token disimpan di server (file-based, encrypted).
                   </div>
                 </div>
-                <button @click="githubClearToken" class="btn btn-danger px-3 py-2 text-xs" :disabled="isBusy || !github.enabled">
+                <button v-if="detailsOpen && github.token_present" @click="githubClearToken" class="btn btn-danger px-3 py-2 text-xs" :disabled="isBusy || ghBusy || !github.enabled" type="button">
                   Hapus
                 </button>
               </div>
               <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <input v-model="ghToken" type="password" class="input sm:col-span-2" placeholder="Fine-grained PAT (read-only)" />
-                <button @click="githubSaveToken" class="btn btn-secondary px-3 py-2 text-xs" :disabled="isBusy || !github.enabled">
+                <button @click="githubSaveToken" class="btn btn-secondary px-3 py-2 text-xs" :disabled="isBusy || ghBusy || !github.enabled" type="button">
                   Simpan
                 </button>
               </div>
@@ -683,7 +865,7 @@ onMounted(() => {
             </div>
           </div>
 
-          <div :class="sectionClass">
+          <div v-if="sourceMode === 'zip'" :class="sectionClass">
             <div>
               <h3 class="text-base font-semibold text-gray-900 dark:text-white">Paket ZIP</h3>
               <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
@@ -692,20 +874,25 @@ onMounted(() => {
             </div>
 
             <div class="mt-4 space-y-3">
-              <input ref="fileRef" type="file" accept=".zip" class="block w-full text-sm text-gray-700 dark:text-gray-300" />
+              <input ref="fileRef" type="file" accept=".zip" class="block w-full text-sm text-gray-700 dark:text-gray-300" @change="onZipFileChange" />
+              <div v-if="zipFile?.name" class="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate">
+                Selected: <span class="font-semibold">{{ zipFile.name }}</span>
+                <span v-if="zipFile.size" class="ml-2">({{ formatBytes(zipFile.size) }})</span>
+              </div>
 
               <div class="flex flex-wrap gap-2">
-                <button @click="uploadPackage" class="btn btn-primary" :disabled="uploading || isBusy || !cfg.enabled">
-                  <span v-if="uploading" class="mr-2"><LoadingSpinner size="sm" color="primary" /></span>
-                  {{ uploading ? `Uploading ${uploadPct}%` : 'Upload ZIP' }}
+                <button v-if="detailsOpen" @click="uploadPackage" class="btn btn-secondary" :disabled="uploading || isBusy || !cfg.enabled" type="button">
+                  <span v-if="uploading" class="mr-2"><LoadingSpinner size="sm" /></span>
+                  {{ uploading ? `Uploading ${uploadPct}%` : 'Upload saja' }}
                 </button>
                 <button
                   v-if="cfg.allow_download && cfg.package_url_set"
                   @click="downloadConfigured"
                   class="btn btn-secondary"
                   :disabled="isBusy || !cfg.enabled"
+                  type="button"
                 >
-                  Download Dari URL
+                  Download dari URL
                 </button>
               </div>
 
@@ -713,7 +900,7 @@ onMounted(() => {
                 <div class="h-full bg-gradient-to-r from-primary-600 to-primary-500" :style="{ width: `${uploadPct}%` }"></div>
               </div>
 
-              <div :class="mutedBoxClass">
+              <div v-if="detailsOpen" :class="mutedBoxClass">
                 <div class="text-xs text-gray-500 dark:text-gray-400">
                   Tidak menimpa: <span class="font-semibold">.env</span>, <span class="font-semibold">storage/</span>,
                   <span class="font-semibold">bootstrap/cache</span>, <span class="font-semibold">public/storage</span>,
@@ -729,20 +916,30 @@ onMounted(() => {
             <div class="flex items-center justify-between gap-3">
               <h3 class="text-base font-semibold text-gray-900 dark:text-white">Log</h3>
               <div class="flex items-center gap-2">
-                <button @click="copyLog" class="btn btn-secondary px-3 py-2 text-xs" type="button" :disabled="isBusy">
+                <button @click="logOpen = !logOpen" class="btn btn-secondary px-3 py-2 text-xs" type="button">
+                  {{ logOpen ? 'Tutup' : 'Lihat' }}
+                </button>
+                <button @click="copyLog" class="btn btn-secondary px-3 py-2 text-xs" type="button">
                   Copy
                 </button>
-                <button @click="scrollLogToBottom" class="btn btn-secondary px-3 py-2 text-xs" type="button">
+                <button v-if="logOpen && !autoFollow" @click="scrollLogToBottom" class="btn btn-secondary px-3 py-2 text-xs" type="button">
                   Ke bawah
                 </button>
+                <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 select-none">
+                  <input v-model="autoFollow" type="checkbox" class="rounded border-gray-300 dark:border-white/20" />
+                  Auto-follow
+                </label>
               </div>
             </div>
-            <div ref="logBoxRef" class="mt-3 h-80 overflow-auto rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-black/20 p-3">
+            <div v-if="logOpen" ref="logBoxRef" class="mt-3 h-80 overflow-auto rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-black/20 p-3">
               <pre class="text-[11px] leading-relaxed text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ (state?.log_tail || []).join('\n') }}</pre>
+            </div>
+            <div v-else class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              Log disembunyikan. Akan terbuka otomatis saat terjadi error.
             </div>
           </div>
 
-          <div :class="sectionClass">
+          <div v-if="detailsOpen" :class="sectionClass">
             <h3 class="text-base font-semibold text-gray-900 dark:text-white">Konfigurasi</h3>
             <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div :class="mutedBoxClass">
@@ -765,6 +962,29 @@ onMounted(() => {
           </div>
         </div>
       </div>
+
+      <div class="rounded-xl border border-red-200 bg-red-50 dark:border-red-500/20 dark:bg-red-500/10 p-5">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h3 class="text-base font-semibold text-red-900 dark:text-red-200">Danger Zone</h3>
+            <p class="mt-1 text-xs text-red-800 dark:text-red-200">
+              Reset hanya menghapus state/workdir update (paket ZIP tetap ada). Gunakan jika update macet atau state corrupt.
+            </p>
+          </div>
+          <button @click="dangerOpen = !dangerOpen" class="btn btn-secondary px-3 py-2 text-xs" type="button">
+            {{ dangerOpen ? 'Tutup' : 'Buka' }}
+          </button>
+        </div>
+
+        <div v-if="dangerOpen" class="mt-3 space-y-2">
+          <div class="text-xs text-red-800 dark:text-red-200">Ketik RESET untuk mengaktifkan tombol reset.</div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input v-model="resetText" class="input sm:col-span-2" placeholder="Ketik RESET" />
+            <button @click="resetUpdate" class="btn btn-danger" :disabled="isBusy || resetText !== 'RESET'" type="button">
+              Reset Update
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
-  </div>
 </template>
