@@ -1154,10 +1154,11 @@ const keydownHandler = (e) => {
 }
 
 onMounted(() => {
-  // Parity native: default preset = today (kalau user belum set range)
-  if (!filters.date_from && !filters.date_to) {
-    filters.date_preset = 'today'
-    applyDatePreset('today')
+  // Native parity: default preset = "Semua Tanggal" (empty). If URL provides a range, show as custom.
+  if (filters.date_from || filters.date_to) {
+    filters.date_preset = 'custom'
+  } else {
+    filters.date_preset = ''
   }
   loadData(1)
   document.addEventListener('keydown', keydownHandler)
