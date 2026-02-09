@@ -33,7 +33,9 @@ class RequireManageSettings
         $allowedLegacy = in_array($legacyRole, ['admin', 'owner'], true);
 
         // Secondary rule: allow anyone with the permission (Spatie).
-        $allowedPermission = method_exists($user, 'can') && $user->can('manage settings');
+        $allowedPermission =
+            method_exists($user, 'can')
+            && ($user->can('manage settings') || $user->can('manage roles'));
 
         if (!$allowedLegacy && !$allowedPermission) {
             if ($request->expectsJson()) {
@@ -46,4 +48,3 @@ class RequireManageSettings
         return $next($request);
     }
 }
-

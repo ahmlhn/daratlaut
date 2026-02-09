@@ -136,7 +136,7 @@ const userRole = computed(() => (user.value?.role || '').toString().toLowerCase(
 const userPermissions = computed(() => user.value?.permissions || [])
 const canManageSettings = computed(() => {
   if (['admin', 'owner'].includes(userRole.value)) return true
-  return userPermissions.value.includes('manage settings')
+  return userPermissions.value.includes('manage settings') || userPermissions.value.includes('manage roles')
 })
 
 const baseNavigationGroups = [
