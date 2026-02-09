@@ -14,15 +14,21 @@ class Team extends Model
 
     protected $fillable = [
         'tenant_id',
+        'user_id',
         'name',
         'phone',
         'email',
+        'role',
+        'pop_id',
         'is_active',
         'can_login',
         'notes',
     ];
 
     protected $casts = [
+        'tenant_id' => 'integer',
+        'user_id' => 'integer',
+        'pop_id' => 'integer',
         'is_active' => 'boolean',
         'can_login' => 'boolean',
     ];

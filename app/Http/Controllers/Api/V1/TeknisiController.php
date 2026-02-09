@@ -623,7 +623,7 @@ class TeknisiController extends Controller
 
         $technicians = DB::table('noci_users')
             ->where('tenant_id', $tenantId)
-            ->whereIn('role', ['teknisi', 'svp lapangan'])
+            ->whereIn('role', ['teknisi', 'svp lapangan', 'svp_lapangan'])
             ->where('status', 'active')
             ->orderBy('name')
             ->get(['id', 'name']);

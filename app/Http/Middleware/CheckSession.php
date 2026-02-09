@@ -25,8 +25,8 @@ class CheckSession
         if (!empty($user->name)) $displayName = $user->name;
         if (!empty($user->fullname)) $displayName = $user->fullname;
 
-        $role = strtolower((string) ($user->role ?? 'cs'));
-        $isTeknisi = in_array($role, ['teknisi', 'svp lapangan'], true);
+        $role = strtolower(trim((string) ($user->role ?? 'cs')));
+        $isTeknisi = in_array($role, ['teknisi', 'svp lapangan', 'svp_lapangan'], true);
 
         $request->session()->put([
             'tenant_id' => $user->tenant_id ?? 0,

@@ -205,9 +205,20 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::get('/reports/plan-popularity', [ReportController::class, 'planPopularity']);
     Route::get('/reports/top-customers', [ReportController::class, 'topCustomers']);
     Route::get('/reports/export', [ReportController::class, 'exportCsv']);
+
+
     // Role Management
-    Route::apiResource('/roles', \App\Http\Controllers\Api\V1\RoleController::class);
-    Route::get('/permissions', [\App\Http\Controllers\Api\V1\RoleController::class, 'permissions']);
+    // - Read-only endpoints are available for authenticated users (e.g. Team module role dropdown).
+    // - Mutations and permissions listing are restricted to Settings managers.
+    Route::get('/roles', [\App\Http\Controllers\Api\V1\RoleController::class, 'index']);
+    Route::get('/roles/{id}', [\App\Http\Controllers\Api\V1\RoleController::class, 'show']);
+
+    Route::middleware(['manage.settings'])->group(function () {
+        Route::post('/roles', [\App\Http\Controllers\Api\V1\RoleController::class, 'store']);
+        Route::put('/roles/{id}', [\App\Http\Controllers\Api\V1\RoleController::class, 'update']);
+        Route::delete('/roles/{id}', [\App\Http\Controllers\Api\V1\RoleController::class, 'destroy']);
+        Route::get('/permissions', [\App\Http\Controllers\Api\V1\RoleController::class, 'permissions']);
+    });
 });
 
 // Midtrans webhook (no auth)

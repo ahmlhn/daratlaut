@@ -3,36 +3,187 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\Team;
 use App\Models\ActionLog;
+use App\Models\Installation;
+use App\Models\NociUser;
+use App\Models\Pop;
+use App\Models\Team;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
+use Spatie\Permission\Models\Role;
 
 class TeamController extends Controller
 {
+    private function tenantId(Request $request): int
+    {
+        return (int) $request->attributes->get('tenant_id', (int) $request->input('tenant_id', 1));
+    }
+
+    private function normalizeLegacyRole(?string $role): string
+    {
+        $role = strtolower(trim((string) $role));
+        if ($role === 'svp lapangan') return 'svp_lapangan';
+        return $role;
+    }
+
+    private function hasTeamUserIdColumn(): bool
+    {
+        static $has = null;
+        if ($has === null) {
+            $has = Schema::hasColumn('noci_team', 'user_id');
+        }
+        return (bool) $has;
+    }
+
+    private function userCan(Request $request, string $permission): bool
+    {
+        $user = $request->user();
+        if (!$user) return false;
+
+        $legacyRole = $this->normalizeLegacyRole($user->role ?? null);
+
+        // Always allow admin/owner even if RBAC hasn't been seeded yet.
+        if (in_array($legacyRole, ['admin', 'owner'], true)) return true;
+
+        // Legacy wildcard permission for Team module.
+        if (method_exists($user, 'can') && $user->can('manage team')) return true;
+
+        return method_exists($user, 'can') && $user->can($permission);
+    }
+
+    private function requirePermission(Request $request, string $permission): ?JsonResponse
+    {
+        if ($this->userCan($request, $permission)) return null;
+        return response()->json(['message' => 'Forbidden'], 403);
+    }
+
+    private function normalizePhone(?string $phone): ?string
+    {
+        $clean = preg_replace('/[^0-9]/', '', (string) $phone);
+        if ($clean === '') return null;
+
+        if (str_starts_with($clean, '08')) {
+            return '62' . substr($clean, 1);
+        }
+        if (str_starts_with($clean, '8')) {
+            return '62' . $clean;
+        }
+        if (str_starts_with($clean, '0')) {
+            return '62' . substr($clean, 1);
+        }
+
+        return $clean;
+    }
+
+    private function popName(int $tenantId, ?int $popId): ?string
+    {
+        $popId = (int) ($popId ?? 0);
+        if ($popId <= 0) return null;
+
+        return Pop::forTenant($tenantId)->where('id', $popId)->value('pop_name');
+    }
+
+    private function generateUniqueUsername(string $name): string
+    {
+        $base = strtolower(preg_replace('/[^a-z0-9]/i', '', $name));
+        $base = substr($base, 0, 30);
+        if ($base === '') $base = 'user';
+
+        $candidate = $base;
+        $i = 1;
+
+        while (NociUser::where('username', $candidate)->exists()) {
+            $suffix = (string) $i;
+            $candidate = substr($base, 0, max(1, 30 - strlen($suffix))) . $suffix;
+            $i++;
+            if ($i > 9999) {
+                $candidate = $base . random_int(10000, 99999);
+                break;
+            }
+        }
+
+        return $candidate;
+    }
+
+    private function upsertLoginUserFromTeam(
+        int $tenantId,
+        ?NociUser $user,
+        array $data,
+        ?string $password = null
+    ): NociUser {
+        $roleName = (string) ($data['role'] ?? '');
+        $isActive = (bool) ($data['is_active'] ?? true);
+        $canLogin = (bool) ($data['can_login'] ?? false);
+
+        if (!$user) {
+            $username = $this->generateUniqueUsername((string) ($data['name'] ?? 'user'));
+            $user = new NociUser();
+            $user->tenant_id = $tenantId;
+            $user->username = $username;
+        }
+
+        $user->name = (string) ($data['name'] ?? $user->name ?? $user->username);
+        $user->email = $data['email'] ?? null;
+        $user->phone = $data['phone'] ?? null;
+        $user->role = $roleName !== '' ? $roleName : ($user->role ?? 'cs');
+        $user->default_pop = $data['default_pop'] ?? null;
+        $user->status = ($canLogin && $isActive) ? 'active' : 'inactive';
+
+        if ($password !== null && $password !== '') {
+            $user->password = Hash::make($password);
+        } elseif (!$user->exists) {
+            throw ValidationException::withMessages([
+                'password' => 'Password wajib diisi untuk akun login baru.',
+            ]);
+        }
+
+        // Ensure the role exists before syncing. This does not override permissions.
+        if ($roleName !== '') {
+            Role::findOrCreate($roleName, 'web');
+        }
+
+        $user->save();
+
+        if ($roleName !== '') {
+            $user->syncRoles([$roleName]);
+        }
+
+        return $user;
+    }
+
     /**
-     * List team members with filters
+     * List team members with filters.
      */
     public function index(Request $request): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        if ($resp = $this->requirePermission($request, 'view team')) return $resp;
+
+        $tenantId = $this->tenantId($request);
         $perPage = (int) $request->input('per_page', 50);
 
-        $query = Team::forTenant($tenantId)
-            ->select([
-                'id',
-                'tenant_id',
-                'name',
-                'phone',
-                'email',
-                'role',
-                'pop_id',
-                'is_active',
-                'can_login',
-                'notes',
-            ]);
+        $select = [
+            'id',
+            'tenant_id',
+            'name',
+            'phone',
+            'email',
+            'role',
+            'pop_id',
+            'is_active',
+            'can_login',
+            'notes',
+        ];
+
+        if ($this->hasTeamUserIdColumn()) {
+            array_splice($select, 2, 0, ['user_id']);
+        }
+
+        $query = Team::forTenant($tenantId)->select($select);
 
         // Role filter
         if ($role = $request->input('role')) {
@@ -41,8 +192,7 @@ class TeamController extends Controller
 
         // Status filter
         if ($request->has('is_active')) {
-            $isActive = $request->boolean('is_active');
-            $query->where('is_active', $isActive);
+            $query->where('is_active', $request->boolean('is_active'));
         }
 
         // Search
@@ -54,12 +204,13 @@ class TeamController extends Controller
             });
         }
 
-        // Sort
-        $sortBy = $request->input('sort_by', 'name');
-        $sortDir = $request->input('sort_dir', 'asc');
-        $query->orderBy($sortBy, $sortDir);
+        // Sort (whitelist to avoid SQL injection)
+        $allowedSortBy = ['id', 'name', 'phone', 'email', 'role', 'pop_id', 'is_active', 'can_login'];
+        $sortBy = (string) $request->input('sort_by', 'name');
+        $sortDir = strtolower((string) $request->input('sort_dir', 'asc')) === 'desc' ? 'desc' : 'asc';
+        if (!in_array($sortBy, $allowedSortBy, true)) $sortBy = 'name';
 
-        $team = $query->paginate($perPage);
+        $team = $query->orderBy($sortBy, $sortDir)->paginate($perPage);
 
         return response()->json([
             'data' => $team->items(),
@@ -73,184 +224,359 @@ class TeamController extends Controller
     }
 
     /**
-     * Get team statistics
+     * Get team statistics.
      */
     public function stats(Request $request): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        if ($resp = $this->requirePermission($request, 'view team')) return $resp;
+
+        $tenantId = $this->tenantId($request);
 
         $stats = Cache::remember("tenant:{$tenantId}:team:stats", 30, function () use ($tenantId) {
-            return Team::forTenant($tenantId)
-                ->selectRaw("
-                    COUNT(*) as total,
-                    SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
-                    SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) as inactive,
-                    SUM(CASE WHEN role = 'teknisi' THEN 1 ELSE 0 END) as teknisi,
-                    SUM(CASE WHEN role = 'sales' THEN 1 ELSE 0 END) as sales,
-                    SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admin,
-                    SUM(CASE WHEN role = 'cs' THEN 1 ELSE 0 END) as cs,
-                    SUM(CASE WHEN role = 'owner' THEN 1 ELSE 0 END) as owner
-                ")
-                ->first();
+            $base = Team::forTenant($tenantId);
+
+            $total = (int) (clone $base)->count();
+            $active = (int) (clone $base)->where('is_active', 1)->count();
+            $inactive = $total - $active;
+
+            $byRole = (clone $base)
+                ->select('role', DB::raw('COUNT(*) as total'))
+                ->groupBy('role')
+                ->pluck('total', 'role')
+                ->map(fn ($v) => (int) $v)
+                ->toArray();
+
+            return [
+                'total' => $total,
+                'active' => $active,
+                'inactive' => $inactive,
+                'by_role' => $byRole,
+            ];
         });
 
-        return response()->json([
-            'total' => (int) $stats->total,
-            'active' => (int) $stats->active,
-            'inactive' => (int) $stats->inactive,
-            'by_role' => [
-                'teknisi' => (int) $stats->teknisi,
-                'sales' => (int) $stats->sales,
-                'admin' => (int) $stats->admin,
-                'cs' => (int) $stats->cs,
-                'owner' => (int) $stats->owner,
-            ],
-        ]);
+        return response()->json($stats);
     }
 
     /**
-     * Show single team member
+     * Show single team member.
      */
     public function show(Request $request, int $id): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        if ($resp = $this->requirePermission($request, 'view team')) return $resp;
 
+        $tenantId = $this->tenantId($request);
         $member = Team::forTenant($tenantId)->findOrFail($id);
 
         return response()->json(['data' => $member]);
     }
 
     /**
-     * Create new team member
+     * Create new team member.
      */
     public function store(Request $request): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        if ($resp = $this->requirePermission($request, 'create team')) return $resp;
+
+        $tenantId = $this->tenantId($request);
 
         $validated = $request->validate([
-            'tenant_id' => 'required|integer',
             'name' => 'required|string|max:100',
             'phone' => 'nullable|string|max:50',
             'email' => 'nullable|email|max:100',
-            'role' => ['required', Rule::in(['teknisi', 'sales', 'admin', 'cs', 'owner', 'keuangan'])],
+            'role' => 'required|string|max:50',
             'pop_id' => 'nullable|integer|exists:noci_pops,id',
             'is_active' => 'nullable|boolean',
             'can_login' => 'nullable|boolean',
+            'password' => 'nullable|string|min:4|max:255',
             'notes' => 'nullable|string',
         ]);
 
-        // Normalize phone
-        if (!empty($validated['phone'])) {
-            $validated['phone'] = $this->normalizePhone($validated['phone']);
+        $validated['phone'] = array_key_exists('phone', $validated) ? $this->normalizePhone($validated['phone']) : null;
+        $validated['is_active'] = array_key_exists('is_active', $validated) ? (bool) $validated['is_active'] : true;
+        $validated['can_login'] = array_key_exists('can_login', $validated) ? (bool) $validated['can_login'] : false;
+
+        $popId = array_key_exists('pop_id', $validated) ? (int) ($validated['pop_id'] ?? 0) : 0;
+        $popId = $popId > 0 ? $popId : null;
+
+        if ($popId !== null) {
+            // Ensure POP belongs to tenant (exists rule alone doesn't check tenant_id).
+            $validPop = Pop::forTenant($tenantId)->where('id', $popId)->exists();
+            if (!$validPop) {
+                throw ValidationException::withMessages(['pop_id' => 'POP tidak valid untuk tenant ini.']);
+            }
         }
 
-        $member = Team::create([
-            ...$validated,
-            'is_active' => $validated['is_active'] ?? true,
-            'can_login' => $validated['can_login'] ?? false,
-        ]);
+        if ($validated['can_login'] && !$this->hasTeamUserIdColumn()) {
+            return response()->json([
+                'message' => 'Fitur akun login membutuhkan kolom user_id di noci_team. Jalankan migration terbaru.',
+            ], 422);
+        }
 
-        // Log action
-        ActionLog::record(
-            tenantId: $tenantId,
-            action: 'CREATE',
-            refType: 'team',
-            refId: $member->id,
-            payload: ['name' => $validated['name'], 'role' => $validated['role']]
-        );
+        DB::beginTransaction();
+        try {
+            $userId = null;
 
-        return response()->json([
-            'message' => 'Team member created successfully',
-            'data' => $member,
-        ], 201);
+            if ($validated['can_login']) {
+                $defaultPop = $this->popName($tenantId, $popId);
+
+                $user = $this->upsertLoginUserFromTeam($tenantId, null, [
+                    'name' => $validated['name'],
+                    'email' => $validated['email'] ?? null,
+                    'phone' => $validated['phone'] ?? null,
+                    'role' => $validated['role'],
+                    'default_pop' => $defaultPop,
+                    'is_active' => $validated['is_active'],
+                    'can_login' => true,
+                ], (string) ($validated['password'] ?? ''));
+
+                $userId = $user->id;
+            }
+
+            $memberPayload = [
+                'tenant_id' => $tenantId,
+                'name' => $validated['name'],
+                'phone' => $validated['phone'] ?? null,
+                'email' => $validated['email'] ?? null,
+                'role' => $validated['role'],
+                'pop_id' => $popId,
+                'is_active' => $validated['is_active'],
+                'can_login' => $validated['can_login'],
+                'notes' => $validated['notes'] ?? null,
+            ];
+
+            if ($this->hasTeamUserIdColumn()) {
+                $memberPayload['user_id'] = $userId;
+            }
+
+            $member = Team::create($memberPayload);
+
+            ActionLog::record(
+                tenantId: $tenantId,
+                action: 'CREATE',
+                refType: 'team',
+                refId: $member->id,
+                payload: ['name' => $validated['name'], 'role' => $validated['role'], 'user_id' => $userId]
+            );
+
+            DB::commit();
+            Cache::forget("tenant:{$tenantId}:team:stats");
+
+            return response()->json([
+                'message' => 'Team member created successfully',
+                'data' => $member,
+            ], 201);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
     }
 
     /**
-     * Update team member
+     * Update team member.
      */
     public function update(Request $request, int $id): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        if ($resp = $this->requirePermission($request, 'edit team')) return $resp;
 
+        $tenantId = $this->tenantId($request);
         $member = Team::forTenant($tenantId)->findOrFail($id);
 
         $validated = $request->validate([
             'name' => 'sometimes|required|string|max:100',
             'phone' => 'nullable|string|max:50',
             'email' => 'nullable|email|max:100',
-            'role' => ['nullable', Rule::in(['teknisi', 'sales', 'admin', 'cs', 'owner', 'keuangan'])],
+            'role' => 'nullable|string|max:50',
             'pop_id' => 'nullable|integer|exists:noci_pops,id',
             'is_active' => 'nullable|boolean',
             'can_login' => 'nullable|boolean',
+            'password' => 'nullable|string|min:4|max:255',
             'notes' => 'nullable|string',
         ]);
 
-        // Normalize phone
-        if (!empty($validated['phone'])) {
+        if (array_key_exists('phone', $validated)) {
             $validated['phone'] = $this->normalizePhone($validated['phone']);
         }
 
-        $member->update($validated);
+        $nextName = array_key_exists('name', $validated) ? (string) $validated['name'] : (string) $member->name;
+        $nextEmail = array_key_exists('email', $validated) ? ($validated['email'] ?? null) : ($member->email ?? null);
+        $nextPhone = array_key_exists('phone', $validated) ? ($validated['phone'] ?? null) : ($member->phone ?? null);
+        $nextRole = array_key_exists('role', $validated) ? (string) $validated['role'] : (string) $member->role;
+        $nextIsActive = array_key_exists('is_active', $validated) ? (bool) $validated['is_active'] : (bool) $member->is_active;
+        $nextCanLogin = array_key_exists('can_login', $validated) ? (bool) $validated['can_login'] : (bool) $member->can_login;
+        $password = (string) ($validated['password'] ?? '');
 
-        // Log action
-        ActionLog::record(
-            tenantId: $tenantId,
-            action: 'UPDATE',
-            refType: 'team',
-            refId: $id,
-            payload: ['name' => $member->name]
-        );
+        $popId = array_key_exists('pop_id', $validated) ? (int) ($validated['pop_id'] ?? 0) : (int) ($member->pop_id ?? 0);
+        $popId = $popId > 0 ? $popId : null;
 
-        return response()->json([
-            'message' => 'Team member updated successfully',
-            'data' => $member->fresh(),
-        ]);
+        if ($popId !== null) {
+            $validPop = Pop::forTenant($tenantId)->where('id', $popId)->exists();
+            if (!$validPop) {
+                throw ValidationException::withMessages(['pop_id' => 'POP tidak valid untuk tenant ini.']);
+            }
+        }
+
+        if ($nextCanLogin && !$this->hasTeamUserIdColumn()) {
+            return response()->json([
+                'message' => 'Fitur akun login membutuhkan kolom user_id di noci_team. Jalankan migration terbaru.',
+            ], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            $userId = $this->hasTeamUserIdColumn() ? (int) ($member->user_id ?? 0) : 0;
+            $userId = $userId > 0 ? $userId : null;
+
+            if ($nextCanLogin) {
+                $defaultPop = $this->popName($tenantId, $popId);
+
+                $user = $userId ? NociUser::find($userId) : null;
+
+                $user = $this->upsertLoginUserFromTeam($tenantId, $user, [
+                    'name' => $nextName,
+                    'email' => $nextEmail,
+                    'phone' => $nextPhone,
+                    'role' => $nextRole,
+                    'default_pop' => $defaultPop,
+                    'is_active' => $nextIsActive,
+                    'can_login' => true,
+                ], $password !== '' ? $password : null);
+
+                $userId = $user->id;
+            } elseif ($userId) {
+                // Disable login access without deleting the account.
+                $user = NociUser::find($userId);
+                if ($user) {
+                    $user->status = 'inactive';
+                    $user->remember_token = null;
+                    $user->save();
+                }
+            }
+
+            $memberPayload = [
+                'name' => $nextName,
+                'phone' => $nextPhone,
+                'email' => $nextEmail,
+                'role' => $nextRole,
+                'pop_id' => $popId,
+                'is_active' => $nextIsActive,
+                'can_login' => $nextCanLogin,
+                'notes' => array_key_exists('notes', $validated) ? $validated['notes'] : ($member->notes ?? null),
+            ];
+
+            if ($this->hasTeamUserIdColumn()) {
+                $memberPayload['user_id'] = $userId;
+            }
+
+            $member->update($memberPayload);
+
+            ActionLog::record(
+                tenantId: $tenantId,
+                action: 'UPDATE',
+                refType: 'team',
+                refId: $id,
+                payload: ['name' => $member->name, 'role' => $nextRole, 'user_id' => $userId]
+            );
+
+            DB::commit();
+            Cache::forget("tenant:{$tenantId}:team:stats");
+
+            return response()->json([
+                'message' => 'Team member updated successfully',
+                'data' => $member->fresh(),
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
     }
 
     /**
-     * Delete team member
+     * Delete team member.
      */
     public function destroy(Request $request, int $id): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        if ($resp = $this->requirePermission($request, 'delete team')) return $resp;
 
+        $tenantId = $this->tenantId($request);
         $member = Team::forTenant($tenantId)->findOrFail($id);
 
         // Check if this member is assigned to any active installations
-        $activeInstalls = \App\Models\Installation::forTenant($tenantId)
+        $activeInstalls = Installation::forTenant($tenantId)
             ->active()
             ->forTechnician($member->name)
             ->count();
 
         if ($activeInstalls > 0) {
             return response()->json([
-                'message' => 'Cannot delete team member with active installations. Deactivate instead.'
+                'message' => 'Cannot delete team member with active installations. Deactivate instead.',
             ], 422);
         }
 
-        // Log before delete
-        ActionLog::record(
-            tenantId: $tenantId,
-            action: 'DELETE',
-            refType: 'team',
-            refId: $id,
-            payload: ['name' => $member->name]
-        );
+        DB::beginTransaction();
+        try {
+            $userId = $this->hasTeamUserIdColumn() ? (int) ($member->user_id ?? 0) : 0;
+            $userId = $userId > 0 ? $userId : null;
 
-        $member->delete();
+            ActionLog::record(
+                tenantId: $tenantId,
+                action: 'DELETE',
+                refType: 'team',
+                refId: $id,
+                payload: ['name' => $member->name, 'role' => $member->role, 'user_id' => $userId]
+            );
+
+            $member->delete();
+
+            if ($userId) {
+                $user = NociUser::find($userId);
+                if ($user) {
+                    // Best-effort cleanup of RBAC relations.
+                    try {
+                        $user->syncRoles([]);
+                    } catch (\Throwable) {
+                        // ignore
+                    }
+                    $user->remember_token = null;
+                    $user->delete();
+                }
+            }
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
+
+        Cache::forget("tenant:{$tenantId}:team:stats");
 
         return response()->json(['message' => 'Team member deleted successfully']);
     }
 
     /**
-     * Toggle active status
+     * Toggle active status.
      */
     public function toggleStatus(Request $request, int $id): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        if ($resp = $this->requirePermission($request, 'edit team')) return $resp;
+
+        $tenantId = $this->tenantId($request);
 
         $member = Team::forTenant($tenantId)->findOrFail($id);
         $member->update(['is_active' => !$member->is_active]);
+
+        // Sync login status if linked to a user.
+        if ($this->hasTeamUserIdColumn() && !empty($member->user_id)) {
+            $user = NociUser::find((int) $member->user_id);
+            if ($user) {
+                $user->status = ($member->can_login && $member->is_active) ? 'active' : 'inactive';
+                if ($user->status !== 'active') {
+                    $user->remember_token = null;
+                }
+                $user->save();
+            }
+        }
+
+        Cache::forget("tenant:{$tenantId}:team:stats");
 
         return response()->json([
             'message' => $member->is_active ? 'Member activated' : 'Member deactivated',
@@ -259,11 +585,13 @@ class TeamController extends Controller
     }
 
     /**
-     * Get technicians list (active only)
+     * Get technicians list (active only).
      */
     public function technicians(Request $request): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        if ($resp = $this->requirePermission($request, 'view team')) return $resp;
+
+        $tenantId = $this->tenantId($request);
 
         $technicians = Team::forTenant($tenantId)
             ->active()
@@ -275,11 +603,13 @@ class TeamController extends Controller
     }
 
     /**
-     * Get sales list (active only)
+     * Get sales list (active only).
      */
     public function sales(Request $request): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        if ($resp = $this->requirePermission($request, 'view team')) return $resp;
+
+        $tenantId = $this->tenantId($request);
 
         $sales = Team::forTenant($tenantId)
             ->active()
@@ -289,22 +619,5 @@ class TeamController extends Controller
 
         return response()->json(['data' => $sales]);
     }
-
-    /**
-     * Normalize phone number to 62 prefix
-     */
-    private function normalizePhone(string $phone): string
-    {
-        $phone = preg_replace('/[^0-9]/', '', $phone);
-        
-        if (str_starts_with($phone, '08')) {
-            $phone = '62' . substr($phone, 1);
-        } elseif (str_starts_with($phone, '8')) {
-            $phone = '62' . $phone;
-        } elseif (str_starts_with($phone, '+62')) {
-            $phone = substr($phone, 1);
-        }
-
-        return $phone;
-    }
 }
+

@@ -7,7 +7,7 @@ const page = usePage();
 const API_BASE = '/api/v1';
 
 const role = computed(() => String(page.props.auth?.user?.role || '').trim().toLowerCase());
-const isTeknisi = computed(() => ['teknisi', 'svp lapangan'].includes(role.value));
+const isTeknisi = computed(() => ['teknisi', 'svp lapangan', 'svp_lapangan'].includes(role.value));
 const canManualRegister = computed(() => isTeknisi.value || ['admin', 'cs', 'owner'].includes(role.value));
 
 // In-memory caches (native parity): keep list state when switching OLT (within the same page session).

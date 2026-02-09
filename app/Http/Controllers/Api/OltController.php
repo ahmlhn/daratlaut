@@ -1443,8 +1443,8 @@ class OltController extends Controller
     public function autoRegister(Request $request, int $id): JsonResponse
     {
         $tenantId = $request->user()->tenant_id ?? 1;
-        $role = strtolower((string) ($request->user()->role ?? ''));
-        $isTeknisi = in_array($role, ['teknisi', 'svp lapangan'], true);
+        $role = strtolower(trim((string) ($request->user()->role ?? '')));
+        $isTeknisi = in_array($role, ['teknisi', 'svp lapangan', 'svp_lapangan'], true);
 
         if ($isTeknisi) {
             return response()->json([

@@ -132,7 +132,14 @@ const currentPath = computed(() => page.url)
 const user = computed(() => page.props.auth?.user || { name: 'Guest', email: '' })
 const layoutOptions = computed(() => page.props.layoutOptions || {})
 
-const navigationGroups = [
+const userRole = computed(() => (user.value?.role || '').toString().toLowerCase().trim())
+const userPermissions = computed(() => user.value?.permissions || [])
+const canManageSettings = computed(() => {
+  if (['admin', 'owner'].includes(userRole.value)) return true
+  return userPermissions.value.includes('manage settings')
+})
+
+const baseNavigationGroups = [
   {
     name: null,
     items: [
@@ -196,8 +203,21 @@ const navigationGroups = [
   },
 ]
 
+const navigationGroups = computed(() => {
+  // Hide sensitive settings when the user is not allowed.
+  const groups = baseNavigationGroups.map(group => ({
+    ...group,
+    items: (group.items || []).filter(item => {
+      if (item?.href === '/settings/roles') return canManageSettings.value
+      return true
+    })
+  }))
+
+  return groups.filter(group => (group.items || []).length > 0)
+})
+
 const allNavItems = computed(() => {
-  return navigationGroups.flatMap(group => group.items)
+  return navigationGroups.value.flatMap(group => group.items)
 })
 
 const activeHref = computed(() => {

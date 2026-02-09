@@ -219,12 +219,15 @@ class PopController extends Controller
      */
     public function dropdown(Request $request): JsonResponse
     {
-        $tenantId = (int) $request->input('tenant_id', 1);
+        $tenantId = (int) $request->attributes->get('tenant_id', (int) $request->input('tenant_id', 1));
 
         $pops = Pop::forTenant($tenantId)
             ->active()
-            ->orderBy('name')
-            ->get(['id', 'name']);
+            ->orderBy('pop_name')
+            ->get([
+                'id',
+                \Illuminate\Support\Facades\DB::raw('pop_name as name'),
+            ]);
 
         return response()->json(['data' => $pops]);
     }

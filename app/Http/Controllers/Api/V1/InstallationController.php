@@ -43,7 +43,9 @@ class InstallationController extends Controller
 
     private function isPrivileged(string $role): bool
     {
-        return in_array($role, ['admin', 'cs', 'svp lapangan'], true);
+        $role = strtolower(trim($role));
+        if ($role === 'svp lapangan') $role = 'svp_lapangan';
+        return in_array($role, ['admin', 'cs', 'svp_lapangan'], true);
     }
 
     private function normalizePhone(?string $raw): string
@@ -1478,7 +1480,7 @@ class InstallationController extends Controller
 
         $list = LegacyUser::query()
             ->where('tenant_id', $tenantId)
-            ->whereIn('role', ['teknisi', 'svp lapangan'])
+            ->whereIn('role', ['teknisi', 'svp lapangan', 'svp_lapangan'])
             ->orderBy('name')
             ->pluck('name')
             ->values();

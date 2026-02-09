@@ -50,6 +50,13 @@ class NociUser extends Authenticatable
     const ROLE_KEUANGAN = 'keuangan';
     const ROLE_SVP = 'svp_lapangan';
 
+    private static function normalizeLegacyRoleValue(?string $role): string
+    {
+        $role = strtolower(trim((string) $role));
+        if ($role === 'svp lapangan') return self::ROLE_SVP;
+        return $role;
+    }
+
     // Scopes
     public function scopeForTenant($query, int $tenantId)
     {
@@ -69,40 +76,44 @@ class NociUser extends Authenticatable
     // Role checks
     public function isAdmin(): bool
     {
-        return $this->role === self::ROLE_ADMIN;
+        return self::normalizeLegacyRoleValue($this->role) === self::ROLE_ADMIN;
     }
 
     public function isTeknisi(): bool
     {
-        return $this->role === self::ROLE_TEKNISI;
+        return self::normalizeLegacyRoleValue($this->role) === self::ROLE_TEKNISI;
     }
 
     public function isCs(): bool
     {
-        return $this->role === self::ROLE_CS;
+        return self::normalizeLegacyRoleValue($this->role) === self::ROLE_CS;
     }
 
     public function isOwner(): bool
     {
-        return $this->role === self::ROLE_OWNER;
+        return self::normalizeLegacyRoleValue($this->role) === self::ROLE_OWNER;
     }
 
     public function isKeuangan(): bool
     {
-        return $this->role === self::ROLE_KEUANGAN;
+        return self::normalizeLegacyRoleValue($this->role) === self::ROLE_KEUANGAN;
     }
 
     public function isSvp(): bool
     {
-        return $this->role === self::ROLE_SVP;
+        return self::normalizeLegacyRoleValue($this->role) === self::ROLE_SVP;
     }
 
     public function hasLegacyRole(string|array $roles): bool
     {
+        $current = self::normalizeLegacyRoleValue($this->role);
+
         if (is_string($roles)) {
-            return $this->role === $roles;
+            return $current === self::normalizeLegacyRoleValue($roles);
         }
-        return in_array($this->role, $roles);
+
+        $normalized = array_map(fn ($r) => self::normalizeLegacyRoleValue(is_string($r) ? $r : ''), $roles);
+        return in_array($current, $normalized, true);
     }
 
     public function canManageTeam(): bool
