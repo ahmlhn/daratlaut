@@ -1,0 +1,40 @@
+Running Recap Test for User 1, Tenant 2, POP BANGKUNAT
+PHP Fatal error:  Cannot redeclare App\Http\Controllers\Api\V1\InstallationController::phoneNoBales() in C:\xampp\htdocs\laravel\backend-laravel\app\Http\Controllers\Api\V1\InstallationController.php on line 531
+
+   Symfony\Component\ErrorHandler\Error\FatalError 
+
+  Cannot redeclare App\Http\Controllers\Api\V1\InstallationController::phoneNoBales()
+
+  at app\Http\Controllers\Api\V1\InstallationController.php:531
+    527Γûò     {
+    528Γûò         return $this->waSendFailover($tenantId, $type, $target, $message, $platform);
+    529Γûò     }
+    530Γûò 
+  Γ₧£ 531Γûò     private function phoneNoBales($raw): string
+    532Γûò     {
+    533Γûò         $clean = preg_replace('/\D/', '', (string) $raw);
+    534Γûò         if ($clean === '') return '';
+    535Γûò         if (substr($clean, 0, 2) === '62') return substr($clean, 2);
+
+
+   Whoops\Exception\ErrorException 
+
+  Cannot redeclare App\Http\Controllers\Api\V1\InstallationController::phoneNoBales()
+
+  at app\Http\Controllers\Api\V1\InstallationController.php:531
+    527Γûò     {
+    528Γûò         return $this->waSendFailover($tenantId, $type, $target, $message, $platform);
+    529Γûò     }
+    530Γûò 
+  Γ₧£ 531Γûò     private function phoneNoBales($raw): string
+    532Γûò     {
+    533Γûò         $clean = preg_replace('/\D/', '', (string) $raw);
+    534Γûò         if ($clean === '') return '';
+    535Γûò         if (substr($clean, 0, 2) === '62') return substr($clean, 2);
+
+  1   vendor\filp\whoops\src\Whoops\Run.php:520
+      Whoops\Run::handleError()
+
+  2   [internal]:0
+      Whoops\Run::handleShutdown()
+
