@@ -1,11 +1,14 @@
 ﻿
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick, inject } from 'vue'
-import { Head } from '@inertiajs/vue3'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch, inject } from 'vue'
+import { Head, usePage } from '@inertiajs/vue3'
 import AdminLayout from '@/Layouts/AdminLayout.vue'
-import LoadingSpinner from '@/Components/LoadingSpinner.vue'
 
 const toast = inject('toast')
+const page = usePage()
+
+const actorName = computed(() => String(page.props?.auth?.user?.name || sessionStorage.getItem('actor_name') || 'System'))
+const actorRole = computed(() => String(page.props?.auth?.user?.role || sessionStorage.getItem('actor_role') || 'system').toLowerCase())
 
 const props = defineProps({
   initialFilters: {
@@ -37,6 +40,9 @@ const pagination = reactive({
   total_pages: 1,
 })
 
+const pageStart = computed(() => (pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.per_page + 1))
+const pageEnd = computed(() => Math.min(pagination.total, (pagination.page - 1) * pagination.per_page + list.value.length))
+
 const dropdowns = reactive({
   pops: [],
   technicians: [],
@@ -54,28 +60,19 @@ const filters = reactive({
   overdue_only: false,
 })
 
-const statusOptions = [
-  { value: '', label: 'Semua Status' },
-  { value: 'Baru', label: 'Baru' },
-  { value: 'Survey', label: 'Survey' },
-  { value: 'Proses', label: 'Proses' },
-  { value: 'Pending', label: 'Pending' },
-  { value: 'Req_Batal', label: 'Req Batal' },
-  { value: 'Selesai', label: 'Selesai' },
-  { value: 'Batal', label: 'Batal' },
-]
-
-const statusColors = {
-  Baru: 'bg-blue-50 text-blue-700 border border-blue-100 dark:bg-blue-500/15 dark:text-blue-200 dark:border-blue-500/20',
-  Survey: 'bg-purple-50 text-purple-700 border border-purple-100 dark:bg-purple-500/15 dark:text-purple-200 dark:border-purple-500/20',
-  Proses: 'bg-indigo-50 text-indigo-700 border border-indigo-100 dark:bg-indigo-500/15 dark:text-indigo-200 dark:border-indigo-500/20',
-  Pending: 'bg-amber-50 text-amber-700 border border-amber-100 dark:bg-amber-500/15 dark:text-amber-200 dark:border-amber-500/20',
-  Req_Batal: 'bg-red-100 text-red-800 border border-red-200 dark:bg-red-500/15 dark:text-red-200 dark:border-red-500/20',
-  Selesai: 'bg-emerald-50 text-emerald-700 border border-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-200 dark:border-emerald-500/20',
-  Batal: 'bg-red-50 text-red-700 border border-red-100 dark:bg-red-500/15 dark:text-red-200 dark:border-red-500/20',
-}
-
 const isCustomDate = computed(() => filters.date_preset === 'custom')
+
+function statusBadgeClass(status) {
+  const s = String(status || '')
+  if (s === 'Baru') return 'bg-blue-50 text-blue-600 border border-blue-100'
+  if (s === 'Survey') return 'bg-purple-50 text-purple-600 border border-purple-100'
+  if (s === 'Proses') return 'bg-indigo-50 text-indigo-600 border border-indigo-100'
+  if (s === 'Selesai') return 'bg-green-50 text-green-600 border border-green-100'
+  if (s === 'Pending') return 'bg-orange-50 text-orange-600 border border-orange-100'
+  if (s === 'Batal') return 'bg-red-50 text-red-600 border border-red-100'
+  if (s === 'Req_Batal') return 'bg-red-100 text-red-700 border border-red-200 animate-pulse'
+  return 'bg-slate-100 text-slate-600'
+}
 
 function ymd(date) {
   const d = date || new Date()
@@ -156,6 +153,15 @@ function daysSinceInstall(installDateYmd) {
   return Math.floor(diffMs / (1000 * 60 * 60 * 24))
 }
 
+function rowDays(row) {
+  return daysSinceInstall(row?.installation_date)
+}
+
+function rowOverdue(row) {
+  const days = rowDays(row)
+  return typeof days === 'number' && days > 0 && !isStatusClosed(row?.status)
+}
+
 function formatDateShort(dateStr) {
   if (!dateStr) return '-'
   const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/)
@@ -188,7 +194,6 @@ function normalizeCoords(raw) {
 }
 
 const lastSavedId = ref(null)
-let searchTimer = null
 
 async function apiGetJson(url) {
   const res = await fetch(url, { credentials: 'same-origin' })
@@ -312,7 +317,7 @@ function filterByCard(type, value) {
   filters.overdue_only = false
 
   if (type === 'status') {
-    filters.status = filters.status === value ? '' : value
+    filters.status = value || ''
   } else if (type === 'today_done') {
     filters.status = 'Selesai'
     filters.date_preset = 'today'
@@ -331,12 +336,7 @@ function filterByCard(type, value) {
   loadData(1)
 }
 
-function onSearchInput() {
-  if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => applyFilters(), 350)
-}
-
-function changePreset() {
+function applyDatePresetChange() {
   applyDatePreset(filters.date_preset)
   applyFilters()
 }
@@ -355,10 +355,12 @@ function openMaps(coords) {
 // Detail modal (parity native: edit + input baru + notes append + audit)
 // =========================
 const modalOpen = ref(false)
-const modalLoading = ref(false)
+const detailLoading = ref(false)
+const modalSaving = ref(false)
 const modalMode = ref('edit') // edit | new
 const changeLoading = ref(false)
 const changeHistory = ref([])
+const changeError = ref(false)
 
 const form = reactive({
   id: null,
@@ -386,6 +388,510 @@ const form = reactive({
 })
 
 const isReqBatal = computed(() => String(form.status || '') === 'Req_Batal')
+const notesLines = computed(() =>
+  String(form.notes_old || '')
+    .split(/\r?\n/)
+    .map((l) => String(l || '').trim())
+    .filter((l) => l !== '')
+)
+
+const changeFieldLabels = {
+  customer_name: 'Nama',
+  customer_phone: 'WA',
+  address: 'Alamat',
+}
+
+function changeFieldLabel(fieldName) {
+  const key = String(fieldName || '').trim()
+  return changeFieldLabels[key] || key || '-'
+}
+
+// =========================
+// Smart input (native parity)
+// =========================
+const SMART_INPUT_DEBOUNCE_MS = 500
+let smartInputTimer = null
+
+const smartInputRaw = ref('')
+const smartStatusMsg = ref('')
+const smartStatusTone = ref('idle') // idle | success | error
+const smartSummaryText = ref('')
+const smartReadyMsg = ref('')
+const smartReadyTone = ref('idle') // idle | ready | warn | error
+const smartReviewRows = ref([])
+
+function setSmartInputStatus(message, tone = 'idle') {
+  const msg = String(message || '')
+  if (!msg.trim()) {
+    smartStatusMsg.value = ''
+    smartStatusTone.value = 'idle'
+    return
+  }
+  smartStatusMsg.value = msg
+  smartStatusTone.value = tone || 'idle'
+}
+
+function setSmartInputSummary(labels, warnings = []) {
+  const parts = []
+  if (labels && labels.length > 0) parts.push(`Terbaca: ${labels.join(', ')}`)
+  if (warnings && warnings.length > 0) parts.push(warnings.join(' | '))
+  smartSummaryText.value = parts.join(' | ')
+}
+
+function setSmartInputReady(message, tone = 'idle') {
+  const msg = String(message || '')
+  if (!msg.trim()) {
+    smartReadyMsg.value = ''
+    smartReadyTone.value = 'idle'
+    return
+  }
+  smartReadyMsg.value = msg
+  smartReadyTone.value = tone || 'idle'
+}
+
+function resetSmartInputUI() {
+  smartInputRaw.value = ''
+  smartReviewRows.value = []
+  setSmartInputStatus('')
+  setSmartInputSummary([])
+  setSmartInputReady('')
+}
+
+function normalizeName(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function splitNames(raw) {
+  return String(raw || '')
+    .split(',')
+    .map((s) => s.replace(/\\(.*?\\)/g, '').trim())
+    .filter(Boolean)
+}
+
+function normalizePriceValue(raw) {
+  const digits = String(raw || '').replace(/\\D/g, '')
+  if (!digits) return ''
+  let num = parseInt(digits, 10)
+  if (Number.isNaN(num) || num <= 0) return ''
+  if (digits.length <= 3) num = num * 1000
+  return String(num)
+}
+
+function normalizeDateInput(raw) {
+  const s = String(raw || '').trim()
+  if (!s) return ''
+  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return s
+  const m = s.match(/^(\\d{2})[\\/.\\-](\\d{2})[\\/.\\-](\\d{4})$/)
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`
+  return ''
+}
+
+function findListMatch(list, value) {
+  const needle = normalizeName(value)
+  if (!needle) return ''
+  const items = Array.isArray(list) ? list : []
+  const exact = items.find((x) => normalizeName(x) === needle)
+  if (exact) return exact
+  const starts = items.filter((x) => normalizeName(x).startsWith(needle))
+  if (starts.length === 1) return starts[0]
+  const includes = items.filter((x) => normalizeName(x).includes(needle))
+  if (includes.length === 1) return includes[0]
+  return ''
+}
+
+function parseSmartInput(raw) {
+  const result = {
+    name: '',
+    phone: '',
+    address: '',
+    pop: '',
+    plan: '',
+    price: '',
+    sales: [],
+    techs: [],
+    coords: '',
+    date: '',
+  }
+
+  const freeLines = []
+  const keySet = new Set([
+    'sales',
+    'sales1',
+    'sales2',
+    'sales3',
+    'pop',
+    'paket',
+    'plan',
+    'planname',
+    'harga',
+    'biaya',
+    'price',
+    'nama',
+    'name',
+    'wa',
+    'whatsapp',
+    'hp',
+    'telp',
+    'phone',
+    'nomorwa',
+    'nomorwhatsapp',
+    'nomorhp',
+    'nomortelp',
+    'nomorphone',
+    'nowa',
+    'nohp',
+    'alamat',
+    'address',
+    'maps',
+    'lokasi',
+    'tanggal',
+    'jadwal',
+    'install',
+    'installationdate',
+  ])
+
+  const isLabelKey = (keyClean) => {
+    if (!keyClean) return false
+    if (keyClean.startsWith('teknisi') || keyClean.startsWith('psb')) return true
+    if (keyClean.startsWith('koordinat') || keyClean.startsWith('coord')) return true
+    return keySet.has(keyClean)
+  }
+
+  const parseLabel = (text) => {
+    let m = String(text || '').match(/^([^:=]{1,30})\\s*[:=]\\s*(.+)$/)
+    if (!m) m = String(text || '').match(/^([a-zA-Z0-9.\\s]{2,30})\\s+(.+)$/)
+    if (!m) return null
+    const keyRaw = String(m[1] || '').trim().toLowerCase()
+    const key = keyRaw.replace(/\\s+/g, '')
+    const keyClean = key.replace(/[^a-z0-9]/g, '')
+    if (!isLabelKey(keyClean)) return null
+    const val = String(m[2] || '').trim()
+    if (!val) return null
+    return { keyClean, val }
+  }
+
+  const lines = []
+  String(raw || '')
+    .split(/\\r?\\n/)
+    .forEach((line) => {
+      const l = String(line || '').trim()
+      if (!l) return
+      if (l.includes(',')) {
+        const parts = l
+          .split(',')
+          .map((p) => p.trim())
+          .filter(Boolean)
+        const hasLabel = parts.some((p) => parseLabel(p))
+        if (hasLabel) {
+          parts.forEach((p) => {
+            if (p) lines.push(p)
+          })
+          return
+        }
+      }
+      lines.push(l)
+    })
+
+  lines.forEach((l) => {
+    const parsed = parseLabel(l)
+    if (parsed) {
+      const keyClean = parsed.keyClean
+      const val = parsed.val
+      if (keyClean.startsWith('teknisi') || keyClean.startsWith('psb')) {
+        result.techs = result.techs.concat(splitNames(val))
+      } else if (keyClean === 'sales' || keyClean === 'sales1') {
+        const sales = splitNames(val)
+        sales.forEach((name, idx) => {
+          if (idx < 3) result.sales[idx] = name
+        })
+      } else if (keyClean === 'sales2') result.sales[1] = val
+      else if (keyClean === 'sales3') result.sales[2] = val
+      else if (keyClean === 'pop') result.pop = val
+      else if (keyClean === 'paket' || keyClean === 'plan' || keyClean === 'planname') result.plan = val
+      else if (keyClean === 'harga' || keyClean === 'biaya' || keyClean === 'price') result.price = val
+      else if (keyClean === 'nama' || keyClean === 'name') result.name = val
+      else if (
+        keyClean === 'wa' ||
+        keyClean === 'whatsapp' ||
+        keyClean === 'hp' ||
+        keyClean === 'telp' ||
+        keyClean === 'phone' ||
+        keyClean === 'nomorwa' ||
+        keyClean === 'nomorwhatsapp' ||
+        keyClean === 'nomorhp' ||
+        keyClean === 'nomortelp' ||
+        keyClean === 'nomorphone' ||
+        keyClean === 'nowa' ||
+        keyClean === 'nohp'
+      )
+        result.phone = val
+      else if (keyClean === 'alamat' || keyClean === 'address') result.address = val
+      else if (keyClean.startsWith('koordinat') || keyClean.startsWith('coord') || keyClean === 'maps' || keyClean === 'lokasi')
+        result.coords = val
+      else if (keyClean === 'tanggal' || keyClean === 'jadwal' || keyClean === 'install' || keyClean === 'installationdate') result.date = val
+      else freeLines.push(l)
+      return
+    }
+    freeLines.push(l)
+  })
+
+  const leftovers = freeLines.slice()
+  for (let i = 0; i < leftovers.length; ) {
+    const line = leftovers[i]
+    const coord = normalizeCoords(line)
+    if (!result.coords && coord) {
+      result.coords = `${coord.lat},${coord.lng}`
+      leftovers.splice(i, 1)
+      continue
+    }
+    const digits = String(line || '').replace(/\\D/g, '')
+    const hasLetters = /[a-zA-Z]/.test(String(line || ''))
+    if (!result.phone && digits.length >= 8) {
+      result.phone = String(line || '')
+      leftovers.splice(i, 1)
+      continue
+    }
+    if (!result.price && !hasLetters && digits.length > 0) {
+      result.price = String(line || '')
+      leftovers.splice(i, 1)
+      continue
+    }
+    i += 1
+  }
+
+  if (!result.name) {
+    const idx = leftovers.findIndex((l) => /[a-zA-Z]/.test(String(l || '')))
+    if (idx >= 0) result.name = leftovers.splice(idx, 1)[0]
+  }
+  if (!result.address && leftovers.length) result.address = leftovers.shift()
+  if (!result.sales[0] && leftovers.length) result.sales[0] = leftovers.shift()
+  if (!result.pop && leftovers.length) result.pop = leftovers.shift()
+
+  return result
+}
+
+function renderSmartInputReview(parsed, options = {}) {
+  if (!parsed) {
+    smartReviewRows.value = []
+    return
+  }
+
+  const phoneDigits = String(options.phoneDigits || '').trim()
+  const priceValue = options.priceValue || normalizePriceValue(parsed.price)
+  const salesList = Array.isArray(parsed.sales) ? parsed.sales.filter((v) => String(v || '').trim() !== '') : []
+  const techListLocal = Array.isArray(parsed.techs) ? parsed.techs.filter((v) => String(v || '').trim() !== '') : []
+
+  const formatRupiahValue = (raw) => {
+    const num = parseInt(raw || 0, 10)
+    if (Number.isNaN(num) || num <= 0) return ''
+    return 'Rp. ' + num.toLocaleString('id-ID')
+  }
+
+  const fields = [
+    { label: 'Nama', value: String(parsed.name || '').trim(), required: true },
+    { label: 'WA', value: phoneDigits, required: true },
+    { label: 'Alamat', value: String(parsed.address || '').trim(), required: true },
+    { label: 'POP', value: String(parsed.pop || '').trim(), required: true },
+    { label: 'Paket', value: String(parsed.plan || '').trim(), required: false },
+    { label: 'Harga', value: priceValue ? formatRupiahValue(priceValue) : '', required: false },
+    { label: 'Sales', value: salesList.join(', '), required: false },
+    { label: 'Teknisi', value: techListLocal.join(', '), required: false },
+    { label: 'Koordinat', value: String(options.coordsValue || '').trim(), required: false },
+    { label: 'Tanggal', value: String(options.dateValue || '').trim(), required: false },
+  ]
+
+  smartReviewRows.value = fields.filter((item) => item.required || item.value).map((item) => ({ label: item.label, value: item.value || '-' }))
+}
+
+function applyProgressSmartInput(options = {}) {
+  const raw = smartInputRaw.value || ''
+  if (!raw.trim()) {
+    setSmartInputSummary([])
+    setSmartInputReady('')
+    smartReviewRows.value = []
+    if (!options.silent) setSmartInputStatus('Smart input kosong.', 'error')
+    else setSmartInputStatus('')
+    return
+  }
+
+  const parsed = parseSmartInput(raw)
+  const filled = []
+  const applied = []
+  const warnings = []
+  const phoneDigits = String(parsed.phone || '').replace(/\\D/g, '')
+  const coordParsed = parsed.coords ? normalizeCoords(parsed.coords) : null
+  const coordsValue = coordParsed ? `${coordParsed.lat},${coordParsed.lng}` : ''
+  const dateValue = parsed.date ? normalizeDateInput(parsed.date) : ''
+  const priceValue = normalizePriceValue(parsed.price)
+
+  const formatApplied = (label, value) => {
+    const clean = String(value ?? '').trim()
+    if (!clean) return
+    const trimmed = clean.length > 40 ? clean.slice(0, 37) + '...' : clean
+    applied.push(`${label}=${trimmed}`)
+  }
+
+  const setField = (key, val) => {
+    const clean = String(val ?? '').trim()
+    if (!clean) return ''
+    form[key] = clean
+    return clean
+  }
+
+  const setMatch = (key, list, val, label) => {
+    if (!val) return ''
+    const match = findListMatch(list, val)
+    if (match) {
+      form[key] = match
+      return match
+    }
+    warnings.push(`${label} tidak ditemukan: ${val}`)
+    return ''
+  }
+
+  if (parsed.name) {
+    const v = setField('customer_name', parsed.name)
+    if (v) {
+      filled.push('Nama')
+      formatApplied('Nama', v)
+    }
+  }
+  if (parsed.phone) {
+    const v = setField('customer_phone', parsed.phone)
+    if (v) {
+      filled.push('WA')
+      formatApplied('WA', v)
+    }
+  }
+  if (parsed.address) {
+    const v = setField('address', parsed.address)
+    if (v) {
+      filled.push('Alamat')
+      formatApplied('Alamat', v)
+    }
+  }
+
+  if (parsed.coords) {
+    if (coordsValue) {
+      const v = setField('coordinates', coordsValue)
+      if (v) {
+        filled.push('Koordinat')
+        formatApplied('Koordinat', v)
+      }
+    } else {
+      warnings.push(`Koordinat tidak valid: ${parsed.coords}`)
+    }
+  }
+
+  if (parsed.plan) {
+    const v = setField('plan_name', parsed.plan)
+    if (v) {
+      filled.push('Paket')
+      formatApplied('Paket', v)
+    }
+  }
+
+  if (parsed.price && priceValue) {
+    const v = setField('price', priceValue)
+    if (v) {
+      filled.push('Harga')
+      formatApplied('Harga', v)
+    }
+  }
+
+  if (parsed.date) {
+    if (dateValue) {
+      const v = setField('installation_date', dateValue)
+      if (v) {
+        filled.push('Tanggal')
+        formatApplied('Tanggal', v)
+      }
+    } else {
+      warnings.push(`Tanggal tidak valid: ${parsed.date}`)
+    }
+  }
+
+  if (parsed.pop) {
+    const v = setMatch('pop', dropdowns.pops, parsed.pop, 'POP')
+    if (v) {
+      filled.push('POP')
+      formatApplied('POP', v)
+    }
+  }
+
+  if (parsed.sales[0]) {
+    const v = setField('sales_name', parsed.sales[0])
+    if (v) {
+      filled.push('Sales 1')
+      formatApplied('Sales 1', v)
+    }
+  }
+  if (parsed.sales[1]) {
+    const v = setField('sales_name_2', parsed.sales[1])
+    if (v) {
+      filled.push('Sales 2')
+      formatApplied('Sales 2', v)
+    }
+  }
+  if (parsed.sales[2]) {
+    const v = setField('sales_name_3', parsed.sales[2])
+    if (v) {
+      filled.push('Sales 3')
+      formatApplied('Sales 3', v)
+    }
+  }
+
+  const techKeys = ['technician', 'technician_2', 'technician_3', 'technician_4']
+  parsed.techs.forEach((name, idx) => {
+    if (idx >= techKeys.length) return
+    const v = setMatch(techKeys[idx], dropdowns.technicians, name, 'Teknisi')
+    if (v) {
+      filled.push(`Teknisi ${idx + 1}`)
+      formatApplied(`Teknisi ${idx + 1}`, v)
+    }
+  })
+
+  const summaryLabels = []
+  if (parsed.name) summaryLabels.push('Nama')
+  if (phoneDigits) summaryLabels.push('WA')
+  if (parsed.address) summaryLabels.push('Alamat')
+  if (parsed.pop) summaryLabels.push('POP')
+  if (parsed.plan) summaryLabels.push('Paket')
+  if (priceValue) summaryLabels.push('Harga')
+  if (Array.isArray(parsed.sales) && parsed.sales.some((v) => String(v || '').trim() !== '')) summaryLabels.push('Sales')
+  if (Array.isArray(parsed.techs) && parsed.techs.some((v) => String(v || '').trim() !== '')) summaryLabels.push('Teknisi')
+  if (coordsValue) summaryLabels.push('Koordinat')
+  if (dateValue) summaryLabels.push('Tanggal')
+
+  setSmartInputSummary(summaryLabels, warnings)
+  renderSmartInputReview(parsed, { phoneDigits, coordsValue, dateValue, priceValue })
+
+  const hasRequired = !!(parsed.name && phoneDigits.length >= 8 && parsed.address && parsed.pop)
+  if (!hasRequired) setSmartInputReady('Belum lengkap', 'error')
+  else if (warnings.length) setSmartInputReady('Periksa data', 'warn')
+  else setSmartInputReady('Siap disimpan', 'ready')
+
+  if (warnings.length) {
+    setSmartInputStatus(warnings.join(' | '), 'error')
+    return
+  }
+
+  if (!filled.length) {
+    if (!options.silent) setSmartInputStatus('Tidak ada data yang cocok.', 'error')
+    return
+  }
+
+  const detailText = applied.length ? `Terisi: ${applied.join(' | ')}` : `Terisi: ${filled.join(', ')}`
+  setSmartInputStatus(detailText, 'success')
+}
+
+watch(smartInputRaw, () => {
+  if (!modalOpen.value || modalMode.value !== 'new') return
+  if (smartInputTimer) clearTimeout(smartInputTimer)
+  smartInputTimer = setTimeout(() => {
+    applyProgressSmartInput({ silent: true })
+  }, SMART_INPUT_DEBOUNCE_MS)
+})
 
 function resetFormForNew() {
   form.id = null
@@ -411,32 +917,46 @@ function resetFormForNew() {
   form.notes_old = ''
   form.note_append = ''
   changeHistory.value = []
+  changeError.value = false
 }
 
 async function loadChangeHistory(id) {
   changeLoading.value = true
+  changeError.value = false
   try {
     const json = await apiGetJson(`/api/v1/installations/${id}/history`)
-    changeHistory.value = json.status === 'success' ? (json.data || []) : []
+    if (json.status === 'success') {
+      changeHistory.value = json.data || []
+      changeError.value = false
+    } else {
+      changeHistory.value = []
+      changeError.value = true
+    }
   } catch {
     changeHistory.value = []
+    changeError.value = true
   } finally {
     changeLoading.value = false
   }
 }
 
-function openCreateModal() {
+async function openCreateModal() {
   modalMode.value = 'new'
+  detailLoading.value = false
+  modalSaving.value = false
   resetFormForNew()
+  resetSmartInputUI()
   modalOpen.value = true
-  loadDropdownsOnce()
+  await loadDropdownsOnce()
 }
 
 async function openEditModal(id) {
+  resetSmartInputUI()
   modalMode.value = 'edit'
   modalOpen.value = true
-  modalLoading.value = true
+  detailLoading.value = true
   changeHistory.value = []
+  changeError.value = false
   form.note_append = ''
 
   try {
@@ -472,21 +992,30 @@ async function openEditModal(id) {
     if (toast) toast.error(e.message || 'Gagal memuat detail')
     modalOpen.value = false
   } finally {
-    modalLoading.value = false
+    detailLoading.value = false
   }
 }
 
 function closeModal() {
   modalOpen.value = false
+  if (smartInputTimer) {
+    clearTimeout(smartInputTimer)
+    smartInputTimer = null
+  }
+  resetSmartInputUI()
 }
 
 async function save() {
+  if (modalSaving.value) {
+    if (toast) toast.info('Sedang menyimpan data...')
+    return
+  }
   if (!String(form.customer_name || '').trim()) {
     if (toast) toast.error('Nama pelanggan wajib diisi.')
     return
   }
 
-  modalLoading.value = true
+  modalSaving.value = true
   try {
     const payload = {
       customer_name: form.customer_name,
@@ -527,14 +1056,14 @@ async function save() {
     console.error(e)
     if (toast) toast.error(e.message || 'Gagal menyimpan')
   } finally {
-    modalLoading.value = false
+    modalSaving.value = false
   }
 }
 
 async function remove() {
   if (!form.id) return
   if (!confirm('Hapus data ini? Tindakan ini tidak bisa dibatalkan.')) return
-  modalLoading.value = true
+  modalSaving.value = true
   try {
     const json = await apiSendJson(`/api/v1/installations/${form.id}`, 'DELETE')
     if (json.status !== 'success') throw new Error(json.msg || 'Gagal menghapus')
@@ -544,7 +1073,7 @@ async function remove() {
   } catch (e) {
     if (toast) toast.error(e.message || 'Gagal menghapus')
   } finally {
-    modalLoading.value = false
+    modalSaving.value = false
   }
 }
 
@@ -559,28 +1088,10 @@ async function togglePriority(id, currentVal) {
   }
 }
 
-async function requestCancel() {
-  if (!form.id) return
-  const reason = prompt('Alasan pengajuan batal:') || ''
-  if (!reason.trim()) return
-  modalLoading.value = true
-  try {
-    const json = await apiSendJson(`/api/v1/installations/${form.id}/request-cancel`, 'POST', { reason })
-    if (json.status !== 'success') throw new Error(json.msg || 'Gagal mengajukan batal')
-    if (toast) toast.success('Pengajuan batal terkirim.')
-    await openEditModal(form.id)
-    await loadData(pagination.page)
-  } catch (e) {
-    if (toast) toast.error(e.message || 'Gagal mengajukan batal')
-  } finally {
-    modalLoading.value = false
-  }
-}
-
 async function decideCancel(decision) {
   if (!form.id) return
   const note = prompt('Catatan (opsional):') || ''
-  modalLoading.value = true
+  modalSaving.value = true
   try {
     const json = await apiSendJson(`/api/v1/installations/${form.id}/decide-cancel`, 'POST', { decision, reason: note })
     if (json.status !== 'success') throw new Error(json.msg || 'Gagal memproses')
@@ -590,59 +1101,55 @@ async function decideCancel(decision) {
   } catch (e) {
     if (toast) toast.error(e.message || 'Gagal memproses')
   } finally {
-    modalLoading.value = false
-  }
-}
-
-async function transferTask() {
-  if (!form.id) return
-  const toTech = prompt('Transfer ke teknisi (isi nama persis):') || ''
-  if (!toTech.trim()) return
-  const reason = prompt('Alasan transfer (opsional):') || ''
-  modalLoading.value = true
-  try {
-    const json = await apiSendJson(`/api/v1/installations/${form.id}/transfer`, 'POST', { to_tech: toTech.trim(), reason })
-    if (json.status !== 'success') throw new Error(json.msg || 'Gagal transfer')
-    if (toast) toast.success('Transfer berhasil.')
-    await openEditModal(form.id)
-    await loadData(pagination.page)
-  } catch (e) {
-    if (toast) toast.error(e.message || 'Gagal transfer')
-  } finally {
-    modalLoading.value = false
+    modalSaving.value = false
   }
 }
 
 // =========================
-// Rekap modal
+// Rekap (native parity: prompt + confirm)
 // =========================
-const recapOpen = ref(false)
-const recapPop = ref('')
-const recapLoading = ref(false)
+const recapSending = ref(false)
 
-function openRecapModal() {
-  if (!dropdowns.pops.length) {
+async function openRecapModal() {
+  if (recapSending.value) {
+    if (toast) toast.info('Sedang mengirim rekap...')
+    return
+  }
+
+  const pops = (dropdowns.pops || []).map((p) => String(p || '').trim()).filter(Boolean)
+  if (!pops.length) {
     if (toast) toast.error('Daftar POP belum termuat. Coba refresh dulu.')
     return
   }
-  recapPop.value = filters.pop || dropdowns.pops[0] || ''
-  recapOpen.value = true
-}
 
-async function sendRecap() {
-  if (!recapPop.value) return
-  if (!confirm(`Kirim rekap WA untuk POP: ${recapPop.value}?`)) return
-  recapLoading.value = true
+  const currentPop = String(filters.pop || '').trim()
+  const listText = pops.map((p, i) => `${i + 1}. ${p}`).join('\n')
+  const pick = prompt(`Pilih POP (ketik nomor):\n${listText}`)
+  const idx = parseInt(String(pick || '').trim(), 10)
+  if (!idx || idx < 1 || idx > pops.length) return
+
+  const chosenPop = pops[idx - 1]
+  if (!chosenPop) return
+
+  // Konfirmasi akhir (native)
+  if (!confirm(`Kirim rekap WA untuk POP: ${chosenPop}?`)) return
+
+  recapSending.value = true
   try {
-    const json = await apiSendJson('/api/v1/installations/send-pop-recap', 'POST', { pop_name: recapPop.value })
+    const json = await apiSendJson('/api/v1/installations/send-pop-recap', 'POST', { pop_name: chosenPop })
     if (json.status !== 'success') throw new Error(json.msg || 'Gagal mengirim rekap')
     const note = json.msg ? ` - ${json.msg}` : ''
     if (toast) toast.success(`Rekap terkirim (${json.count || 0} data, terkirim ${json.sent || 0}, gagal ${json.failed || 0})${note}`)
-    recapOpen.value = false
   } catch (e) {
     if (toast) toast.error(e.message || 'Gagal mengirim rekap')
   } finally {
-    recapLoading.value = false
+    recapSending.value = false
+  }
+}
+
+const keydownHandler = (e) => {
+  if (e.key === 'Escape' && modalOpen.value) {
+    closeModal()
   }
 }
 
@@ -653,418 +1160,634 @@ onMounted(() => {
     applyDatePreset('today')
   }
   loadData(1)
+  document.addEventListener('keydown', keydownHandler)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', keydownHandler)
+  if (smartInputTimer) {
+    clearTimeout(smartInputTimer)
+    smartInputTimer = null
+  }
 })
 </script>
 
 <template>
-  <Head title="Pasang Baru" />
+  <Head title="Monitoring Progress" />
 
   <AdminLayout>
-    <div class="space-y-5 pb-24">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 class="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100">Pasang Baru</h1>
-          <p class="text-xs text-slate-500 dark:text-slate-400 font-bold uppercase">Progress / Antrian</p>
-        </div>
-        <div class="flex items-center gap-2">
-          <button class="btn btn-secondary" @click="openRecapModal" type="button">Kirim Rekap WA</button>
-          <button class="btn btn-primary" @click="openCreateModal" type="button">Tambah</button>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-3">
-        <button type="button" class="card p-3 text-left hover:ring-2 hover:ring-primary-500" @click="filterByCard('priority')">
-          <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">PRIORITY</div>
-          <div class="text-2xl font-black text-yellow-500">{{ summary.priority || 0 }}</div>
-        </button>
-        <button type="button" class="card p-3 text-left hover:ring-2 hover:ring-primary-500" @click="filterByCard('overdue')">
-          <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">OVERDUE</div>
-          <div class="text-2xl font-black text-red-600">{{ summary.overdue || 0 }}</div>
-        </button>
-        <button type="button" class="card p-3 text-left hover:ring-2 hover:ring-primary-500" @click="filterByCard('status', 'Baru')">
-          <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">BARU</div>
-          <div class="text-2xl font-black text-blue-600">{{ summary.Baru || 0 }}</div>
-        </button>
-        <button type="button" class="card p-3 text-left hover:ring-2 hover:ring-primary-500" @click="filterByCard('status', 'Survey')">
-          <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">SURVEY</div>
-          <div class="text-2xl font-black text-purple-600">{{ summary.Survey || 0 }}</div>
-        </button>
-        <button type="button" class="card p-3 text-left hover:ring-2 hover:ring-primary-500" @click="filterByCard('status', 'Proses')">
-          <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">PROSES</div>
-          <div class="text-2xl font-black text-indigo-600">{{ summary.Proses || 0 }}</div>
-        </button>
-        <button type="button" class="card p-3 text-left hover:ring-2 hover:ring-primary-500" @click="filterByCard('status', 'Pending')">
-          <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">PENDING</div>
-          <div class="text-2xl font-black text-amber-600">{{ summary.Pending || 0 }}</div>
-        </button>
-        <button type="button" class="card p-3 text-left hover:ring-2 hover:ring-primary-500" @click="filterByCard('status', 'Req_Batal')">
-          <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">REQ BATAL</div>
-          <div class="text-2xl font-black text-red-700">{{ summary.Req_Batal || 0 }}</div>
-        </button>
-        <button type="button" class="card p-3 text-left hover:ring-2 hover:ring-primary-500" @click="filterByCard('status', 'Batal')">
-          <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">BATAL</div>
-          <div class="text-2xl font-black text-red-600">{{ summary.Batal || 0 }}</div>
-        </button>
-        <button type="button" class="card p-3 text-left hover:ring-2 hover:ring-primary-500" @click="filterByCard('today_done')">
-          <div class="text-[11px] font-bold text-slate-500 dark:text-slate-400">SELESAI HARI INI</div>
-          <div class="text-2xl font-black text-emerald-600">{{ summary.today_done || 0 }}</div>
-        </button>
-      </div>
-
-      <div class="card p-4 space-y-3">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <div>
-            <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Search</label>
-            <input v-model="filters.search" @input="onSearchInput" class="input w-full" placeholder="Ticket/Nama/Alamat/Teknisi" />
-          </div>
-
-          <div>
-            <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Tanggal</label>
-            <select v-model="filters.date_preset" class="input w-full" @change="changePreset">
-              <option value="">Semua</option>
-              <option value="today">Hari ini</option>
-              <option value="yesterday">Kemarin</option>
-              <option value="this_week">Minggu ini</option>
-              <option value="this_month">Bulan ini</option>
-              <option value="this_year">Tahun ini</option>
-              <option value="last_year">Tahun lalu</option>
-              <option value="last_7">Last 7 hari</option>
-              <option value="last_30">Last 30 hari</option>
-              <option value="custom">Custom</option>
-            </select>
-          </div>
-
-          <div v-if="isCustomDate" class="sm:col-span-2 lg:col-span-2 grid grid-cols-2 gap-2">
+    <div id="progress-root" class="flex flex-col gap-6 fade-in pb-20 md:pb-0" :data-actor-name="actorName" :data-actor-role="actorRole">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 dark:border-white/5 pb-4">
             <div>
-              <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Dari</label>
-              <input v-model="filters.date_from" type="date" class="input w-full" @change="applyFilters" />
+                <h2 class="text-2xl font-bold text-slate-800 dark:text-white tracking-tight">Monitoring Progress</h2>
+                <p class="text-slate-500 dark:text-slate-400 text-xs md:text-sm mt-1">
+                    Pusat kontrol pemasangan, validasi teknisi, dan approval.
+                </p>
             </div>
-            <div>
-              <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Sampai</label>
-              <input v-model="filters.date_to" type="date" class="input w-full" @change="applyFilters" />
-            </div>
-          </div>
 
-          <div>
-            <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Status</label>
-            <select v-model="filters.status" class="input w-full" @change="applyFilters">
-              <option v-for="o in statusOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">POP</label>
-            <select v-model="filters.pop" class="input w-full" @change="applyFilters">
-              <option value="">Semua</option>
-              <option v-for="p in dropdowns.pops" :key="p" :value="p">{{ p }}</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Teknisi</label>
-            <select v-model="filters.tech" class="input w-full" @change="applyFilters">
-              <option value="">Semua</option>
-              <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
-            </select>
-          </div>
-        </div>
+            <div class="flex flex-wrap gap-2 w-full md:w-auto relative z-10 pointer-events-auto">
+        <button type="button" @click="loadData(1)" class="group px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 rounded-lg text-xs font-bold hover:bg-slate-50 transition shadow-sm flex items-center gap-2 pointer-events-auto">
+            <svg class="w-4 h-4 group-hover:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Refresh
+        </button>
 
-        <div class="flex items-center justify-between gap-2">
-          <div class="text-xs text-slate-500 dark:text-slate-400">
-            <span class="font-bold">{{ pagination.total }}</span> data
-          </div>
-          <div class="flex items-center gap-2">
-            <button class="btn btn-secondary" type="button" @click="resetFilters">Reset</button>
-            <button class="btn btn-secondary" type="button" @click="loadData(pagination.page)" :disabled="loading">
-              <LoadingSpinner v-if="loading" size="sm" />
-              <span v-else>Refresh</span>
-            </button>
-          </div>
-        </div>
-      </div>
+        <button type="button" @click="openRecapModal" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-2 pointer-events-auto">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            Rekap WA
+        </button>
 
-      <div class="card overflow-hidden">
-        <div class="overflow-x-auto">
-          <table class="min-w-full text-sm">
-            <thead class="bg-slate-50 dark:bg-slate-900/40 text-slate-600 dark:text-slate-300">
-              <tr>
-                <th class="px-3 py-3 text-center w-12">★</th>
-                <th class="px-4 py-3 text-left">Pelanggan</th>
-                <th class="px-4 py-3 text-left">Status</th>
-                <th class="px-4 py-3 text-left">POP</th>
-                <th class="px-4 py-3 text-left">Teknisi</th>
-                <th class="px-4 py-3 text-left">Tanggal</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="loading">
-                <td colspan="6" class="px-4 py-10 text-center text-slate-500">
-                  <LoadingSpinner />
-                </td>
-              </tr>
-              <tr v-else-if="list.length === 0">
-                <td colspan="6" class="px-4 py-10 text-center text-slate-400 italic">Tidak ada data ditemukan.</td>
-              </tr>
-              <tr
-                v-for="row in list"
-                :key="row.id"
-                :id="`row-${row.id}`"
-                class="border-t border-slate-100 dark:border-white/10 cursor-pointer hover:bg-blue-50/40 dark:hover:bg-white/5 transition"
-                :class="(() => { const d = daysSinceInstall(row.installation_date); const overdue = (typeof d==='number' && d>0 && !isStatusClosed(row.status)); return overdue ? 'bg-red-50/30 dark:bg-red-900/10 border-l-4 border-l-red-500' : '' })()"
-                @click="openEditModal(row.id)"
-              >
-                <td class="px-3 py-3 text-center">
-                  <button
-                    type="button"
-                    class="p-2 transition-transform"
-                    :class="String(row.is_priority)==='1' ? 'text-yellow-400 hover:scale-110' : 'text-slate-200 hover:text-yellow-400'"
-                    @click.stop="togglePriority(row.id, row.is_priority)"
-                    title="Toggle priority"
-                  >
-                    ★
-                  </button>
-                </td>
-                <td class="px-4 py-3">
-                  <div class="font-bold text-slate-800 dark:text-slate-100">
-                    {{ row.customer_name || '-' }}
-                    <span
-                      v-if="daysSinceInstall(row.installation_date) !== null"
-                      class="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold"
-                      :class="(daysSinceInstall(row.installation_date) > 0) ? 'bg-slate-200 text-slate-700 dark:bg-white/10 dark:text-slate-200' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-200'"
-                    >
-                      D+{{ Math.max(0, daysSinceInstall(row.installation_date)) }}
-                    </span>
-                    <span
-                      v-if="(() => { const d = daysSinceInstall(row.installation_date); return (typeof d==='number' && d>0 && !isStatusClosed(row.status)); })()"
-                      class="ml-2 px-2 py-0.5 rounded-full text-[10px] font-black bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-200"
-                    >
-                      OVERDUE +{{ Math.max(0, daysSinceInstall(row.installation_date)) }}d
-                    </span>
-                  </div>
-                  <div class="text-[11px] text-slate-500 dark:text-slate-400">#{{ row.ticket_id || '-' }} • WA: {{ row.customer_phone || '-' }}</div>
-                  <div class="text-xs text-slate-600 dark:text-slate-300 truncate max-w-[520px]">{{ row.address || '-' }}</div>
-                </td>
-                <td class="px-4 py-3">
-                  <span class="px-2 py-1 rounded-lg text-xs font-bold" :class="statusColors[row.status] || 'bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200'">
-                    {{ row.status || '-' }}
-                  </span>
-                </td>
-                <td class="px-4 py-3 text-xs text-slate-700 dark:text-slate-200">{{ row.pop || '-' }}</td>
-                <td class="px-4 py-3 text-xs text-slate-700 dark:text-slate-200">
-                  {{ [row.technician, row.technician_2, row.technician_3, row.technician_4].filter(Boolean).join(', ') || '-' }}
-                </td>
-                <td class="px-4 py-3 text-xs text-slate-700 dark:text-slate-200">{{ formatDateShort(row.installation_date) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="flex items-center justify-between p-4 border-t border-slate-100 dark:border-white/10 text-xs">
-          <div class="text-slate-500 dark:text-slate-400 font-bold">Halaman {{ pagination.page }} / {{ pagination.total_pages }}</div>
-          <div class="flex items-center gap-2">
-            <button class="btn btn-secondary" type="button" :disabled="pagination.page <= 1 || loading" @click="loadData(pagination.page - 1)">Prev</button>
-            <button class="btn btn-secondary" type="button" :disabled="pagination.page >= pagination.total_pages || loading" @click="loadData(pagination.page + 1)">Next</button>
-          </div>
-        </div>
-      </div>
+        <button type="button" @click="openCreateModal" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-lg shadow-blue-200 dark:shadow-none transition flex items-center gap-2 pointer-events-auto relative z-10">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Input Baru
+        </button>
     </div>
 
-    <!-- Detail modal -->
-    <div v-if="modalOpen" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeModal">
-      <div class="bg-white dark:bg-slate-900 w-full max-w-3xl rounded-2xl shadow-2xl border border-slate-200 dark:border-white/10 overflow-hidden flex flex-col max-h-[92vh]">
-        <div class="px-5 py-4 border-b border-slate-200 dark:border-white/10 flex items-center justify-between">
-          <div>
-            <div class="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">{{ modalMode === 'new' ? 'Input Baru' : 'Detail Data' }}</div>
-            <div class="text-lg font-black text-slate-900 dark:text-slate-100">{{ modalMode === 'new' ? '#NEW' : ('#' + (form.ticket_id || 'UNKNOWN')) }}</div>
-          </div>
-          <button class="h-10 w-10 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5" @click="closeModal" type="button">✕</button>
         </div>
 
-        <div class="p-5 overflow-y-auto space-y-5">
-          <div v-if="modalLoading" class="py-10 text-center text-slate-500"><LoadingSpinner /></div>
-          <div v-else class="space-y-5">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div class="sm:col-span-2">
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Nama</label>
-                <input v-model="form.customer_name" class="input w-full" />
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">WA</label>
-                <input v-model="form.customer_phone" class="input w-full" placeholder="08xxx / 62xxx" />
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">POP</label>
-                <select v-model="form.pop" class="input w-full">
-                  <option value="">-- Pilih --</option>
-                  <option v-for="p in dropdowns.pops" :key="p" :value="p">{{ p }}</option>
-                </select>
-              </div>
-              <div class="sm:col-span-2">
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Alamat</label>
-                <textarea v-model="form.address" rows="2" class="input w-full"></textarea>
-              </div>
-              <div class="sm:col-span-2">
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Koordinat</label>
-                <div class="flex gap-2">
-                  <input v-model="form.coordinates" class="input w-full" placeholder="-6.2,106.8" />
-                  <button class="btn btn-secondary" type="button" @click="openMaps(form.coordinates)">Maps</button>
+        <div class="flex flex-wrap gap-3 mb-4 transition-all duration-300">
+
+            <div id="card-prio" @click="filterByCard('priority')" class="flex-1 min-w-[140px] bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-white/5 shadow-sm flex items-center gap-3 transition-all cursor-pointer hover:bg-yellow-50 hover:border-yellow-200 group">
+                <div class="w-8 h-8 rounded-lg bg-yellow-50 text-yellow-600 flex items-center justify-center font-bold text-lg group-hover:scale-110 transition-transform">★</div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase truncate">Prioritas</p>
+                    <h3 id="stat-prio" class="text-lg font-black text-slate-800 dark:text-white">{{ summary.priority || 0 }}</h3>
                 </div>
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Paket</label>
-                <input v-model="form.plan_name" class="input w-full" />
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Harga</label>
-                <input v-model="form.price" class="input w-full" />
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Tanggal Install</label>
-                <input v-model="form.installation_date" type="date" class="input w-full" />
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Finished At</label>
-                <input v-model="form.finished_at" type="datetime-local" class="input w-full" />
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Status</label>
-                <select v-model="form.status" class="input w-full">
-                  <option v-for="o in statusOptions.slice(1)" :key="o.value" :value="o.value">{{ o.label }}</option>
-                </select>
-              </div>
-              <div class="flex items-end gap-2">
-                <label class="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-200">
-                  <input v-model="form.is_priority" type="checkbox" class="h-4 w-4 rounded border-slate-300" />
-                  Priority
-                </label>
-              </div>
             </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Teknisi 1</label>
-                <select v-model="form.technician" class="input w-full">
-                  <option value="">-- Pilih --</option>
-                  <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
-                </select>
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Teknisi 2</label>
-                <select v-model="form.technician_2" class="input w-full">
-                  <option value="">-- Pilih --</option>
-                  <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
-                </select>
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Teknisi 3</label>
-                <select v-model="form.technician_3" class="input w-full">
-                  <option value="">-- Pilih --</option>
-                  <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
-                </select>
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Teknisi 4</label>
-                <select v-model="form.technician_4" class="input w-full">
-                  <option value="">-- Pilih --</option>
-                  <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Sales 1</label>
-                <input v-model="form.sales_name" class="input w-full" />
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Sales 2</label>
-                <input v-model="form.sales_name_2" class="input w-full" />
-              </div>
-              <div>
-                <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Sales 3</label>
-                <input v-model="form.sales_name_3" class="input w-full" />
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              <div class="card p-4">
-                <div class="text-xs font-black text-slate-800 dark:text-slate-100 mb-2">Catatan (History)</div>
-                <pre class="text-[11px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-words">{{ form.notes_old || '-' }}</pre>
-              </div>
-              <div class="card p-4">
-                <div class="text-xs font-black text-slate-800 dark:text-slate-100 mb-2">Tambah Catatan</div>
-                <textarea v-model="form.note_append" rows="5" class="input w-full" placeholder="Catatan ini akan di-append (seperti native)"></textarea>
-              </div>
-            </div>
-
-            <div class="card p-4">
-              <div class="flex items-center justify-between">
-                <div class="text-xs font-black text-slate-800 dark:text-slate-100">Riwayat Perubahan Data</div>
-                <div v-if="changeLoading" class="text-xs text-slate-500"><LoadingSpinner size="sm" /></div>
-              </div>
-              <div class="mt-3 space-y-2">
-                <div v-if="!changeLoading && changeHistory.length === 0" class="italic text-xs text-slate-400">Belum ada perubahan.</div>
-                <div v-for="(ch, idx) in changeHistory" :key="idx" class="border-b border-slate-100 dark:border-white/10 pb-2">
-                  <div class="text-[10px] text-slate-400 mb-1">{{ ch.changed_at || '-' }} - {{ ch.changed_by || '-' }} ({{ ch.changed_by_role || '-' }}) via {{ ch.source || '-' }}</div>
-                  <div class="text-xs text-slate-700 dark:text-slate-200">
-                    <span class="font-bold">{{ ch.field_name || '-' }}</span>:
-                    <span class="text-slate-500 dark:text-slate-400">{{ (ch.old_value || '-').toString().trim() || '-' }}</span>
-                    <span class="text-slate-400 px-1">-></span>
-                    <span class="text-slate-800 dark:text-slate-100 font-bold">{{ (ch.new_value || '-').toString().trim() || '-' }}</span>
-                  </div>
+            <div id="card-overdue" @click="filterByCard('overdue')" class="flex-1 min-w-[140px] bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-white/5 shadow-sm flex items-center gap-3 transition-all cursor-pointer hover:bg-red-50 hover:border-red-200 group">
+                <div class="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    ⏰
                 </div>
-              </div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase truncate">Overdue</p>
+                    <h3 id="stat-overdue" class="text-lg font-black text-red-600">{{ summary.overdue || 0 }}</h3>
+                </div>
             </div>
 
-            <div v-if="modalMode !== 'new'" class="card p-4">
-              <div class="text-xs font-black text-slate-800 dark:text-slate-100 mb-2">Workflow</div>
-              <div class="flex flex-wrap gap-2">
-                <button class="btn btn-secondary" type="button" @click="transferTask" :disabled="modalLoading">Transfer</button>
-                <button class="btn btn-secondary" type="button" @click="requestCancel" :disabled="modalLoading">Ajukan Batal</button>
-                <button v-if="isReqBatal" class="btn btn-danger" type="button" @click="decideCancel('approve')" :disabled="modalLoading">Approve Batal</button>
-                <button v-if="isReqBatal" class="btn btn-secondary" type="button" @click="decideCancel('reject')" :disabled="modalLoading">Reject (Pending)</button>
-              </div>
+            <div id="card-new" @click="filterByCard('status', 'Baru')" class="flex-1 min-w-[140px] bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-white/5 shadow-sm flex items-center gap-3 transition-all cursor-pointer hover:bg-blue-50 hover:border-blue-200 group">
+                <div class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                </div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase truncate">Baru</p>
+                    <h3 id="stat-new" class="text-lg font-black text-blue-600">{{ summary.Baru || 0 }}</h3>
+                </div>
             </div>
-          </div>
+
+            <div id="card-survey" @click="filterByCard('status', 'Survey')" class="flex-1 min-w-[140px] bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-white/5 shadow-sm flex items-center gap-3 transition-all cursor-pointer hover:bg-purple-50 hover:border-purple-200 group">
+                <div class="w-8 h-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 7m0 13V7"/></svg>
+                </div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase truncate">Survey</p>
+                    <h3 id="stat-survey" class="text-lg font-black text-purple-600">{{ summary.Survey || 0 }}</h3>
+                </div>
+            </div>
+
+            <div id="card-process" @click="filterByCard('status', 'Proses')" class="flex-1 min-w-[140px] bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-white/5 shadow-sm flex items-center gap-3 transition-all cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 group">
+                <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                </div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase truncate">Proses</p>
+                    <h3 id="stat-process" class="text-lg font-black text-indigo-600">{{ summary.Proses || 0 }}</h3>
+                </div>
+            </div>
+
+            <div id="card-pending" @click="filterByCard('status', 'Pending')" class="flex-1 min-w-[140px] bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-white/5 shadow-sm flex items-center gap-3 transition-all cursor-pointer hover:bg-orange-50 hover:border-orange-200 group">
+                <div class="w-8 h-8 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase truncate">Pending</p>
+                    <h3 id="stat-pending" class="text-lg font-black text-orange-600">{{ summary.Pending || 0 }}</h3>
+                </div>
+            </div>
+
+            <div id="card-req-cancel" @click="filterByCard('status', 'Req_Batal')" class="flex-1 min-w-[140px] bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-white/5 shadow-sm flex items-center gap-3 transition-all cursor-pointer hover:bg-pink-50 hover:border-pink-200 group">
+                <div class="w-8 h-8 rounded-lg bg-pink-50 text-pink-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                </div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase truncate">Req Batal</p>
+                    <h3 id="stat-req-cancel" class="text-lg font-black text-pink-600">{{ summary.Req_Batal || 0 }}</h3>
+                </div>
+            </div>
+
+            <div id="card-cancel" @click="filterByCard('status', 'Batal')" class="flex-1 min-w-[140px] bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-white/5 shadow-sm flex items-center gap-3 transition-all cursor-pointer hover:bg-red-50 hover:border-red-200 group">
+                <div class="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase truncate">Batal</p>
+                    <h3 id="stat-cancel" class="text-lg font-black text-red-600">{{ summary.Batal || 0 }}</h3>
+                </div>
+            </div>
+
+            <div id="card-today-done" @click="filterByCard('today_done')" class="flex-1 min-w-[140px] bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-white/5 shadow-sm flex items-center gap-3 transition-all cursor-pointer hover:bg-green-50 hover:border-green-200 group">
+                <div class="w-8 h-8 rounded-lg bg-green-50 text-green-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase truncate">Done Today</p>
+                    <h3 id="stat-today-done" class="text-lg font-black text-green-600">{{ summary.today_done || 0 }}</h3>
+                </div>
+            </div>
         </div>
 
-        <div class="px-5 py-4 border-t border-slate-200 dark:border-white/10 flex items-center justify-between gap-3">
-          <div>
-            <button v-if="modalMode !== 'new'" class="btn btn-danger" type="button" @click="remove" :disabled="modalLoading">Hapus</button>
-          </div>
-          <div class="flex items-center gap-2">
-            <button class="btn btn-secondary" type="button" @click="closeModal" :disabled="modalLoading">Batal</button>
-            <button class="btn btn-primary" type="button" @click="save" :disabled="modalLoading">
-              <LoadingSpinner v-if="modalLoading" size="sm" />
-              <span v-else>Simpan</span>
-            </button>
-          </div>
+        <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-white/5 overflow-hidden flex flex-col">
+            <div class="p-4 border-b border-slate-100 dark:border-white/5 bg-slate-50/50 dark:bg-slate-900/30">
+                <!-- Search Bar -->
+                <div class="w-full relative shrink-0 mb-3">
+                    <input v-model="filters.search" type="text" id="search-progress" @keyup="applyFilters" placeholder="Cari tiket, nama, alamat, teknisi..." class="w-full pl-9 pr-3 py-2.5 rounded-lg text-xs font-medium border border-slate-300 dark:border-white/15 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 transition shadow-sm hover:border-slate-400">
+                    <svg class="w-4 h-4 text-slate-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                </div>
+
+                <!-- Filters Container with Mobile Responsive -->
+                <div class="flex flex-col lg:flex-row gap-3 lg:items-end">
+                
+                    <!-- Date Filter (Full Width on Mobile, Half on Tablet, Auto on Desktop) -->
+                    <div class="w-full lg:w-auto lg:flex-1 max-w-lg">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            <select v-model="filters.date_preset" id="filter-date-preset" @change="applyDatePresetChange" class="w-full h-10 border border-slate-300 dark:border-white/15 rounded-lg px-3 text-xs font-medium bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer transition hover:border-slate-400 dark:hover:border-white/20 shadow-sm">
+                                <option value="">Semua Tanggal</option>
+                                <option value="today">Hari ini</option>
+                                <option value="yesterday">Kemarin</option>
+                                <option value="this_week">Minggu ini</option>
+                                <option value="this_month">Bulan ini</option>
+                                <option value="this_year">Tahun ini</option>
+                                <option value="last_year">Tahun kemarin</option>
+                                <option value="last_7">7 hari terakhir</option>
+                                <option value="last_30">30 hari terakhir</option>
+                                <option value="custom">Custom Range</option>
+                            </select>
+                        </div>
+
+                        <!-- Custom Date Range (Full Width on Mobile) -->
+                        <div id="filter-date-custom" :class="[isCustomDate ? '' : 'hidden', 'mt-2 flex flex-col sm:flex-row gap-2 items-start sm:items-center px-3 py-2.5 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-900/30']">
+                            <span class="text-xs font-semibold text-blue-700 dark:text-blue-300">Dari:</span>
+                            <input v-model="filters.date_from" type="date" id="filter-date-from" @change="applyFilters" class="flex-1 w-full sm:w-auto h-8 border border-blue-300 dark:border-blue-700 rounded px-2 text-xs font-medium bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-600 dark:text-slate-300 transition hover:border-blue-400">
+                        
+                            <span class="text-xs font-semibold text-blue-700 dark:text-blue-300">Hingga:</span>
+                            <input v-model="filters.date_to" type="date" id="filter-date-to" @change="applyFilters" class="flex-1 w-full sm:w-auto h-8 border border-blue-300 dark:border-blue-700 rounded px-2 text-xs font-medium bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-600 dark:text-slate-300 transition hover:border-blue-400">
+                        </div>
+                    </div>
+
+                    <!-- Other Filters in a Grid (2 cols on mobile, auto on desktop) -->
+                    <div class="grid grid-cols-2 lg:grid-cols-3 gap-2 w-full lg:w-auto lg:flex lg:items-center lg:gap-2">
+                    
+                        <!-- Status Filter -->
+                        <div class="flex items-center gap-1.5 lg:gap-2">
+                            <svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <select v-model="filters.status" id="filter-status-opt" @change="applyFilters" class="flex-1 h-10 lg:h-10 border border-slate-300 dark:border-white/15 rounded-lg px-2 lg:px-3 py-2 lg:py-2.5 text-xs font-medium text-slate-600 dark:text-slate-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer transition hover:border-slate-400 dark:hover:border-white/20 shadow-sm">
+                                <option value="">Status</option>
+                                <option value="Baru">Baru</option>
+                                <option value="Survey">Survey</option>
+                                <option value="Proses">Proses</option>
+                                <option value="Selesai">Selesai</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Batal">Batal</option>
+                                <option value="Req_Batal">Req Batal</option>
+                            </select>
+                        </div>
+
+                        <!-- POP Filter -->
+                        <div class="flex items-center gap-1.5 lg:gap-2">
+                            <svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                            <select v-model="filters.pop" id="filter-pop-opt" @change="applyFilters" class="flex-1 h-10 lg:h-10 border border-slate-300 dark:border-white/15 rounded-lg px-2 lg:px-3 py-2 lg:py-2.5 text-xs font-medium text-blue-600 dark:text-blue-400 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer transition hover:border-slate-400 dark:hover:border-white/20 shadow-sm">
+                                <option value="">Area</option>
+                                <option v-for="p in dropdowns.pops" :key="p" :value="p">{{ p }}</option>
+                            </select>
+                        </div>
+
+                        <!-- Technician Filter -->
+                        <div class="flex items-center gap-1.5 lg:gap-2">
+                            <svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 12H9m4 5h4m0 0h4m-4 0a4 4 0 100-8 4 4 0 000 8z"/></svg>
+                            <select v-model="filters.tech" id="filter-tech-opt" @change="applyFilters" class="flex-1 h-10 lg:h-10 border border-slate-300 dark:border-white/15 rounded-lg px-2 lg:px-3 py-2 lg:py-2.5 text-xs font-medium text-slate-600 dark:text-slate-300 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer transition hover:border-slate-400 dark:hover:border-white/20 shadow-sm">
+                                <option value="">Teknisi</option>
+                                <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Reset Button (Full Width on Mobile, Auto on Desktop) -->
+                    <button type="button" @click="resetFilters" class="w-full lg:w-auto px-3 lg:px-4 py-2.5 bg-gradient-to-r from-slate-100 to-slate-50 hover:from-slate-200 hover:to-slate-100 dark:from-slate-800 dark:to-slate-900 dark:hover:from-slate-700 dark:hover:to-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-xs font-semibold transition flex items-center justify-center lg:justify-start gap-2 border border-slate-200 dark:border-white/10 shadow-sm hover:shadow-md hover:scale-105 active:scale-95" title="Reset semua filter">
+                        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        Reset
+                    </button>
+                </div>
+
+                <!-- legacy single-date input (hidden) for backward compatibility -->
+                <input type="date" id="filter-date" class="hidden">
+
+            </div>
+
+            <div class="overflow-x-auto min-h-[350px]">
+                <table class="w-full text-left text-sm whitespace-nowrap">
+                    <thead class="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-slate-500 dark:text-slate-400 font-bold border-b border-slate-100 dark:border-white/5">
+                        <tr>
+                            <th class="px-4 py-3 text-center w-10">★</th>
+                            <th class="px-6 py-3">Tiket & Waktu</th>
+                            <th class="px-6 py-3">Pelanggan</th>
+                            <th class="px-6 py-3">Area (POP)</th>
+                            <th class="px-6 py-3">Teknisi</th>
+                            <th class="px-6 py-3">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="progress-table-body" class="divide-y divide-slate-100 dark:divide-white/5">
+                        <tr v-if="loading">
+                            <td colspan="7" class="px-6 py-10 text-center">
+                                <div class="flex justify-center">
+                                    <div class="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+                                </div>
+                                <p class="mt-2 text-xs text-slate-400">Sedang memuat data...</p>
+                            </td>
+                        </tr>
+                        <tr v-else-if="list.length === 0">
+                            <td colspan="7" class="px-6 py-10 text-center text-slate-400 italic text-xs">Tidak ada data ditemukan.</td>
+                        </tr>
+                        <tr
+                            v-else
+                            v-for="row in list"
+                            :key="row.id"
+                            :id="`row-${row.id}`"
+                            class="transition border-b border-slate-50 dark:border-white/5 cursor-pointer group"
+                            :class="rowOverdue(row) ? 'bg-red-50/30 dark:bg-red-900/10 border-l-4 border-l-red-500' : 'hover:bg-blue-50/50 dark:hover:bg-slate-800/50'"
+                            @click="openEditModal(row.id)"
+                        >
+                            <td class="px-4 py-3 text-center">
+                                <button
+                                    type="button"
+                                    @click.stop="togglePriority(row.id, row.is_priority)"
+                                    class="transition-transform p-2"
+                                    :class="String(row.is_priority) === '1' ? 'text-yellow-400 hover:scale-110' : 'text-slate-200 hover:text-yellow-400'"
+                                >★</button>
+                            </td>
+                            <td class="px-6 py-3">
+                                <div class="flex items-center flex-wrap gap-1">
+                                    <div class="font-mono text-[10px] text-blue-500 font-bold group-hover:text-blue-700 transition">#{{ row.ticket_id || '-' }}</div>
+                                    <span
+                                        v-if="rowDays(row) !== null"
+                                        class="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                        :class="(rowDays(row) || 0) > 0 ? 'bg-slate-200 text-slate-700' : 'bg-blue-100 text-blue-700'"
+                                    >D+{{ Math.max(0, rowDays(row) || 0) }}</span>
+                                    <span
+                                        v-if="rowOverdue(row)"
+                                        class="ml-2 px-2 py-0.5 rounded-full text-[10px] font-black bg-red-100 text-red-700"
+                                    >⏰ OVERDUE +{{ rowDays(row) }}d</span>
+                                </div>
+                                <div class="text-[10px] text-slate-400">{{ formatDateShort(row.installation_date) }}</div>
+                            </td>
+                            <td class="px-6 py-3">
+                                <div class="font-bold text-slate-700 dark:text-slate-200 text-xs">{{ row.customer_name || '-' }}</div>
+                                <div class="text-[10px] text-slate-400 truncate max-w-[150px]">{{ row.address || '-' }}</div>
+                            </td>
+                            <td class="px-6 py-3 text-xs text-slate-600 dark:text-slate-300">
+                                <span class="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 font-bold text-[10px]">{{ row.pop || 'NON-AREA' }}</span>
+                            </td>
+                            <td class="px-6 py-3 text-xs">
+                                <div v-if="row.technician" class="flex items-center gap-1">
+                                    <div class="w-2 h-2 rounded-full bg-green-500"></div>
+                                    <span>{{ row.technician }}</span>
+                                </div>
+                                <span v-else class="text-slate-300 italic">Belum assign</span>
+                            </td>
+                            <td class="px-6 py-3">
+                                <span class="px-2.5 py-1 rounded-full text-[10px] font-bold" :class="statusBadgeClass(row.status)">{{ row.status || '-' }}</span>
+                            </td>
+                        </tr>
+    
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="p-4 border-t border-slate-100 dark:border-white/5 bg-slate-50/30 flex flex-col md:flex-row justify-between items-center gap-4">
+                <div class="text-xs text-slate-500 font-medium">
+                    Data <span id="page-start" class="font-bold text-slate-700 dark:text-white">{{ pageStart }}</span> -
+                    <span id="page-end" class="font-bold text-slate-700 dark:text-white">{{ pageEnd }}</span> dari
+                    <span id="total-data" class="font-bold text-slate-700 dark:text-white">{{ pagination.total }}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button type="button" @click="loadData(pagination.page - 1)" :disabled="pagination.page <= 1 || loading" id="btn-prev" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition">Prev</button>
+                    <span class="text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 px-3 py-1.5 rounded-lg">
+                        <span id="current-page">{{ pagination.page }}</span> / <span id="total-pages">{{ pagination.total_pages }}</span>
+                    </span>
+                    <button type="button" @click="loadData(pagination.page + 1)" :disabled="pagination.page >= pagination.total_pages || loading" id="btn-next" class="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition">Next</button>
+                </div>
+            </div>
         </div>
-      </div>
     </div>
 
-    <!-- Rekap modal -->
-    <div v-if="recapOpen" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" @click.self="recapOpen = false">
-      <div class="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 dark:border-white/10 overflow-hidden">
-        <div class="px-5 py-4 border-b border-slate-200 dark:border-white/10 flex items-center justify-between">
-          <div class="text-sm font-black text-slate-900 dark:text-slate-100">Kirim Rekap WA</div>
-          <button class="h-9 w-9 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5" @click="recapOpen = false" type="button">✕</button>
+    <!-- ===================== -->
+    <!-- MODAL DETAIL / INPUT -->
+    <!-- ===================== -->
+    <div id="detail-modal" :class="[modalOpen ? '' : 'hidden', 'fixed inset-0 z-[9999] bg-black/50 p-4 overflow-y-auto']">
+        <div class="max-w-5xl mx-auto bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-white/10 overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 dark:border-white/10 flex items-center justify-between">
+                <div class="min-w-0">
+                    <div class="text-[11px] text-slate-400 font-bold" id="modal-ticket-id">{{ modalMode === 'new' ? '#NEW' : ('#' + (form.ticket_id || '-')) }}</div>
+                    <h3 class="text-lg font-black text-slate-800 dark:text-white" id="modal-title-text">{{ modalMode === 'new' ? 'Input Baru' : 'Detail Data' }}</h3>
+                </div>
+                <button type="button" @click="closeModal" class="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black">
+                    Tutup
+                </button>
+            </div>
+
+            <form id="form-edit-install" class="p-5 space-y-5">
+                <input type="hidden" id="edit_id" name="id" :value="form.id || ''">
+                <input type="hidden" id="edit_ticket_id" name="ticket_id" :value="form.ticket_id || ''">
+                <input type="hidden" id="edit_created_at" name="created_at" value="">
+
+                            <div
+                    id="progress-smart-panel"
+                    :class="[modalMode === 'new' ? '' : 'hidden', 'bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 border border-slate-100 dark:border-white/10']"
+                >
+                    <div class="flex items-center justify-between mb-2">
+                        <h4 class="text-xs font-black text-blue-600 uppercase">Smart Input</h4>
+                        <span class="text-[10px] text-slate-400 dark:text-slate-500">Otomatis</span>
+                    </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        <div class="space-y-2">
+                            <textarea
+                                v-model="smartInputRaw"
+                                id="progress-smart-input"
+                                rows="6"
+                                class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 font-mono"
+                                placeholder="ASTRI NURJANAH&#10;082312549753&#10;SUMBER SARI 2 BANGUN NEGARA&#10;Teknisi: DARWIN, MAKMUR&#10;Sales: GUNAWAN&#10;POP: BNG&#10;Paket: Standar - 10 Mbps&#10;Harga: 300"
+                            ></textarea>
+                            <div
+                                id="progress-smart-status"
+                                class="text-[10px] min-h-[12px]"
+                                :class="
+                                    smartStatusTone === 'error'
+                                        ? 'text-red-500 dark:text-red-400'
+                                        : smartStatusTone === 'success'
+                                            ? 'text-green-600 dark:text-green-400'
+                                            : 'text-slate-400 dark:text-slate-500'
+                                "
+                            >
+                                {{ smartStatusMsg }}
+                            </div>
+                            <div class="text-[10px] text-slate-400 dark:text-slate-500">
+                                Tempel data bebas (per baris atau dipisah koma). Bisa pakai label "Nama:", "WA:", "Alamat:" dll, atau tanpa label
+                                (urutan: Nama, WA, Alamat, Sales, POP).
+                            </div>
+                        </div>
+                        <div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-white/10 p-3 space-y-2">
+                            <div class="flex items-center justify-between">
+                                <div class="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase">Review Data</div>
+                                <div
+                                    id="progress-smart-ready"
+                                    class="text-[10px] font-bold"
+                                    :class="
+                                        smartReadyTone === 'ready'
+                                            ? 'text-emerald-600 dark:text-emerald-400'
+                                            : smartReadyTone === 'warn'
+                                                ? 'text-amber-600 dark:text-amber-400'
+                                                : smartReadyTone === 'error'
+                                                    ? 'text-red-500 dark:text-red-400'
+                                                    : 'text-slate-400 dark:text-slate-500'
+                                    "
+                                >
+                                    {{ smartReadyMsg }}
+                                </div>
+                            </div>
+                            <div id="progress-smart-summary" class="text-[10px] text-slate-400 dark:text-slate-500 min-h-[12px]">{{ smartSummaryText }}</div>
+                            <div id="progress-smart-review" class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-700 dark:text-slate-200">
+                                <template v-if="smartReviewRows.length">
+                                    <template v-for="(it, idx) in smartReviewRows" :key="idx">
+                                        <div class="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">{{ it.label }}</div>
+                                        <div class="font-medium">{{ it.value }}</div>
+                                    </template>
+                                </template>
+                                <div v-else class="col-span-2 text-slate-400 dark:text-slate-500 italic">Tempel data untuk melihat review.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+    
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Pelanggan -->
+                    <div class="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 border border-slate-100 dark:border-white/10">
+                        <h4 class="text-xs font-black text-slate-700 dark:text-slate-200 mb-3">Data Pelanggan</h4>
+
+                        <label class="block text-[11px] font-bold text-slate-500 mb-1">Nama</label>
+                        <input v-model="form.customer_name" id="edit_name" name="customer_name" type="text" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="Nama pelanggan">
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">WhatsApp</label>
+                                <input v-model="form.customer_phone" id="edit_phone" name="customer_phone" type="text" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="08xxx / 62xxx">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Koordinat</label>
+                                <div class="flex gap-2">
+                                    <input v-model="form.coordinates" id="edit_coordinates" name="coordinates" type="text" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="-6.2,106.8">
+                                    <button type="button" @click="openMaps(form.coordinates)" class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-black">
+                                        Maps
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <label class="block text-[11px] font-bold text-slate-500 mb-1 mt-3">Alamat</label>
+                        <textarea v-model="form.address" id="edit_address" name="address" rows="3" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="Alamat lengkap..."></textarea>
+                    </div>
+
+                    <!-- Order -->
+                    <div class="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 border border-slate-100 dark:border-white/10">
+                        <h4 class="text-xs font-black text-slate-700 dark:text-slate-200 mb-3">Data Pemasangan</h4>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">POP / Area</label>
+                                <select v-model="form.pop" id="edit_pop" name="pop" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900">
+                                    <option value="">-- Pilih --</option>
+                                    <option v-for="p in dropdowns.pops" :key="p" :value="p">{{ p }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Tanggal (installation_date)</label>
+                                <input v-model="form.installation_date" id="edit_date" name="installation_date" type="date" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Paket</label>
+                                <input v-model="form.plan_name" id="edit_plan" name="plan_name" type="text" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="Nama paket">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Harga</label>
+                                <input v-model="form.price" id="edit_price" name="price" type="text" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="Contoh: 250000">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Status</label>
+                                <select v-model="form.status" id="edit_status" name="status" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900">
+                                    <option value="Baru">Baru</option>
+                                    <option value="Survey">Survey</option>
+                                    <option value="Proses">Proses</option>
+                                    <option value="Pending">Pending</option>
+                                    <option value="Selesai">Selesai</option>
+                                    <option value="Req_Batal">Req_Batal</option>
+                                    <option value="Batal">Batal</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Selesai (finished_at)</label>
+                                <input v-model="form.finished_at" id="edit_finished_at" name="finished_at" type="datetime-local" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900">
+                            </div>
+                        </div>
+
+                        <div class="mt-3 flex items-center gap-2">
+                            <input v-model="form.is_priority" id="edit_priority" name="is_priority" type="checkbox" value="1" class="w-4 h-4">
+                            <label for="edit_priority" class="text-xs font-black text-slate-700 dark:text-slate-200">Prioritas</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Assign teknisi & sales -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 border border-slate-100 dark:border-white/10">
+                        <h4 class="text-xs font-black text-slate-700 dark:text-slate-200 mb-3">Teknisi</h4>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Teknisi 1</label>
+                                <select v-model="form.technician" id="edit_technician" name="technician" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900">
+                                    <option value="">-- Pilih --</option>
+                                    <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Teknisi 2</label>
+                                <select v-model="form.technician_2" id="edit_tech_2" name="technician_2" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900">
+                                    <option value="">-- Pilih --</option>
+                                    <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Teknisi 3</label>
+                                <select v-model="form.technician_3" id="edit_tech_3" name="technician_3" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900">
+                                    <option value="">-- Pilih --</option>
+                                    <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Teknisi 4</label>
+                                <select v-model="form.technician_4" id="edit_tech_4" name="technician_4" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900">
+                                    <option value="">-- Pilih --</option>
+                                    <option v-for="t in dropdowns.technicians" :key="t" :value="t">{{ t }}</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 border border-slate-100 dark:border-white/10">
+                        <h4 class="text-xs font-black text-slate-700 dark:text-slate-200 mb-3">Sales</h4>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Sales 1</label>
+                                <input v-model="form.sales_name" id="edit_sales_1" name="sales_name" type="text" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="Nama sales">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Sales 2</label>
+                                <input v-model="form.sales_name_2" id="edit_sales_2" name="sales_name_2" type="text" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="Nama sales">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 mb-1">Sales 3</label>
+                                <input v-model="form.sales_name_3" id="edit_sales_3" name="sales_name_3" type="text" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="Nama sales">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Notes -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 border border-slate-100 dark:border-white/10">
+                        <h4 class="text-xs font-black text-slate-700 dark:text-slate-200 mb-3">Riwayat</h4>
+                        <textarea v-model="form.notes_old" id="edit_notes_old" name="notes_old" class="hidden"></textarea>
+                        <div id="history-container" class="text-xs text-slate-600 dark:text-slate-300 space-y-2 max-h-56 overflow-y-auto">
+                            <span v-if="notesLines.length === 0" class="italic text-slate-300">Belum ada riwayat.</span>
+                            <template v-else>
+                                <div v-for="(l, idx) in notesLines" :key="idx" class="border-b border-slate-100 pb-1">{{ l }}</div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 border border-slate-100 dark:border-white/10">
+                        <h4 class="text-xs font-black text-slate-700 dark:text-slate-200 mb-3">Tambah Catatan</h4>
+                        <textarea v-model="form.note_append" id="edit_notes" name="notes_append" rows="6" class="w-full px-3 py-2 rounded-lg text-xs border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900" placeholder="Tulis catatan baru..."></textarea>
+                        <p class="mt-2 text-[11px] text-slate-400">Catatan akan otomatis ditambahkan ke riwayat (append).</p>
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 border border-slate-100 dark:border-white/10">
+                    <h4 class="text-xs font-black text-slate-700 dark:text-slate-200 mb-3">Audit Perubahan Data</h4>
+                    <div id="change-history-container" class="text-xs text-slate-600 dark:text-slate-300 space-y-2 max-h-56 overflow-y-auto">
+                        <span v-if="changeLoading" class="italic text-slate-300">Memuat...</span>
+                        <span v-else-if="changeError" class="italic text-red-400">Gagal memuat riwayat perubahan.</span>
+                        <span v-else-if="changeHistory.length === 0" class="italic text-slate-300">Belum ada perubahan.</span>
+                        <template v-else>
+                            <div v-for="(ch, idx) in changeHistory" :key="idx" class="border-b border-slate-100 pb-2">
+                                <div class="text-[10px] text-slate-400 mb-1">{{ ch.changed_at || '-' }} - {{ ch.changed_by || '-' }} ({{ ch.changed_by_role || '-' }}) via {{ ch.source || '-' }}</div>
+                                <div class="text-xs text-slate-700">
+                                    <span class="font-bold">{{ changeFieldLabel(ch.field_name) }}</span>:
+                                    <span class="text-slate-500">{{ String(ch.old_value || '').trim() || '-' }}</span>
+                                    <span class="text-slate-400 px-1">-&gt;</span>
+                                    <span class="text-slate-800 font-bold">{{ String(ch.new_value || '').trim() || '-' }}</span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Approval panel -->
+                <div id="panel-approval-batal" :class="[modalMode !== 'new' && isReqBatal ? '' : 'hidden', 'bg-red-50 dark:bg-red-900/20 rounded-xl p-4 border border-red-100 dark:border-red-500/20']">
+                    <h4 class="text-xs font-black text-red-700 dark:text-red-200 mb-2">Approval Pembatalan</h4>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" @click="decideCancel('approve')" :disabled="modalSaving || detailLoading" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-black">
+                            Approve Batal
+                        </button>
+                        <button type="button" @click="decideCancel('reject')" :disabled="modalSaving || detailLoading" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-xs font-black">
+                            Tolak (Kembali Pending)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex flex-col sm:flex-row gap-2 justify-end pt-2 border-t border-slate-100 dark:border-white/10">
+                    <button type="button" @click="remove" :disabled="modalSaving || detailLoading" :class="[modalMode === 'new' ? 'hidden' : '', 'px-4 py-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 text-xs font-black disabled:opacity-70 disabled:cursor-not-allowed']">
+                        Hapus
+                    </button>
+                                    <button
+                        id="btn-progress-save"
+                        type="button"
+                        @click="save"
+                        :disabled="modalSaving || detailLoading"
+                        class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-black disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                        <span v-if="modalSaving" class="inline-flex items-center gap-2">
+                            <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity="0.3" stroke-width="3"></circle>
+                                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path>
+                            </svg>
+                            Menyimpan...
+                        </span>
+                        <span v-else>Simpan</span>
+                    </button>
+    
+                </div>
+            </form>
         </div>
-        <div class="p-5 space-y-3">
-          <div>
-            <label class="text-[11px] font-bold text-slate-500 dark:text-slate-400">Pilih POP</label>
-            <select v-model="recapPop" class="input w-full">
-              <option v-for="p in dropdowns.pops" :key="p" :value="p">{{ p }}</option>
-            </select>
-            <div class="mt-2 text-[11px] text-slate-500 dark:text-slate-400">Rekap akan mengirim status: Baru/Survey/Proses</div>
-          </div>
-          <div class="flex items-center justify-end gap-2">
-            <button class="btn btn-secondary" type="button" @click="recapOpen = false" :disabled="recapLoading">Batal</button>
-            <button class="btn btn-primary" type="button" @click="sendRecap" :disabled="recapLoading">
-              <LoadingSpinner v-if="recapLoading" size="sm" />
-              <span v-else>Kirim</span>
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   </AdminLayout>
 </template>
