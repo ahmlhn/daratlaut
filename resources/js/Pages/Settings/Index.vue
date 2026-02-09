@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted, computed, watch } from 'vue';
 import { Head } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import SystemUpdatePanel from '@/Pages/Settings/Partials/SystemUpdatePanel.vue';
@@ -56,27 +56,73 @@ const sections = [
     { id: 'system_update', name: 'Update Sistem', icon: 'refresh' },
 ];
 
-const sectionGroups = [
-    { title: 'Gateway', items: ['status', 'wa', 'mpwa', 'tg'] },
-    { title: 'Pesan & Notifikasi', items: ['templates', 'logs'] },
-    { title: 'Operasional', items: ['pops', 'recap_groups', 'fee'] },
-    { title: 'System', items: ['public_url', 'system_update'] },
+// Option B navigation: top tabs + chips (no settings sidebar).
+const tabs = [
+    { id: 'gateway', title: 'Gateway', items: ['status', 'wa', 'mpwa', 'tg'] },
+    { id: 'pesan', title: 'Pesan', items: ['templates', 'logs'] },
+    { id: 'operasional', title: 'Operasional', items: ['pops', 'recap_groups', 'fee'] },
+    { id: 'system', title: 'System', items: ['public_url', 'system_update'] },
 ];
 
 const sectionById = computed(() => Object.fromEntries(sections.map((s) => [s.id, s])));
 
-const filteredSectionGroups = computed(() => {
-    const q = navQuery.value.trim().toLowerCase();
+const tabBySectionId = computed(() => {
+    const map = {};
+    for (const t of tabs) {
+        for (const id of t.items) {
+            map[id] = t.id;
+        }
+    }
+    return map;
+});
+
+const lastSectionByTab = reactive({
+    gateway: 'status',
+    pesan: 'templates',
+    operasional: 'pops',
+    system: 'public_url',
+});
+
+const activeTab = ref('gateway');
+
+function setActiveSection(id) {
+    if (!id) return;
+    activeSection.value = id;
+    const tab = tabBySectionId.value[id];
+    if (tab) {
+        activeTab.value = tab;
+        lastSectionByTab[tab] = id;
+    }
+}
+
+function setActiveTab(tabId) {
+    activeTab.value = tabId;
+    const t = tabs.find((x) => x.id === tabId);
+    const next = lastSectionByTab[tabId] || t?.items?.[0];
+    if (next) activeSection.value = next;
+}
+
+watch(
+    () => activeSection.value,
+    (id) => {
+        const tab = tabBySectionId.value[id];
+        if (!tab) return;
+        activeTab.value = tab;
+        lastSectionByTab[tab] = id;
+    },
+    { immediate: true }
+);
+
+const activeTabSections = computed(() => {
+    const t = tabs.find((x) => x.id === activeTab.value) || tabs[0];
     const byId = sectionById.value;
-    return sectionGroups
-        .map((g) => {
-            const items = g.items
-                .map((id) => byId[id])
-                .filter(Boolean)
-                .filter((s) => !q || s.name.toLowerCase().includes(q));
-            return { ...g, items };
-        })
-        .filter((g) => g.items.length > 0);
+    return (t?.items || []).map((id) => byId[id]).filter(Boolean);
+});
+
+const sectionSearchResults = computed(() => {
+    const q = navQuery.value.trim().toLowerCase();
+    if (!q) return [];
+    return sections.filter((s) => s.name.toLowerCase().includes(q));
 });
 
 // ===== Fetch helpers =====
@@ -361,57 +407,74 @@ onMounted(loadAll);
                 </div>
             </div>
 
-            <div v-else class="grid grid-cols-1 lg:grid-cols-[260px_1fr] xl:grid-cols-[300px_1fr] gap-6 lg:gap-8">
-                <!-- Nav -->
-                <div class="space-y-4">
-                    <!-- Mobile tabs -->
-                    <div class="lg:hidden">
-                        <div class="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
-                            <button v-for="s in sections" :key="s.id" @click="activeSection = s.id" :class="[
-                                'shrink-0 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition border',
-                                activeSection === s.id
-                                    ? 'bg-primary-600 text-white border-primary-600 shadow-sm shadow-primary-500/20'
-                                    : 'bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 border-gray-200/70 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5'
-                            ]">
+            <div v-else class="space-y-6 lg:space-y-8">
+                <!-- Top Tabs + Submenu Chips (Option B) -->
+                <div class="card p-0 overflow-hidden rounded-2xl">
+                    <div class="px-5 py-4 sm:px-7 sm:py-5 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div class="flex gap-2 overflow-x-auto custom-scrollbar">
+                                <div class="shrink-0 inline-flex gap-1 p-1 rounded-2xl bg-gray-100/70 dark:bg-white/5 border border-gray-200/70 dark:border-white/10">
+                                    <button
+                                        v-for="t in tabs"
+                                        :key="t.id"
+                                        type="button"
+                                        @click="setActiveTab(t.id)"
+                                        :class="[
+                                            'px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black tracking-tight transition whitespace-nowrap',
+                                            activeTab === t.id
+                                                ? 'bg-primary-600 text-white shadow-sm shadow-primary-500/20'
+                                                : 'text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-white/10'
+                                        ]"
+                                    >
+                                        {{ t.title }}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="relative w-full lg:w-[340px]">
+                                <input v-model="navQuery" type="text" class="input !rounded-xl" placeholder="Cari pengaturan...">
+                                <div
+                                    v-if="navQuery.trim()"
+                                    class="absolute z-30 mt-2 w-full rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 shadow-xl overflow-hidden"
+                                >
+                                    <div v-if="sectionSearchResults.length === 0" class="p-4 text-sm text-gray-500 dark:text-gray-400">
+                                        Menu tidak ditemukan.
+                                    </div>
+                                    <div v-else class="max-h-72 overflow-auto custom-scrollbar p-2">
+                                        <button
+                                            v-for="s in sectionSearchResults"
+                                            :key="s.id"
+                                            type="button"
+                                            @click="setActiveSection(s.id); navQuery = ''"
+                                            class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm font-semibold text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/5 transition"
+                                        >
+                                            <SettingsNavIcon :name="s.icon" className="h-4 w-4 text-gray-400 dark:text-gray-500" />
+                                            <span class="flex-1">{{ s.name }}</span>
+                                            <span class="text-[10px] font-black tracking-widest text-gray-400 dark:text-gray-500 uppercase">
+                                                {{ tabs.find((t) => t.id === tabBySectionId[s.id])?.title || '' }}
+                                            </span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            <button
+                                v-for="s in activeTabSections"
+                                :key="s.id"
+                                type="button"
+                                @click="setActiveSection(s.id)"
+                                :class="[
+                                    'inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs sm:text-sm font-semibold transition border',
+                                    activeSection === s.id
+                                        ? 'bg-primary-600 text-white border-primary-600 shadow-sm shadow-primary-500/20'
+                                        : 'bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 border-gray-200/70 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5'
+                                ]"
+                            >
                                 <SettingsNavIcon :name="s.icon" :className="activeSection === s.id ? 'h-4 w-4 text-white' : 'h-4 w-4 text-gray-400 dark:text-gray-500'" />
                                 <span class="whitespace-nowrap">{{ s.name }}</span>
                             </button>
-                        </div>
-                    </div>
-
-                    <!-- Desktop nav -->
-                    <div class="hidden lg:block">
-                        <div class="card p-0 overflow-hidden rounded-2xl sticky top-24">
-                            <div class="p-4 border-b border-gray-200/70 dark:border-white/10 bg-white/70 dark:bg-dark-900/50 backdrop-blur-xl">
-                                <p class="text-[11px] font-black tracking-widest text-gray-400 dark:text-gray-500 uppercase">Navigasi</p>
-                                <div class="mt-3">
-                                    <input v-model="navQuery" type="text" class="input !rounded-xl" placeholder="Cari pengaturan...">
-                                </div>
-                            </div>
-
-                            <div class="p-2">
-                                <template v-for="group in filteredSectionGroups" :key="group.title">
-                                    <p class="px-3 pt-3 pb-1 text-[10px] font-bold tracking-widest uppercase text-gray-400 dark:text-gray-500">
-                                        {{ group.title }}
-                                    </p>
-
-                                    <button v-for="s in group.items" :key="s.id" @click="activeSection = s.id" :class="[
-                                        'group w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all text-left',
-                                        activeSection === s.id
-                                            ? 'bg-gradient-to-r from-primary-600 to-primary-700 text-white shadow-lg shadow-primary-500/20 ring-1 ring-primary-500/20'
-                                            : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/5'
-                                    ]">
-                                        <SettingsNavIcon :name="s.icon" :className="activeSection === s.id
-                                            ? 'h-4 w-4 text-white'
-                                            : 'h-4 w-4 text-gray-400 group-hover:text-gray-700 dark:text-gray-500 dark:group-hover:text-gray-200'" />
-                                        <span class="flex-1">{{ s.name }}</span>
-                                    </button>
-                                </template>
-
-                                <div v-if="filteredSectionGroups.length === 0" class="p-6 text-sm text-gray-500 dark:text-gray-400">
-                                    Menu tidak ditemukan.
-                                </div>
-                            </div>
                         </div>
                     </div>
                 </div>
