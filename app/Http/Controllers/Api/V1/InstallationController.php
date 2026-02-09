@@ -538,15 +538,6 @@ class InstallationController extends Controller
         return $this->waSendFailover($tenantId, $type, $target, $message, $platform);
     }
 
-    private function phoneNoBales($raw): string
-    {
-        $clean = preg_replace('/\D/', '', (string) $raw);
-        if ($clean === '') return '';
-        if (substr($clean, 0, 2) === '62') return substr($clean, 2);
-        if (substr($clean, 0, 1) === '0') return substr($clean, 1);
-        return $clean;
-    }
-
     private function phoneNo62($raw): string
     {
         $clean = preg_replace('/\D/', '', (string) $raw);
