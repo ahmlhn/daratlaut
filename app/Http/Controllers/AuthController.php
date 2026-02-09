@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\LegacyUser;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -27,10 +29,12 @@ class AuthController extends Controller
         $request->validate([
             'username' => 'required|string',
             'password' => 'required|string',
+            'remember' => 'nullable|boolean',
         ]);
 
         $username = trim($request->input('username'));
         $password = $request->input('password');
+        $remember = (bool) $request->boolean('remember');
 
         $user = LegacyUser::query()
             ->where('username', $username)
@@ -63,7 +67,21 @@ class AuthController extends Controller
             ])->onlyInput('username');
         }
 
-        Auth::login($user);
+        // Remember me uses the remember_token column. Native DBs may not have it, so ensure it exists.
+        if ($remember) {
+            try {
+                if (Schema::hasTable('noci_users') && !Schema::hasColumn('noci_users', 'remember_token')) {
+                    Schema::table('noci_users', function (Blueprint $table) {
+                        $table->rememberToken();
+                    });
+                }
+            } catch (\Throwable) {
+                // If schema migration fails (permissions/driver), don't block login.
+                $remember = false;
+            }
+        }
+
+        Auth::login($user, $remember);
 
         $displayName = $user->username;
         if (!empty($user->name)) $displayName = $user->name;
