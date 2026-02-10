@@ -137,7 +137,8 @@ class TeamController extends Controller
                     'tenant_id' => $tenantId,
                     'user_id' => (int) $u->id,
                     'name' => $name,
-                    'phone' => $this->normalizePhone($u->phone ?? null),
+                    // Legacy `noci_team.phone` is often NOT NULL; keep it non-null.
+                    'phone' => $this->normalizePhone($u->phone ?? null) ?? '',
                     'role' => $role,
                     'is_active' => $isActive ? 1 : 0,
                 ];
@@ -441,7 +442,10 @@ class TeamController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $validated['phone'] = array_key_exists('phone', $validated) ? $this->normalizePhone($validated['phone']) : null;
+        // Legacy `noci_team.phone` is often NOT NULL; keep it non-null.
+        $validated['phone'] = array_key_exists('phone', $validated)
+            ? ($this->normalizePhone($validated['phone']) ?? '')
+            : '';
         $validated['is_active'] = array_key_exists('is_active', $validated) ? (bool) $validated['is_active'] : true;
         $validated['can_login'] = array_key_exists('can_login', $validated) ? (bool) $validated['can_login'] : false;
 
@@ -485,7 +489,7 @@ class TeamController extends Controller
             $memberPayload = [
                 'tenant_id' => $tenantId,
                 'name' => $validated['name'],
-                'phone' => $validated['phone'] ?? null,
+                'phone' => (string) ($validated['phone'] ?? ''),
                 'email' => $validated['email'] ?? null,
                 'role' => $validated['role'],
                 'pop_id' => $popId,
@@ -502,6 +506,7 @@ class TeamController extends Controller
 
             ActionLog::record(
                 tenantId: $tenantId,
+                userId: $request->user()?->id ? (int) $request->user()->id : null,
                 action: 'CREATE',
                 refType: 'team',
                 refId: $member->id,
@@ -545,12 +550,13 @@ class TeamController extends Controller
         ]);
 
         if (array_key_exists('phone', $validated)) {
-            $validated['phone'] = $this->normalizePhone($validated['phone']);
+            // Legacy `noci_team.phone` is often NOT NULL; keep it non-null.
+            $validated['phone'] = $this->normalizePhone($validated['phone']) ?? '';
         }
 
         $nextName = array_key_exists('name', $validated) ? (string) $validated['name'] : (string) $member->name;
         $nextEmail = array_key_exists('email', $validated) ? ($validated['email'] ?? null) : ($member->email ?? null);
-        $nextPhone = array_key_exists('phone', $validated) ? ($validated['phone'] ?? null) : ($member->phone ?? null);
+        $nextPhone = array_key_exists('phone', $validated) ? (string) ($validated['phone'] ?? '') : (string) ($member->phone ?? '');
         $nextRole = array_key_exists('role', $validated) ? (string) $validated['role'] : (string) $member->role;
         $nextIsActive = array_key_exists('is_active', $validated) ? (bool) $validated['is_active'] : (bool) $member->is_active;
         $nextCanLogin = array_key_exists('can_login', $validated) ? (bool) $validated['can_login'] : (bool) $member->can_login;
@@ -622,6 +628,7 @@ class TeamController extends Controller
 
             ActionLog::record(
                 tenantId: $tenantId,
+                userId: $request->user()?->id ? (int) $request->user()->id : null,
                 action: 'UPDATE',
                 refType: 'team',
                 refId: $id,
@@ -671,6 +678,7 @@ class TeamController extends Controller
 
             ActionLog::record(
                 tenantId: $tenantId,
+                userId: $request->user()?->id ? (int) $request->user()->id : null,
                 action: 'DELETE',
                 refType: 'team',
                 refId: $id,

@@ -79,7 +79,8 @@ return new class extends Migration
                     $payload = [
                         'tenant_id' => $tenantId,
                         'name' => $name,
-                        'phone' => $usersHasPhone ? ($u->phone ?? null) : null,
+                        // Legacy `noci_team.phone` is often NOT NULL; keep it non-null to avoid migration failure.
+                        'phone' => $usersHasPhone ? (string) ($u->phone ?? '') : '',
                         'role' => $role,
                         'is_active' => $isActive ? 1 : 0,
                     ];
@@ -161,4 +162,3 @@ return new class extends Migration
         // Intentionally left blank.
     }
 };
-
