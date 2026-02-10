@@ -168,7 +168,6 @@ const baseNavigationGroups = [
       { name: 'Pasang Baru', href: '/installations', icon: 'wifi', permissionsAny: ['view installations'] },
       { name: 'Riwayat Pasang', href: '/installations/riwayat', icon: 'check-circle', permissionsAny: ['view riwayat installations'] },
       { name: 'Tim', href: '/team', icon: 'user-group', permissionsAny: ['view team', 'manage team'] },
-      { name: 'OLT', href: '/olts', icon: 'server', permissionsAny: ['view olts', 'manage olt'] },
     ]
   },
   {
@@ -178,6 +177,12 @@ const baseNavigationGroups = [
       { name: 'Riwayat', href: '/teknisi/riwayat', icon: 'clock', permissionsAny: ['view teknisi'] },
       { name: 'Rekap Harian', href: '/teknisi/rekap', icon: 'document-report', permissionsAny: ['view teknisi'] },
       { name: 'Maps Teknisi', href: '/maps', icon: 'map', permissionsAny: ['view maps', 'manage maps'] },
+    ]
+  },
+  {
+    name: 'JARINGAN',
+    items: [
+      { name: 'OLT', href: '/olts', icon: 'server', permissionsAny: ['view olts', 'manage olt'] },
     ]
   },
   {
