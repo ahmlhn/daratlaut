@@ -48,7 +48,7 @@ class ActionLog extends Model
      */
     public static function record(
         int $tenantId,
-        ?int $userId,
+        ?int $userId = null,
         string $action,
         string $refType,
         ?int $refId = null,

@@ -19,6 +19,27 @@ use Spatie\Permission\Models\Role;
 
 class TeamController extends Controller
 {
+    private function hasRequiredTeamSchema(): bool
+    {
+        // Required by this controller + Team UI list.
+        return Schema::hasTable('noci_team')
+            && Schema::hasColumn('noci_team', 'tenant_id')
+            && Schema::hasColumn('noci_team', 'name')
+            && Schema::hasColumn('noci_team', 'role')
+            && Schema::hasColumn('noci_team', 'is_active');
+    }
+
+    private function requireTeamSchema(): ?JsonResponse
+    {
+        if ($this->hasRequiredTeamSchema()) {
+            return null;
+        }
+
+        return response()->json([
+            'message' => 'Team schema belum kompatibel. Jalankan `php artisan migrate` untuk menambah kolom noci_team (tenant_id/role/pop_id/can_login/user_id).',
+        ], 500);
+    }
+
     private function tenantId(Request $request): int
     {
         return (int) $request->attributes->get('tenant_id', (int) $request->input('tenant_id', 1));
@@ -38,6 +59,126 @@ class TeamController extends Controller
             $has = Schema::hasColumn('noci_team', 'user_id');
         }
         return (bool) $has;
+    }
+
+    private function maybeSyncFromUsers(int $tenantId): void
+    {
+        if ($tenantId <= 0) return;
+
+        // Only sync when we can safely link by user_id.
+        if (!$this->hasRequiredTeamSchema()) return;
+        if (!$this->hasTeamUserIdColumn()) return;
+        if (!Schema::hasTable('noci_users')) return;
+
+        $syncKey = "tenant:{$tenantId}:team:sync_from_users:v1";
+        if (Cache::get($syncKey)) return;
+        Cache::put($syncKey, 1, 60);
+
+        try {
+            $usersHas = [
+                'tenant_id' => Schema::hasColumn('noci_users', 'tenant_id'),
+                'username' => Schema::hasColumn('noci_users', 'username'),
+                'name' => Schema::hasColumn('noci_users', 'name'),
+                'email' => Schema::hasColumn('noci_users', 'email'),
+                'phone' => Schema::hasColumn('noci_users', 'phone'),
+                'role' => Schema::hasColumn('noci_users', 'role'),
+                'status' => Schema::hasColumn('noci_users', 'status'),
+                'default_pop' => Schema::hasColumn('noci_users', 'default_pop'),
+            ];
+
+            if (!$usersHas['tenant_id']) {
+                // Without tenant_id on users, we can't safely scope; skip runtime sync.
+                return;
+            }
+
+            $teamHas = [
+                'email' => Schema::hasColumn('noci_team', 'email'),
+                'can_login' => Schema::hasColumn('noci_team', 'can_login'),
+                'pop_id' => Schema::hasColumn('noci_team', 'pop_id'),
+            ];
+
+            $popsUsable = $teamHas['pop_id'] && Schema::hasTable('noci_pops')
+                && Schema::hasColumn('noci_pops', 'tenant_id')
+                && Schema::hasColumn('noci_pops', 'pop_name');
+
+            // Find users missing a linked team row.
+            $missing = DB::table('noci_users as u')
+                ->when($usersHas['tenant_id'], fn ($q) => $q->where('u.tenant_id', $tenantId))
+                ->leftJoin('noci_team as t', function ($join) use ($tenantId) {
+                    $join->on('t.user_id', '=', 'u.id')
+                        ->where('t.tenant_id', '=', $tenantId);
+                })
+                ->whereNull('t.id')
+                ->select([
+                    'u.id',
+                    $usersHas['name'] ? 'u.name' : DB::raw('NULL as name'),
+                    $usersHas['username'] ? 'u.username' : DB::raw('NULL as username'),
+                    $usersHas['phone'] ? 'u.phone' : DB::raw('NULL as phone'),
+                    $usersHas['email'] ? 'u.email' : DB::raw('NULL as email'),
+                    $usersHas['role'] ? 'u.role' : DB::raw('NULL as role'),
+                    $usersHas['status'] ? 'u.status' : DB::raw('NULL as status'),
+                    $usersHas['default_pop'] ? 'u.default_pop' : DB::raw('NULL as default_pop'),
+                ])
+                ->limit(500)
+                ->get();
+
+            foreach ($missing as $u) {
+                $name = trim((string) ($u->name ?? ''));
+                if ($name === '') $name = trim((string) ($u->username ?? ''));
+                if ($name === '') continue;
+
+                $role = $this->normalizeLegacyRole((string) ($u->role ?? 'cs'));
+                if ($role === '') $role = 'cs';
+
+                $status = strtolower(trim((string) ($u->status ?? 'active')));
+                $isActive = $status !== 'inactive';
+
+                $payload = [
+                    'tenant_id' => $tenantId,
+                    'user_id' => (int) $u->id,
+                    'name' => $name,
+                    'phone' => $this->normalizePhone($u->phone ?? null),
+                    'role' => $role,
+                    'is_active' => $isActive ? 1 : 0,
+                ];
+
+                if ($teamHas['email']) {
+                    $payload['email'] = $u->email ?? null;
+                }
+
+                if ($teamHas['can_login']) {
+                    $payload['can_login'] = 1;
+                }
+
+                if ($teamHas['pop_id'] && $popsUsable) {
+                    $defaultPop = trim((string) ($u->default_pop ?? ''));
+                    if ($defaultPop !== '') {
+                        $popId = DB::table('noci_pops')
+                            ->where('tenant_id', $tenantId)
+                            ->where('pop_name', $defaultPop)
+                            ->value('id');
+                        if (!empty($popId)) {
+                            $payload['pop_id'] = (int) $popId;
+                        }
+                    }
+                }
+
+                // Attach to existing team row by name first (avoid duplicates), otherwise insert.
+                $existing = DB::table('noci_team')
+                    ->where('tenant_id', $tenantId)
+                    ->where('name', $name)
+                    ->whereNull('user_id')
+                    ->first(['id']);
+
+                if ($existing) {
+                    DB::table('noci_team')->where('id', (int) $existing->id)->update($payload);
+                } else {
+                    DB::table('noci_team')->insert($payload);
+                }
+            }
+        } catch (\Throwable) {
+            // Best-effort; ignore sync failures.
+        }
     }
 
     private function userCan(Request $request, string $permission): bool
@@ -162,9 +303,13 @@ class TeamController extends Controller
     public function index(Request $request): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'view team')) return $resp;
+        if ($resp = $this->requireTeamSchema()) return $resp;
 
         $tenantId = $this->tenantId($request);
         $perPage = (int) $request->input('per_page', 50);
+
+        // Keep Team UI in sync with legacy "users-only" systems by auto-linking missing users.
+        $this->maybeSyncFromUsers($tenantId);
 
         $select = [
             'id',
@@ -229,8 +374,11 @@ class TeamController extends Controller
     public function stats(Request $request): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'view team')) return $resp;
+        if ($resp = $this->requireTeamSchema()) return $resp;
 
         $tenantId = $this->tenantId($request);
+
+        $this->maybeSyncFromUsers($tenantId);
 
         $stats = Cache::remember("tenant:{$tenantId}:team:stats", 30, function () use ($tenantId) {
             $base = Team::forTenant($tenantId);
@@ -263,6 +411,7 @@ class TeamController extends Controller
     public function show(Request $request, int $id): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'view team')) return $resp;
+        if ($resp = $this->requireTeamSchema()) return $resp;
 
         $tenantId = $this->tenantId($request);
         $member = Team::forTenant($tenantId)->findOrFail($id);
@@ -276,6 +425,7 @@ class TeamController extends Controller
     public function store(Request $request): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'create team')) return $resp;
+        if ($resp = $this->requireTeamSchema()) return $resp;
 
         $tenantId = $this->tenantId($request);
 
@@ -377,6 +527,7 @@ class TeamController extends Controller
     public function update(Request $request, int $id): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'edit team')) return $resp;
+        if ($resp = $this->requireTeamSchema()) return $resp;
 
         $tenantId = $this->tenantId($request);
         $member = Team::forTenant($tenantId)->findOrFail($id);
@@ -496,6 +647,7 @@ class TeamController extends Controller
     public function destroy(Request $request, int $id): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'delete team')) return $resp;
+        if ($resp = $this->requireTeamSchema()) return $resp;
 
         $tenantId = $this->tenantId($request);
         $member = Team::forTenant($tenantId)->findOrFail($id);
@@ -558,6 +710,7 @@ class TeamController extends Controller
     public function toggleStatus(Request $request, int $id): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'edit team')) return $resp;
+        if ($resp = $this->requireTeamSchema()) return $resp;
 
         $tenantId = $this->tenantId($request);
 
@@ -590,8 +743,11 @@ class TeamController extends Controller
     public function technicians(Request $request): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'view team')) return $resp;
+        if ($resp = $this->requireTeamSchema()) return $resp;
 
         $tenantId = $this->tenantId($request);
+
+        $this->maybeSyncFromUsers($tenantId);
 
         $technicians = Team::forTenant($tenantId)
             ->active()
@@ -608,8 +764,11 @@ class TeamController extends Controller
     public function sales(Request $request): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'view team')) return $resp;
+        if ($resp = $this->requireTeamSchema()) return $resp;
 
         $tenantId = $this->tenantId($request);
+
+        $this->maybeSyncFromUsers($tenantId);
 
         $sales = Team::forTenant($tenantId)
             ->active()
@@ -620,4 +779,3 @@ class TeamController extends Controller
         return response()->json(['data' => $sales]);
     }
 }
-

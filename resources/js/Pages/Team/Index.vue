@@ -8,6 +8,7 @@ const pagination = ref({ current_page: 1, last_page: 1, total: 0 });
 const stats = ref({ total: 0, active: 0, inactive: 0, by_role: {} });
 const pops = ref([]);
 const availableRoles = ref([]);
+const errorMessage = ref('');
 
 const loading = ref(false);
 const showForm = ref(false);
@@ -50,24 +51,44 @@ const roleColors = {
     cs: 'bg-yellow-100 text-yellow-800',
     keuangan: 'bg-indigo-100 text-indigo-800',
     owner: 'bg-red-100 text-red-800',
+    svp_lapangan: 'bg-slate-100 text-slate-800',
 };
 
 const API_BASE = '/api/v1';
 
 async function loadData() {
     loading.value = true;
+    errorMessage.value = '';
     try {
         const params = new URLSearchParams();
         Object.entries(filters.value).forEach(([key, val]) => {
             if (val !== '') params.append(key, val);
         });
 
-        const response = await fetch(`${API_BASE}/team?${params.toString()}`);
-        const result = await response.json();
-        team.value = result.data || [];
-        pagination.value = result.meta || { current_page: 1, last_page: 1, total: 0 };
+        const response = await fetch(`${API_BASE}/team?${params.toString()}`, {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+        });
+
+        let result = null;
+        try {
+            result = await response.json();
+        } catch {
+            result = null;
+        }
+
+        if (!response.ok) {
+            errorMessage.value = (result && (result.message || result.msg)) ? (result.message || result.msg) : `Gagal memuat data (HTTP ${response.status}).`;
+            team.value = [];
+            pagination.value = { current_page: 1, last_page: 1, total: 0 };
+            return;
+        }
+
+        team.value = result?.data || [];
+        pagination.value = result?.meta || { current_page: 1, last_page: 1, total: 0 };
     } catch (error) {
         console.error('Error loading team:', error);
+        errorMessage.value = 'Gagal memuat data tim. Cek koneksi/API.';
     } finally {
         loading.value = false;
     }
@@ -75,7 +96,11 @@ async function loadData() {
 
 async function loadStats() {
     try {
-        const response = await fetch(`${API_BASE}/team/stats`);
+        const response = await fetch(`${API_BASE}/team/stats`, {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+        });
+        if (!response.ok) return;
         stats.value = await response.json();
     } catch (error) {
         console.error('Error loading stats:', error);
@@ -84,7 +109,11 @@ async function loadStats() {
 
 async function loadPops() {
     try {
-        const response = await fetch(`${API_BASE}/pops/dropdown`);
+        const response = await fetch(`${API_BASE}/pops/dropdown`, {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+        });
+        if (!response.ok) return;
         const result = await response.json();
         pops.value = result.data || [];
     } catch (error) {
@@ -94,7 +123,11 @@ async function loadPops() {
 
 async function loadRoles() {
     try {
-        const response = await fetch(`${API_BASE}/roles`);
+        const response = await fetch(`${API_BASE}/roles`, {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+        });
+        if (!response.ok) return;
         const result = await response.json();
         availableRoles.value = result || [];
     } catch (error) {
@@ -150,10 +183,11 @@ async function saveItem() {
             : `${API_BASE}/team`;
 
         const method = isEditing.value ? 'PUT' : 'POST';
-        const body = { ...currentItem.value, tenant_id: 1 };
+        const body = { ...currentItem.value };
 
         const response = await fetch(url, {
             method,
+            credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             body: JSON.stringify(body),
         });
@@ -178,8 +212,9 @@ async function deleteItem(item) {
     if (!confirm(`Hapus anggota tim ${item.name}? Jika user ini memiliki akun login, akun tersebut juga akan dihapus.`)) return;
 
     try {
-        const response = await fetch(`${API_BASE}/team/${item.id}?tenant_id=1`, {
+        const response = await fetch(`${API_BASE}/team/${item.id}`, {
             method: 'DELETE',
+            credentials: 'same-origin',
             headers: { 'Accept': 'application/json' }
         });
 
@@ -200,8 +235,9 @@ async function toggleStatus(item) {
     try {
         const response = await fetch(`${API_BASE}/team/${item.id}/toggle-status`, {
             method: 'POST',
+            credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tenant_id: 1 }),
+            body: JSON.stringify({}),
         });
 
         if (response.ok) {
@@ -296,6 +332,9 @@ onMounted(() => {
 
             <!-- Table -->
             <div class="bg-white dark:bg-dark-800 rounded-xl shadow-card overflow-hidden border border-gray-100 dark:border-dark-700">
+                <div v-if="errorMessage" class="px-6 py-3 bg-red-50 text-red-700 text-sm border-b border-red-100">
+                    {{ errorMessage }}
+                </div>
                 <div class="overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-700">
                         <thead class="bg-gray-50 dark:bg-dark-700/50">
