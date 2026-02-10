@@ -91,8 +91,14 @@ class CheckSession
                 'teknisi_role' => $user->role ?? 'teknisi',
                 'teknisi_pop' => $user->default_pop ?? '',
             ]);
+
+            // Avoid stale admin-session flags when a user role changes.
+            $request->session()->forget(['is_logged_in', 'logged_in', 'admin_id']);
             return;
         }
+
+        // Avoid stale teknisi-session flags when a user role changes.
+        $request->session()->forget(['teknisi_logged_in', 'teknisi_id', 'teknisi_name', 'teknisi_role', 'teknisi_pop']);
 
         $request->session()->put([
             'is_logged_in' => true,
