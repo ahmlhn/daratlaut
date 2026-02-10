@@ -78,6 +78,12 @@ class RolesAndPermissionsSeeder extends Seeder
             'delete olts',
             'manage olt', // Legacy/coarse
             'manage isolir',
+            // Fiber / Kabel FO
+            'view fiber',
+            'create fiber',
+            'edit fiber',
+            'delete fiber',
+            'manage fiber',
             'manage settings',
             'manage system update',
             'manage roles',

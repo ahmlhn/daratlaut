@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\OltController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\ChatController;
+use App\Http\Controllers\Api\V1\FiberController;
 use App\Http\Controllers\Api\V1\InstallationController;
 use App\Http\Controllers\Api\V1\InvoiceController;
 use App\Http\Controllers\Api\V1\IsolirController;
@@ -99,6 +100,25 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::get('/maps/history/{techId}', [MapsController::class, 'history']);
     Route::post('/maps/location', [MapsController::class, 'updateLocation']);
     Route::get('/maps/installations', [MapsController::class, 'installations']);
+
+    // Fiber / Kabel FO
+    Route::get('/fiber/summary', [FiberController::class, 'summary']);
+    Route::get('/fiber/map-data', [FiberController::class, 'mapData']);
+
+    Route::get('/fiber/cables', [FiberController::class, 'listCables']);
+    Route::post('/fiber/cables', [FiberController::class, 'storeCable']);
+    Route::put('/fiber/cables/{id}', [FiberController::class, 'updateCable']);
+    Route::delete('/fiber/cables/{id}', [FiberController::class, 'deleteCable']);
+
+    Route::get('/fiber/points', [FiberController::class, 'listPoints']);
+    Route::post('/fiber/points', [FiberController::class, 'storePoint']);
+    Route::put('/fiber/points/{id}', [FiberController::class, 'updatePoint']);
+    Route::delete('/fiber/points/{id}', [FiberController::class, 'deletePoint']);
+
+    Route::get('/fiber/breaks', [FiberController::class, 'listBreaks']);
+    Route::post('/fiber/breaks', [FiberController::class, 'storeBreak']);
+    Route::put('/fiber/breaks/{id}', [FiberController::class, 'updateBreak']);
+    Route::delete('/fiber/breaks/{id}', [FiberController::class, 'deleteBreak']);
 
     // Team
     Route::get('/team/stats', [TeamController::class, 'stats']);

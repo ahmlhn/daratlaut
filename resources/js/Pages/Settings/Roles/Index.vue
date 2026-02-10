@@ -187,6 +187,18 @@ const MODULE_MATRIX = [
     },
   },
   {
+    key: 'fiber',
+    label: 'Kabel FO',
+    description: 'Pemetaan jalur kabel, titik sambungan, dan data putus.',
+    perms: {
+      view: 'view fiber',
+      create: 'create fiber',
+      edit: 'edit fiber',
+      delete: 'delete fiber',
+      manage: 'manage fiber',
+    },
+  },
+  {
     key: 'olts',
     label: 'OLT',
     description: 'Provisioning OLT/ONU.',

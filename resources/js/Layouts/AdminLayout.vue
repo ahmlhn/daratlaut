@@ -182,6 +182,7 @@ const baseNavigationGroups = [
   {
     name: 'JARINGAN',
     items: [
+      { name: 'Kabel FO', href: '/fiber', icon: 'map-pin', permissionsAny: ['view fiber', 'manage fiber'] },
       { name: 'OLT', href: '/olts', icon: 'server', permissionsAny: ['view olts', 'manage olt'] },
     ]
   },

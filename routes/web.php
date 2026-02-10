@@ -9,6 +9,7 @@ use App\Http\Controllers\Web\DashboardController;
 use App\Http\Controllers\Web\DirectApiController;
 use App\Http\Controllers\Web\DirectController;
 use App\Http\Controllers\Web\LogController;
+use App\Http\Controllers\Web\FiberController;
 use App\Http\Controllers\Web\InstallationController;
 use App\Http\Controllers\Web\InvoiceController;
 use App\Http\Controllers\Web\FinanceController;
@@ -164,6 +165,9 @@ Route::middleware(['auth', 'resolve.tenant'])->group(function () {
     
     // OLT Management
     Route::get('/olts', [OltController::class, 'index'])->name('olts.index');
+
+    // Fiber / Kabel FO
+    Route::get('/fiber', [FiberController::class, 'index'])->name('fiber.index');
     
     // Finance (Keuangan)
     Route::get('/finance', [FinanceController::class, 'index'])->name('finance.index');
