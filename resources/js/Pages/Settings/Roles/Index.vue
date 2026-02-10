@@ -32,189 +32,194 @@ const originalSnapshot = ref('')
 
 const SYSTEM_ROLE_NAMES = ['admin', 'owner']
 
-const LEVELS = [
-  { value: 'none', label: 'Tidak ada' },
-  { value: 'read', label: 'Lihat' },
-  { value: 'operator', label: 'Operator' },
-  { value: 'manager', label: 'Manager' },
+const MATRIX_COLUMNS = [
+  { key: 'view', label: 'Lihat' },
+  { key: 'create', label: 'Tambah' },
+  { key: 'edit', label: 'Edit' },
+  { key: 'delete', label: 'Hapus' },
+  { key: 'approve', label: 'Approve' },
+  { key: 'export', label: 'Export' },
+  { key: 'manage', label: 'Manage' },
 ]
 
-const MODULE_PRESETS = [
+const MODULE_MATRIX = [
   {
     key: 'dashboard',
     label: 'Dashboard',
     description: 'Ringkasan & statistik.',
-    levels: {
-      read: ['view dashboard'],
-      operator: ['view dashboard'],
-      manager: ['view dashboard'],
-    },
+    perms: { view: 'view dashboard' },
   },
   {
     key: 'installations',
     label: 'Pasang Baru',
     description: 'Instalasi, monitoring, approval.',
-    levels: {
-      read: ['view installations', 'view riwayat installations'],
-      operator: ['view installations', 'create installations', 'edit installations', 'view riwayat installations'],
-      manager: [
-        'view installations',
-        'create installations',
-        'edit installations',
-        'delete installations',
-        'approve installations',
-        'send installations recap',
-        'view riwayat installations',
-      ],
+    perms: {
+      view: 'view installations',
+      create: 'create installations',
+      edit: 'edit installations',
+      delete: 'delete installations',
+      approve: 'approve installations',
     },
+    extras: [
+      { label: 'Kirim rekap', perm: 'send installations recap' },
+      { label: 'Riwayat', perm: 'view riwayat installations' },
+    ],
   },
   {
     key: 'team',
     label: 'Tim',
     description: 'Teknisi/sales/staff.',
-    levels: {
-      read: ['view team'],
-      operator: ['view team', 'create team', 'edit team'],
-      manager: ['manage team', 'view team', 'create team', 'edit team', 'delete team'],
+    perms: {
+      view: 'view team',
+      create: 'create team',
+      edit: 'edit team',
+      delete: 'delete team',
+      manage: 'manage team',
     },
   },
   {
     key: 'teknisi',
     label: 'Teknisi',
     description: 'Tugas, riwayat, rekap.',
-    levels: {
-      read: ['view teknisi'],
-      operator: ['view teknisi', 'edit teknisi'],
-      manager: ['view teknisi', 'edit teknisi', 'send teknisi recap'],
+    perms: {
+      view: 'view teknisi',
+      edit: 'edit teknisi',
     },
+    extras: [{ label: 'Kirim rekap', perm: 'send teknisi recap' }],
   },
   {
     key: 'maps',
     label: 'Maps',
     description: 'Tracking teknisi.',
-    levels: {
-      read: ['view maps'],
-      operator: ['view maps', 'manage maps'],
-      manager: ['view maps', 'manage maps'],
+    perms: {
+      view: 'view maps',
+      manage: 'manage maps',
     },
   },
   {
     key: 'chat',
     label: 'Chat',
     description: 'Chat admin.',
-    levels: {
-      read: ['view chat'],
-      operator: ['view chat', 'send chat', 'edit chat'],
-      manager: ['view chat', 'send chat', 'edit chat', 'delete chat'],
+    perms: {
+      view: 'view chat',
+      create: 'send chat',
+      edit: 'edit chat',
+      delete: 'delete chat',
     },
   },
   {
     key: 'leads',
     label: 'Leads',
     description: 'Prospek & konversi.',
-    levels: {
-      read: ['view leads'],
-      operator: ['view leads', 'create leads', 'edit leads', 'convert leads', 'bulk leads'],
-      manager: ['view leads', 'create leads', 'edit leads', 'delete leads', 'convert leads', 'bulk leads'],
+    perms: {
+      view: 'view leads',
+      create: 'create leads',
+      edit: 'edit leads',
+      delete: 'delete leads',
     },
+    extras: [
+      { label: 'Convert', perm: 'convert leads' },
+      { label: 'Bulk', perm: 'bulk leads' },
+    ],
   },
   {
     key: 'customers',
     label: 'Pelanggan',
     description: 'Data pelanggan.',
-    levels: {
-      read: ['view customers'],
-      operator: ['view customers', 'create customers', 'edit customers'],
-      manager: ['view customers', 'create customers', 'edit customers', 'delete customers'],
+    perms: {
+      view: 'view customers',
+      create: 'create customers',
+      edit: 'edit customers',
+      delete: 'delete customers',
     },
   },
   {
     key: 'plans',
     label: 'Paket Layanan',
     description: 'Produk/paket.',
-    levels: {
-      read: ['view plans'],
-      operator: ['view plans', 'create plans', 'edit plans'],
-      manager: ['view plans', 'create plans', 'edit plans', 'delete plans'],
+    perms: {
+      view: 'view plans',
+      create: 'create plans',
+      edit: 'edit plans',
+      delete: 'delete plans',
     },
   },
   {
     key: 'invoices',
     label: 'Invoice',
     description: 'Tagihan.',
-    levels: {
-      read: ['view invoices'],
-      operator: ['view invoices', 'create invoices', 'edit invoices'],
-      manager: ['view invoices', 'create invoices', 'edit invoices', 'delete invoices'],
+    perms: {
+      view: 'view invoices',
+      create: 'create invoices',
+      edit: 'edit invoices',
+      delete: 'delete invoices',
     },
   },
   {
     key: 'payments',
     label: 'Pembayaran',
     description: 'Transaksi.',
-    levels: {
-      read: ['view payments'],
-      operator: ['view payments', 'create payments', 'edit payments'],
-      manager: ['view payments', 'create payments', 'edit payments', 'delete payments'],
+    perms: {
+      view: 'view payments',
+      create: 'create payments',
+      edit: 'edit payments',
+      delete: 'delete payments',
     },
   },
   {
     key: 'reports',
     label: 'Laporan',
     description: 'Analitik & export.',
-    levels: {
-      read: ['view reports'],
-      operator: ['view reports', 'export reports'],
-      manager: ['view reports', 'export reports'],
+    perms: {
+      view: 'view reports',
+      export: 'export reports',
     },
   },
   {
     key: 'finance',
     label: 'Keuangan',
     description: 'Transaksi & approval.',
-    levels: {
-      read: ['view finance'],
-      operator: ['view finance', 'create finance', 'edit finance', 'export finance'],
-      manager: [
-        'manage finance',
-        'view finance',
-        'create finance',
-        'edit finance',
-        'delete finance',
-        'approve finance',
-        'export finance',
-      ],
+    perms: {
+      view: 'view finance',
+      create: 'create finance',
+      edit: 'edit finance',
+      delete: 'delete finance',
+      approve: 'approve finance',
+      export: 'export finance',
+      manage: 'manage finance',
     },
   },
   {
     key: 'olts',
     label: 'OLT',
     description: 'Provisioning OLT/ONU.',
-    levels: {
-      read: ['view olts'],
-      operator: ['manage olt', 'view olts', 'create olts', 'edit olts'],
-      manager: ['manage olt', 'view olts', 'create olts', 'edit olts', 'delete olts'],
+    perms: {
+      view: 'view olts',
+      create: 'create olts',
+      edit: 'edit olts',
+      delete: 'delete olts',
+      manage: 'manage olt',
     },
   },
   {
     key: 'isolir',
     label: 'Isolir',
     description: 'Suspend/unsuspend.',
-    levels: {
-      read: [],
-      operator: ['manage isolir'],
-      manager: ['manage isolir'],
+    perms: {
+      manage: 'manage isolir',
     },
   },
   {
     key: 'settings',
     label: 'Pengaturan Sistem',
     description: 'Settings, roles, update.',
-    levels: {
-      read: [],
-      operator: ['manage settings'],
-      manager: ['manage settings', 'manage roles', 'manage system update'],
+    perms: {
+      manage: 'manage settings',
     },
+    extras: [
+      { label: 'Kelola role', perm: 'manage roles' },
+      { label: 'Update sistem', perm: 'manage system update' },
+    ],
   },
 ]
 
@@ -534,65 +539,60 @@ function toggleGroup(perms) {
 
 const permissionNameSet = computed(() => new Set((permissions.value || []).map((p) => p.name)))
 
-function presetPerms(module, level) {
-  const all = (module?.levels?.[level] || []).slice()
+function permExists(name) {
+  if (!name) return false
   const set = permissionNameSet.value
-  if (!set || set.size === 0) return all
-  return all.filter((p) => set.has(p))
+  if (!set || set.size === 0) return true
+  return set.has(name)
 }
 
-function moduleAllPerms(module) {
-  return uniq([...presetPerms(module, 'read'), ...presetPerms(module, 'operator'), ...presetPerms(module, 'manager')])
+function matrixPerm(module, colKey) {
+  return module?.perms?.[colKey] || null
 }
 
-function selectedPermsInModule(module) {
-  const modulePerms = moduleAllPerms(module)
+function moduleRowPerms(module) {
+  const out = []
+  ;(MATRIX_COLUMNS || []).forEach((c) => {
+    const p = matrixPerm(module, c.key)
+    if (p) out.push(p)
+  })
+  ;(module?.extras || []).forEach((e) => {
+    if (e?.perm) out.push(e.perm)
+  })
+  const names = uniq(out)
+  const set = permissionNameSet.value
+  if (!set || set.size === 0) return names
+  return names.filter((p) => set.has(p))
+}
+
+function rowPermCount(module) {
+  return moduleRowPerms(module).length
+}
+
+function rowSelectedCount(module) {
+  const perms = moduleRowPerms(module)
+  if (perms.length === 0) return 0
   const selected = new Set(form.value.permissions || [])
-  return modulePerms.filter((p) => selected.has(p))
+  return perms.filter((p) => selected.has(p)).length
 }
 
-function setsEqual(a, b) {
-  if (a.size !== b.size) return false
-  for (const v of a) {
-    if (!b.has(v)) return false
-  }
-  return true
+function isRowAllSelected(module) {
+  const perms = moduleRowPerms(module)
+  if (perms.length === 0) return false
+  const selected = new Set(form.value.permissions || [])
+  return perms.every((p) => selected.has(p))
 }
 
-function getModuleLevel(module) {
-  const selected = new Set(selectedPermsInModule(module))
-  if (selected.size === 0) return 'none'
+function toggleRowAll(module) {
+  const perms = moduleRowPerms(module)
+  if (perms.length === 0) return
 
-  const read = new Set(presetPerms(module, 'read'))
-  const operator = new Set(presetPerms(module, 'operator'))
-  const manager = new Set(presetPerms(module, 'manager'))
+  const selected = new Set(form.value.permissions || [])
+  const allSelected = perms.every((p) => selected.has(p))
+  if (allSelected) perms.forEach((p) => selected.delete(p))
+  else perms.forEach((p) => selected.add(p))
 
-  if (setsEqual(selected, read)) return 'read'
-  if (setsEqual(selected, operator)) return 'operator'
-  if (setsEqual(selected, manager)) return 'manager'
-  return 'custom'
-}
-
-function setModuleLevel(module, level) {
-  if (!module) return
-  if (!['none', 'read', 'operator', 'manager'].includes(level)) return
-
-  const remove = new Set(moduleAllPerms(module))
-  const next = (form.value.permissions || []).filter((p) => !remove.has(p))
-
-  if (level !== 'none') {
-    next.push(...presetPerms(module, level))
-  }
-
-  form.value.permissions = uniq(next)
-}
-
-function modulePreview(module) {
-  const level = getModuleLevel(module)
-  const list = level === 'custom' ? selectedPermsInModule(module) : level === 'none' ? [] : presetPerms(module, level)
-  const head = list.slice(0, 3)
-  const extra = Math.max(0, list.length - head.length)
-  return { list, head, extra, level }
+  form.value.permissions = Array.from(selected)
 }
 
 onMounted(() => {
@@ -892,9 +892,9 @@ onMounted(() => {
             <div>
               <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-3">
                 <div>
-                  <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300">Preset Akses per Modul</label>
+                  <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300">Matrix Akses per Modul</label>
                   <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    Pilih level akses. Untuk detail granular, aktifkan mode lanjutan.
+                    Centang permission per aksi. Untuk permission khusus, aktifkan mode lanjutan.
                   </p>
                 </div>
 
@@ -910,59 +910,102 @@ onMounted(() => {
                 </button>
               </div>
 
-              <div class="border border-gray-200 dark:border-dark-700 rounded-xl bg-gray-50/50 dark:bg-dark-900/20 p-4">
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div
-                    v-for="m in MODULE_PRESETS"
-                    :key="m.key"
-                    class="p-4 rounded-xl border bg-white dark:bg-dark-900 transition-colors"
-                    :class="[getModuleLevel(m) === 'custom' ? 'border-amber-200 dark:border-amber-900/40' : 'border-gray-100 dark:border-dark-700']"
-                  >
-                    <div class="flex items-start justify-between gap-3">
-                      <div>
-                        <div class="text-sm font-bold text-gray-900 dark:text-white">
-                          {{ m.label }}
-                          <span
-                            v-if="getModuleLevel(m) === 'custom'"
-                            class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-900/40"
-                          >
-                            Custom
-                          </span>
-                        </div>
-                        <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ m.description }}</div>
-                      </div>
-
-                      <div class="shrink-0">
-                        <select
-                          :value="getModuleLevel(m)"
-                          @change="setModuleLevel(m, $event.target.value)"
-                          class="text-sm rounded-lg border border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-800 text-gray-800 dark:text-gray-200 focus:ring-primary-500 focus:border-primary-500 px-3 py-2"
+              <div class="border border-gray-200 dark:border-dark-700 rounded-xl bg-gray-50/50 dark:bg-dark-900/20 overflow-hidden">
+                <div class="overflow-x-auto">
+                  <table class="min-w-[1040px] w-full text-sm">
+                    <thead class="bg-white/60 dark:bg-dark-900/60">
+                      <tr class="text-xs font-extrabold text-gray-600 dark:text-gray-300">
+                        <th
+                          class="sticky left-0 z-10 text-left px-4 py-3 bg-white/60 dark:bg-dark-900/60 border-b border-gray-200 dark:border-dark-700"
                         >
-                          <option value="custom" disabled>Custom</option>
-                          <option v-for="opt in LEVELS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div class="mt-3 flex flex-wrap gap-1.5">
-                      <template v-for="p in modulePreview(m).head" :key="p">
-                        <span
-                          class="inline-flex items-center px-2 py-1 rounded text-[11px] font-medium bg-gray-50 dark:bg-dark-800 text-gray-600 dark:text-gray-300 border border-gray-100 dark:border-dark-700"
+                          Modul
+                        </th>
+                        <th
+                          v-for="col in MATRIX_COLUMNS"
+                          :key="col.key"
+                          class="px-3 py-3 text-center border-b border-gray-200 dark:border-dark-700 whitespace-nowrap"
                         >
-                          {{ p }}
-                        </span>
-                      </template>
-                      <span
-                        v-if="modulePreview(m).extra > 0"
-                        class="inline-flex items-center px-2 py-1 rounded text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300"
+                          {{ col.label }}
+                        </th>
+                        <th class="px-4 py-3 text-left border-b border-gray-200 dark:border-dark-700">Extra</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200 dark:divide-dark-700">
+                      <tr
+                        v-for="m in MODULE_MATRIX"
+                        :key="m.key"
+                        class="bg-white dark:bg-dark-900 hover:bg-gray-50 dark:hover:bg-dark-800/60 transition-colors"
                       >
-                        +{{ modulePreview(m).extra }}
-                      </span>
-                      <span v-if="modulePreview(m).list.length === 0" class="text-[11px] text-gray-400 italic py-1">
-                        Tidak ada akses.
-                      </span>
-                    </div>
-                  </div>
+                        <td
+                          class="sticky left-0 z-10 px-4 py-3 bg-white dark:bg-dark-900 border-r border-gray-100 dark:border-dark-700"
+                        >
+                          <div class="flex items-start justify-between gap-3">
+                            <div>
+                              <div class="text-sm font-bold text-gray-900 dark:text-white">
+                                {{ m.label }}
+                              </div>
+                              <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                {{ m.description }}
+                              </div>
+                              <div class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                                Terpilih: {{ rowSelectedCount(m) }}/{{ rowPermCount(m) }}
+                              </div>
+                            </div>
+
+                            <label
+                              class="inline-flex items-center gap-2 text-[11px] font-semibold text-gray-600 dark:text-gray-300 select-none"
+                            >
+                              <input
+                                type="checkbox"
+                                :checked="isRowAllSelected(m)"
+                                :disabled="loadingPermissions || rowPermCount(m) === 0"
+                                @change="toggleRowAll(m)"
+                                class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed"
+                              />
+                              Semua
+                            </label>
+                          </div>
+                        </td>
+
+                        <td v-for="col in MATRIX_COLUMNS" :key="col.key" class="px-3 py-3 text-center">
+                          <template v-if="matrixPerm(m, col.key)">
+                            <input
+                              type="checkbox"
+                              :checked="form.permissions.includes(matrixPerm(m, col.key))"
+                              :disabled="loadingPermissions || !permExists(matrixPerm(m, col.key))"
+                              @change="togglePermission(matrixPerm(m, col.key))"
+                              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed"
+                            />
+                          </template>
+                          <span v-else class="text-xs text-gray-300 dark:text-dark-600 select-none">-</span>
+                        </td>
+
+                        <td class="px-4 py-3">
+                          <div v-if="(m.extras || []).length > 0" class="flex flex-wrap gap-2">
+                            <label
+                              v-for="ex in m.extras"
+                              :key="ex.perm"
+                              class="inline-flex items-center gap-2 px-2 py-1 rounded-lg border border-gray-200 dark:border-dark-700 bg-gray-50 dark:bg-dark-800 text-[11px] font-semibold text-gray-700 dark:text-gray-200 select-none"
+                            >
+                              <input
+                                type="checkbox"
+                                :checked="form.permissions.includes(ex.perm)"
+                                :disabled="loadingPermissions || !permExists(ex.perm)"
+                                @change="togglePermission(ex.perm)"
+                                class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed"
+                              />
+                              <span>{{ ex.label }}</span>
+                            </label>
+                          </div>
+                          <div v-else class="text-xs text-gray-400 italic">Tidak ada.</div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-dark-700">
+                  Tips: Gunakan "Semua" untuk toggle satu modul. Untuk permission yang tidak muncul di matrix, gunakan Mode Lanjutan.
                 </div>
               </div>
             </div>
