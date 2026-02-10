@@ -351,8 +351,15 @@ function uniq(arr) {
 
 function presetPerms(module, level) {
     const all = (module?.levels?.[level] || []).slice();
+    const set = permissionNameSet.value;
+
+    // If permissions haven't loaded yet, don't block presets (best-effort).
+    if (!set || set.size === 0) {
+        return all;
+    }
+
     // Only apply permissions that exist in the DB (in case catalog differs).
-    return all.filter(p => permissionNameSet.value.has(p));
+    return all.filter(p => set.has(p));
 }
 
 function moduleAllPerms(module) {
