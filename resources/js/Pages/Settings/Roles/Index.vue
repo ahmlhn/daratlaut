@@ -11,6 +11,7 @@ const showForm = ref(false);
 const isEditing = ref(false);
 const processing = ref(false);
 const searchQuery = ref('');
+const showAdvanced = ref(false);
 
 const form = ref({
     id: null,
@@ -19,6 +20,184 @@ const form = ref({
 });
 
 const API_BASE = '/api/v1';
+
+const LEVELS = [
+    { value: 'none', label: 'Tidak ada' },
+    { value: 'read', label: 'Lihat' },
+    { value: 'operator', label: 'Operator' },
+    { value: 'manager', label: 'Manager' },
+];
+
+const MODULE_PRESETS = [
+    {
+        key: 'dashboard',
+        label: 'Dashboard',
+        description: 'Ringkasan & statistik.',
+        levels: {
+            read: ['view dashboard'],
+            operator: ['view dashboard'],
+            manager: ['view dashboard'],
+        },
+    },
+    {
+        key: 'installations',
+        label: 'Pasang Baru',
+        description: 'Instalasi, monitoring, approval.',
+        levels: {
+            read: ['view installations', 'view riwayat installations'],
+            operator: ['view installations', 'create installations', 'edit installations', 'view riwayat installations'],
+            manager: [
+                'view installations',
+                'create installations',
+                'edit installations',
+                'delete installations',
+                'approve installations',
+                'send installations recap',
+                'view riwayat installations',
+            ],
+        },
+    },
+    {
+        key: 'team',
+        label: 'Tim',
+        description: 'Teknisi/sales/staff.',
+        levels: {
+            read: ['view team'],
+            operator: ['view team', 'create team', 'edit team'],
+            manager: ['manage team', 'view team', 'create team', 'edit team', 'delete team'],
+        },
+    },
+    {
+        key: 'teknisi',
+        label: 'Teknisi',
+        description: 'Tugas, riwayat, rekap.',
+        levels: {
+            read: ['view teknisi'],
+            operator: ['view teknisi', 'edit teknisi'],
+            manager: ['view teknisi', 'edit teknisi', 'send teknisi recap'],
+        },
+    },
+    {
+        key: 'maps',
+        label: 'Maps',
+        description: 'Tracking teknisi.',
+        levels: {
+            read: ['view maps'],
+            operator: ['view maps', 'manage maps'],
+            manager: ['view maps', 'manage maps'],
+        },
+    },
+    {
+        key: 'chat',
+        label: 'Chat',
+        description: 'Chat admin.',
+        levels: {
+            read: ['view chat'],
+            operator: ['view chat', 'send chat', 'edit chat'],
+            manager: ['view chat', 'send chat', 'edit chat', 'delete chat'],
+        },
+    },
+    {
+        key: 'leads',
+        label: 'Leads',
+        description: 'Prospek & konversi.',
+        levels: {
+            read: ['view leads'],
+            operator: ['view leads', 'create leads', 'edit leads', 'convert leads', 'bulk leads'],
+            manager: ['view leads', 'create leads', 'edit leads', 'delete leads', 'convert leads', 'bulk leads'],
+        },
+    },
+    {
+        key: 'customers',
+        label: 'Pelanggan',
+        description: 'Data pelanggan.',
+        levels: {
+            read: ['view customers'],
+            operator: ['view customers', 'create customers', 'edit customers'],
+            manager: ['view customers', 'create customers', 'edit customers', 'delete customers'],
+        },
+    },
+    {
+        key: 'plans',
+        label: 'Paket Layanan',
+        description: 'Produk/paket.',
+        levels: {
+            read: ['view plans'],
+            operator: ['view plans', 'create plans', 'edit plans'],
+            manager: ['view plans', 'create plans', 'edit plans', 'delete plans'],
+        },
+    },
+    {
+        key: 'invoices',
+        label: 'Invoice',
+        description: 'Tagihan.',
+        levels: {
+            read: ['view invoices'],
+            operator: ['view invoices', 'create invoices', 'edit invoices'],
+            manager: ['view invoices', 'create invoices', 'edit invoices', 'delete invoices'],
+        },
+    },
+    {
+        key: 'payments',
+        label: 'Pembayaran',
+        description: 'Transaksi.',
+        levels: {
+            read: ['view payments'],
+            operator: ['view payments', 'create payments', 'edit payments'],
+            manager: ['view payments', 'create payments', 'edit payments', 'delete payments'],
+        },
+    },
+    {
+        key: 'reports',
+        label: 'Laporan',
+        description: 'Analitik & export.',
+        levels: {
+            read: ['view reports'],
+            operator: ['view reports', 'export reports'],
+            manager: ['view reports', 'export reports'],
+        },
+    },
+    {
+        key: 'finance',
+        label: 'Keuangan',
+        description: 'Transaksi & approval.',
+        levels: {
+            read: ['view finance'],
+            operator: ['view finance', 'create finance', 'edit finance', 'export finance'],
+            manager: ['manage finance', 'view finance', 'create finance', 'edit finance', 'delete finance', 'approve finance', 'export finance'],
+        },
+    },
+    {
+        key: 'olts',
+        label: 'OLT',
+        description: 'Provisioning OLT/ONU.',
+        levels: {
+            read: ['view olts'],
+            operator: ['manage olt', 'view olts', 'create olts', 'edit olts'],
+            manager: ['manage olt', 'view olts', 'create olts', 'edit olts', 'delete olts'],
+        },
+    },
+    {
+        key: 'isolir',
+        label: 'Isolir',
+        description: 'Suspend/unsuspend.',
+        levels: {
+            read: [],
+            operator: ['manage isolir'],
+            manager: ['manage isolir'],
+        },
+    },
+    {
+        key: 'settings',
+        label: 'Pengaturan Sistem',
+        description: 'Settings, roles, update.',
+        levels: {
+            read: [],
+            operator: ['manage settings'],
+            manager: ['manage settings', 'manage roles', 'manage system update'],
+        },
+    },
+];
 
 // Load Data
 async function loadRoles() {
@@ -48,6 +227,7 @@ function openCreateForm() {
     form.value = { id: null, name: '', permissions: [] };
     showForm.value = true;
     searchQuery.value = '';
+    showAdvanced.value = false;
 }
 
 function openEditForm(role) {
@@ -59,6 +239,7 @@ function openEditForm(role) {
     };
     showForm.value = true;
     searchQuery.value = '';
+    showAdvanced.value = false;
 }
 
 async function saveRole() {
@@ -153,6 +334,89 @@ function toggleGroup(groupName, perms) {
             if (!form.value.permissions.includes(p.name)) form.value.permissions.push(p.name);
         });
     }
+}
+
+const permissionNameSet = computed(() => new Set((permissions.value || []).map(p => p.name)));
+
+function uniq(arr) {
+    const out = [];
+    const seen = new Set();
+    (arr || []).forEach(v => {
+        if (!v || seen.has(v)) return;
+        seen.add(v);
+        out.push(v);
+    });
+    return out;
+}
+
+function presetPerms(module, level) {
+    const all = (module?.levels?.[level] || []).slice();
+    // Only apply permissions that exist in the DB (in case catalog differs).
+    return all.filter(p => permissionNameSet.value.has(p));
+}
+
+function moduleAllPerms(module) {
+    return uniq([
+        ...presetPerms(module, 'read'),
+        ...presetPerms(module, 'operator'),
+        ...presetPerms(module, 'manager'),
+    ]);
+}
+
+function selectedPermsInModule(module) {
+    const modulePerms = moduleAllPerms(module);
+    const selected = new Set(form.value.permissions || []);
+    return modulePerms.filter(p => selected.has(p));
+}
+
+function setsEqual(a, b) {
+    if (a.size !== b.size) return false;
+    for (const v of a) {
+        if (!b.has(v)) return false;
+    }
+    return true;
+}
+
+function getModuleLevel(module) {
+    const selected = new Set(selectedPermsInModule(module));
+    if (selected.size === 0) return 'none';
+
+    const read = new Set(presetPerms(module, 'read'));
+    const operator = new Set(presetPerms(module, 'operator'));
+    const manager = new Set(presetPerms(module, 'manager'));
+
+    // Prefer the lowest matching level (more intuitive when sets overlap).
+    if (setsEqual(selected, read)) return 'read';
+    if (setsEqual(selected, operator)) return 'operator';
+    if (setsEqual(selected, manager)) return 'manager';
+
+    return 'custom';
+}
+
+function setModuleLevel(module, level) {
+    if (!module) return;
+    if (!['none', 'read', 'operator', 'manager'].includes(level)) return;
+
+    const remove = new Set(moduleAllPerms(module));
+    const next = (form.value.permissions || []).filter(p => !remove.has(p));
+
+    if (level !== 'none') {
+        next.push(...presetPerms(module, level));
+    }
+
+    form.value.permissions = uniq(next);
+}
+
+function modulePreview(module) {
+    const level = getModuleLevel(module);
+    const list = level === 'custom'
+        ? selectedPermsInModule(module)
+        : (level === 'none' ? [] : presetPerms(module, level));
+
+    const head = list.slice(0, 3);
+    const extra = Math.max(0, list.length - head.length);
+
+    return { list, head, extra, level };
 }
 
 onMounted(() => {
@@ -316,48 +580,124 @@ onMounted(() => {
 
                                 <!-- Permissions Section -->
                                 <div>
-                                    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-4">
-                                        <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300">
-                                            Akses & Permissions
-                                        </label>
-                                        <!-- Search Filter -->
-                                        <div class="relative w-full sm:w-64">
-                                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-3">
+                                        <div>
+                                            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                                                Preset Akses per Modul
+                                            </label>
+                                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                                Pilih level akses. Kalau perlu detail, buka mode lanjutan.
+                                            </p>
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            @click="showAdvanced = !showAdvanced"
+                                            class="inline-flex items-center justify-center px-3 py-2 text-xs font-semibold rounded-xl border border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-700 transition-colors"
+                                        >
+                                            <svg class="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                            {{ showAdvanced ? 'Sembunyikan Mode Lanjutan' : 'Tampilkan Mode Lanjutan' }}
+                                        </button>
+                                    </div>
+
+                                    <div class="border border-gray-200 dark:border-dark-700 rounded-xl bg-gray-50/50 dark:bg-dark-800/50 p-4">
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div
+                                                v-for="m in MODULE_PRESETS"
+                                                :key="m.key"
+                                                class="p-4 rounded-xl border bg-white dark:bg-dark-800 transition-colors"
+                                                :class="[
+                                                    getModuleLevel(m) === 'custom' ? 'border-amber-200 dark:border-amber-900/40' : 'border-gray-100 dark:border-dark-700'
+                                                ]"
+                                            >
+                                                <div class="flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <div class="text-sm font-bold text-gray-900 dark:text-white">
+                                                            {{ m.label }}
+                                                            <span v-if="getModuleLevel(m) === 'custom'" class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-900/40">
+                                                                Custom
+                                                            </span>
+                                                        </div>
+                                                        <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                                            {{ m.description }}
+                                                        </div>
+                                                    </div>
+
+                                                    <div class="shrink-0">
+                                                        <select
+                                                            :value="getModuleLevel(m)"
+                                                            @change="setModuleLevel(m, $event.target.value)"
+                                                            class="text-sm rounded-lg border border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-900 text-gray-800 dark:text-gray-200 focus:ring-primary-500 focus:border-primary-500 px-3 py-2"
+                                                        >
+                                                            <option value="custom" disabled>Custom</option>
+                                                            <option v-for="opt in LEVELS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+
+                                                <div class="mt-3 flex flex-wrap gap-1.5">
+                                                    <template v-for="p in modulePreview(m).head" :key="p">
+                                                        <span class="inline-flex items-center px-2 py-1 rounded text-[11px] font-medium bg-gray-50 dark:bg-dark-700 text-gray-600 dark:text-gray-300 border border-gray-100 dark:border-gray-600">
+                                                            {{ p }}
+                                                        </span>
+                                                    </template>
+                                                    <span v-if="modulePreview(m).extra > 0" class="inline-flex items-center px-2 py-1 rounded text-[11px] font-semibold bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300">
+                                                        +{{ modulePreview(m).extra }}
+                                                    </span>
+                                                    <span v-if="modulePreview(m).list.length === 0" class="text-[11px] text-gray-400 italic py-1">
+                                                        Tidak ada akses.
+                                                    </span>
+                                                </div>
                                             </div>
-                                            <input v-model="searchQuery" type="text" 
-                                                class="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-300 dark:border-dark-600 rounded-lg focus:ring-primary-500 focus:border-primary-500 dark:bg-dark-800 dark:text-white" 
-                                                placeholder="Cari izin akses..." />
                                         </div>
                                     </div>
 
-                                    <div class="h-[60vh] sm:h-96 overflow-y-auto custom-scrollbar border border-gray-200 dark:border-dark-700 rounded-xl bg-gray-50/50 dark:bg-dark-800/50 p-4 space-y-4">
-                                        <div v-for="(perms, group) in groupedPermissions" :key="group" class="bg-white dark:bg-dark-800 rounded-lg border border-gray-100 dark:border-dark-700 p-4 shadow-sm">
-                                            <div class="flex items-center justify-between mb-3 border-b border-gray-100 dark:border-dark-700 pb-2">
-                                                <h4 class="text-sm font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider flex items-center">
-                                                    <span class="w-1.5 h-4 bg-primary-500 rounded-full mr-2"></span>
-                                                    {{ group }}
-                                                </h4>
-                                                <button @click="toggleGroup(group, perms)" class="text-xs text-primary-600 hover:text-primary-700 font-medium hover:underline">
-                                                    Toggle Semua
-                                                </button>
-                                            </div>
-                                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                                <label v-for="perm in perms" :key="perm.id" 
-                                                    class="group flex items-start space-x-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-dark-700 cursor-pointer transition-colors border border-transparent hover:border-gray-200 dark:hover:border-dark-600">
-                                                    <input type="checkbox" :checked="form.permissions.includes(perm.name)" @change="togglePermission(perm.name)" 
-                                                        class="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer">
-                                                    <span class="text-sm text-gray-600 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white transition-colors select-none">
-                                                        {{ perm.name }}
-                                                    </span>
-                                                </label>
+                                    <div v-if="showAdvanced" class="mt-5">
+                                        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-4">
+                                            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                                                Mode Lanjutan: Checklist Permission
+                                            </label>
+                                            <!-- Search Filter -->
+                                            <div class="relative w-full sm:w-72">
+                                                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                                    <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                                </div>
+                                                <input v-model="searchQuery" type="text" 
+                                                    class="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-300 dark:border-dark-600 rounded-lg focus:ring-primary-500 focus:border-primary-500 dark:bg-dark-800 dark:text-white" 
+                                                    placeholder="Cari izin akses..." />
                                             </div>
                                         </div>
-                                        
-                                        <!-- Keep empty state if search returns nothing -->
-                                        <div v-if="Object.keys(groupedPermissions).length === 0" class="text-center py-12 text-gray-500">
-                                            <svg class="w-12 h-12 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                            <p>Tidak ada permission yang cocok dengan pencarian.</p>
+
+                                        <div class="h-[60vh] sm:h-96 overflow-y-auto custom-scrollbar border border-gray-200 dark:border-dark-700 rounded-xl bg-gray-50/50 dark:bg-dark-800/50 p-4 space-y-4">
+                                            <div v-for="(perms, group) in groupedPermissions" :key="group" class="bg-white dark:bg-dark-800 rounded-lg border border-gray-100 dark:border-dark-700 p-4 shadow-sm">
+                                                <div class="flex items-center justify-between mb-3 border-b border-gray-100 dark:border-dark-700 pb-2">
+                                                    <h4 class="text-sm font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider flex items-center">
+                                                        <span class="w-1.5 h-4 bg-primary-500 rounded-full mr-2"></span>
+                                                        {{ group }}
+                                                    </h4>
+                                                    <button @click="toggleGroup(group, perms)" class="text-xs text-primary-600 hover:text-primary-700 font-medium hover:underline">
+                                                        Toggle Semua
+                                                    </button>
+                                                </div>
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                    <label v-for="perm in perms" :key="perm.id" 
+                                                        class="group flex items-start space-x-3 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-dark-700 cursor-pointer transition-colors border border-transparent hover:border-gray-200 dark:hover:border-dark-600">
+                                                        <input type="checkbox" :checked="form.permissions.includes(perm.name)" @change="togglePermission(perm.name)" 
+                                                            class="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer">
+                                                        <span class="text-sm text-gray-600 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white transition-colors select-none">
+                                                            {{ perm.name }}
+                                                        </span>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            
+                                            <!-- Keep empty state if search returns nothing -->
+                                            <div v-if="Object.keys(groupedPermissions).length === 0" class="text-center py-12 text-gray-500">
+                                                <svg class="w-12 h-12 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                <p>Tidak ada permission yang cocok dengan pencarian.</p>
+                                            </div>
                                         </div>
                                     </div>
                                     
