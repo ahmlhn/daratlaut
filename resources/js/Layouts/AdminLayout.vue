@@ -134,82 +134,91 @@ const layoutOptions = computed(() => page.props.layoutOptions || {})
 
 const userRole = computed(() => (user.value?.role || '').toString().toLowerCase().trim())
 const userPermissions = computed(() => user.value?.permissions || [])
-const canManageSettings = computed(() => {
-  if (['admin', 'owner'].includes(userRole.value)) return true
-  return userPermissions.value.includes('manage settings') || userPermissions.value.includes('manage roles')
-})
+const isAdminOwner = computed(() => ['admin', 'owner'].includes(userRole.value))
+
+function canAny(perms) {
+  if (isAdminOwner.value) return true
+  const list = userPermissions.value || []
+  return (perms || []).some((p) => list.includes(p))
+}
+
+function isNavItemAllowed(item) {
+  if (!item) return false
+  if (item.permissionsAny && item.permissionsAny.length > 0) return canAny(item.permissionsAny)
+  if (item.permission) return canAny([item.permission])
+  return true
+}
 
 const baseNavigationGroups = [
   {
     name: null,
     items: [
-      { name: 'Dashboard', href: '/dashboard', icon: 'home' },
+      { name: 'Dashboard', href: '/dashboard', icon: 'home', permissionsAny: ['view dashboard'] },
     ]
   },
   {
     name: 'CHAT',
     items: [
-      { name: 'Chat Admin', href: '/chat', icon: 'chat' },
+      { name: 'Chat Admin', href: '/chat', icon: 'chat', permissionsAny: ['view chat'] },
     ]
   },
   {
     name: 'OPERASIONAL',
     items: [
-      { name: 'Pasang Baru', href: '/installations', icon: 'wifi' },
-      { name: 'Riwayat Pasang', href: '/installations/riwayat', icon: 'check-circle' },
-      { name: 'Tim', href: '/team', icon: 'user-group' },
-      { name: 'OLT', href: '/olts', icon: 'server' },
+      { name: 'Pasang Baru', href: '/installations', icon: 'wifi', permissionsAny: ['view installations'] },
+      { name: 'Riwayat Pasang', href: '/installations/riwayat', icon: 'check-circle', permissionsAny: ['view riwayat installations'] },
+      { name: 'Tim', href: '/team', icon: 'user-group', permissionsAny: ['view team', 'manage team'] },
+      { name: 'OLT', href: '/olts', icon: 'server', permissionsAny: ['view olts', 'manage olt'] },
     ]
   },
   {
     name: 'TEKNISI',
     items: [
-      { name: 'Tugas Saya', href: '/teknisi', icon: 'clipboard' },
-      { name: 'Riwayat', href: '/teknisi/riwayat', icon: 'clock' },
-      { name: 'Rekap Harian', href: '/teknisi/rekap', icon: 'document-report' },
-      { name: 'Maps Teknisi', href: '/maps', icon: 'map' },
+      { name: 'Tugas Saya', href: '/teknisi', icon: 'clipboard', permissionsAny: ['view teknisi'] },
+      { name: 'Riwayat', href: '/teknisi/riwayat', icon: 'clock', permissionsAny: ['view teknisi'] },
+      { name: 'Rekap Harian', href: '/teknisi/rekap', icon: 'document-report', permissionsAny: ['view teknisi'] },
+      { name: 'Maps Teknisi', href: '/maps', icon: 'map', permissionsAny: ['view maps', 'manage maps'] },
     ]
   },
   {
     name: 'PELANGGAN',
     items: [
-      { name: 'Semua Pelanggan', href: '/customers', icon: 'users' },
-      { name: 'Pelanggan Aktif', href: '/customers?status=AKTIF', icon: 'user-check' },
-      { name: 'Pelanggan Suspend', href: '/customers?status=SUSPEND', icon: 'user-x' },
+      { name: 'Semua Pelanggan', href: '/customers', icon: 'users', permissionsAny: ['view customers'] },
+      { name: 'Pelanggan Aktif', href: '/customers?status=AKTIF', icon: 'user-check', permissionsAny: ['view customers'] },
+      { name: 'Pelanggan Suspend', href: '/customers?status=SUSPEND', icon: 'user-x', permissionsAny: ['view customers'] },
     ]
   },
   {
     name: 'BILLING',
     items: [
-      { name: 'Invoice Belum Bayar', href: '/invoices?status=OPEN', icon: 'document-text' },
-      { name: 'Invoice Lunas', href: '/invoices?status=PAID', icon: 'document-check' },
-      { name: 'Riwayat Pembayaran', href: '/payments', icon: 'credit-card' },
+      { name: 'Invoice Belum Bayar', href: '/invoices?status=OPEN', icon: 'document-text', permissionsAny: ['view invoices'] },
+      { name: 'Invoice Lunas', href: '/invoices?status=PAID', icon: 'document-check', permissionsAny: ['view invoices'] },
+      { name: 'Riwayat Pembayaran', href: '/payments', icon: 'credit-card', permissionsAny: ['view payments'] },
     ]
   },
   {
     name: 'PENGATURAN',
     items: [
-      { name: 'Paket Layanan', href: '/plans', icon: 'tag' },
-      { name: 'Pengaturan', href: '/settings', icon: 'cog' },
-      { name: 'Kelola Role', href: '/settings/roles', icon: 'shield-check' },
+      { name: 'Paket Layanan', href: '/plans', icon: 'tag', permissionsAny: ['view plans'] },
+      { name: 'Pengaturan', href: '/settings', icon: 'cog', permissionsAny: ['manage settings', 'manage roles'] },
+      { name: 'Kelola Role', href: '/settings/roles', icon: 'shield-check', permissionsAny: ['manage settings', 'manage roles'] },
     ]
   },
   {
     name: 'KEUANGAN',
     items: [
-      { name: 'Keuangan', href: '/finance', icon: 'cash' },
-      { name: 'Laporan', href: '/reports', icon: 'chart' },
+      { name: 'Keuangan', href: '/finance', icon: 'cash', permissionsAny: ['view finance', 'manage finance'] },
+      { name: 'Laporan', href: '/reports', icon: 'chart', permissionsAny: ['view reports'] },
     ]
   },
 ]
 
 const navigationGroups = computed(() => {
-  // Hide sensitive settings when the user is not allowed.
+  // Hide menu items based on permissions so users don't see links they can't access.
   const groups = baseNavigationGroups.map(group => ({
     ...group,
     items: (group.items || []).filter(item => {
-      if (item?.href === '/settings/roles') return canManageSettings.value
-      return true
+      return isNavItemAllowed(item)
     })
   }))
 
