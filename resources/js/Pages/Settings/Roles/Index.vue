@@ -11,12 +11,9 @@ const loadingRoles = ref(false)
 const loadingPermissions = ref(false)
 const processing = ref(false)
 
-const roleSearch = ref('')
-const roleFilter = ref('all') // all | system | custom
 const permSearchQuery = ref('')
 
 const showAdvanced = ref(false)
-const mobileEditorOpen = ref(false)
 
 const mode = ref('none') // none | create | edit
 const activeRoleId = ref(null)
@@ -289,21 +286,16 @@ const rolesSorted = computed(() => {
   return list
 })
 
-const rolesFiltered = computed(() => {
-  const q = roleSearch.value.toLowerCase().trim()
-  return rolesSorted.value.filter((r) => {
-    const name = (r?.name || '').toString().toLowerCase()
-    const typeOk =
-      roleFilter.value === 'all'
-        ? true
-        : roleFilter.value === 'system'
-          ? isSystemRole(name)
-          : !isSystemRole(name)
-    if (!typeOk) return false
-    if (!q) return true
-    return name.includes(q) || prettyRoleName(name).toLowerCase().includes(q)
-  })
-})
+const systemRoles = computed(() => rolesSorted.value.filter((r) => isSystemRole(r?.name)))
+const customRoles = computed(() => rolesSorted.value.filter((r) => !isSystemRole(r?.name)))
+
+function pickRoleById(roleId) {
+  const id = (roleId ?? '').toString().trim()
+  if (!id) return
+  const role = (roles.value || []).find((r) => String(r.id) === id) || null
+  if (!role) return
+  selectRole(role)
+}
 
 async function loadRoles() {
   loadingRoles.value = true
@@ -321,7 +313,7 @@ async function loadRoles() {
       if (!stillExists) {
         const first = rolesSorted.value[0]
         if (first) {
-          selectRole(first, { force: true, keepMobile: true })
+          selectRole(first, { force: true })
         } else {
           mode.value = 'none'
           activeRoleId.value = null
@@ -361,13 +353,11 @@ function startCreateRole() {
   form.value = { id: null, name: '', permissions: [] }
   permSearchQuery.value = ''
   showAdvanced.value = false
-  mobileEditorOpen.value = true
   setOriginalFromForm()
 }
 
 function selectRole(role, opts = {}) {
   const force = !!opts.force
-  const keepMobile = !!opts.keepMobile
 
   if (!force && !confirmDiscardChanges()) return
 
@@ -380,7 +370,6 @@ function selectRole(role, opts = {}) {
   }
   permSearchQuery.value = ''
   showAdvanced.value = false
-  if (!keepMobile) mobileEditorOpen.value = true
   setOriginalFromForm()
 }
 
@@ -398,7 +387,6 @@ function duplicateActiveRole() {
   }
   permSearchQuery.value = ''
   showAdvanced.value = false
-  mobileEditorOpen.value = true
   setOriginalFromForm()
 }
 
@@ -440,9 +428,9 @@ async function saveRole() {
     const savedId = result?.id
     const saved = savedId ? roles.value.find((r) => String(r.id) === String(savedId)) : null
     if (saved) {
-      selectRole(saved, { force: true, keepMobile: false })
+      selectRole(saved, { force: true })
     } else if (mode.value !== 'create' && activeRole.value) {
-      selectRole(activeRole.value, { force: true, keepMobile: false })
+      selectRole(activeRole.value, { force: true })
     }
   } catch (error) {
     console.error('Error saving role:', error)
@@ -479,7 +467,6 @@ async function deleteActiveRole() {
     form.value = { id: null, name: '', permissions: [] }
     permSearchQuery.value = ''
     showAdvanced.value = false
-    mobileEditorOpen.value = false
     setOriginalFromForm()
 
     await loadRoles()
@@ -634,218 +621,94 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Two Pane -->
-      <div class="grid grid-cols-1 md:grid-cols-[360px,1fr] gap-6">
-        <!-- Left: Role List -->
-        <aside
-          :class="[mobileEditorOpen ? 'hidden md:block' : '']"
-          class="bg-white dark:bg-dark-800 rounded-2xl border border-gray-100 dark:border-dark-700 shadow-card overflow-hidden"
-        >
-          <div class="p-5 border-b border-gray-100 dark:border-dark-700 bg-gradient-to-b from-gray-50/80 to-white dark:from-dark-800/60 dark:to-dark-800">
-            <div class="flex items-center justify-between gap-3">
-              <div class="text-sm font-extrabold text-gray-900 dark:text-white tracking-tight">Daftar Role</div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">{{ roles.length }} role</div>
-            </div>
+      <!-- Single Panel -->
+      <section class="bg-white dark:bg-dark-800 rounded-2xl border border-gray-100 dark:border-dark-700 shadow-card overflow-hidden">
+        <div class="p-5 border-b border-gray-100 dark:border-dark-700 bg-gradient-to-b from-gray-50/80 to-white dark:from-dark-800/60 dark:to-dark-800">
+          <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+            <div class="min-w-0">
+              <label class="block text-[11px] font-extrabold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                Role
+              </label>
 
-            <div class="mt-3 relative">
-              <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
-              <input
-                v-model="roleSearch"
-                type="text"
-                class="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 dark:border-dark-700 rounded-xl focus:ring-primary-500 focus:border-primary-500 dark:bg-dark-900 dark:text-white"
-                placeholder="Cari role..."
-              />
-            </div>
-
-            <div class="mt-3 flex items-center gap-2">
-              <button
-                type="button"
-                @click="roleFilter = 'all'"
-                :class="[
-                  'px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors',
-                  roleFilter === 'all'
-                    ? 'bg-primary-600 text-white border-transparent'
-                    : 'bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-dark-700 hover:bg-gray-50 dark:hover:bg-dark-800'
-                ]"
-              >
-                Semua
-              </button>
-              <button
-                type="button"
-                @click="roleFilter = 'system'"
-                :class="[
-                  'px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors',
-                  roleFilter === 'system'
-                    ? 'bg-primary-600 text-white border-transparent'
-                    : 'bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-dark-700 hover:bg-gray-50 dark:hover:bg-dark-800'
-                ]"
-              >
-                Sistem
-              </button>
-              <button
-                type="button"
-                @click="roleFilter = 'custom'"
-                :class="[
-                  'px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors',
-                  roleFilter === 'custom'
-                    ? 'bg-primary-600 text-white border-transparent'
-                    : 'bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-dark-700 hover:bg-gray-50 dark:hover:bg-dark-800'
-                ]"
-              >
-                Custom
-              </button>
-            </div>
-          </div>
-
-          <div class="p-2">
-            <div v-if="loadingRoles" class="space-y-2 p-2">
-              <div v-for="n in 6" :key="n" class="h-14 rounded-xl bg-gray-100 dark:bg-dark-900 animate-pulse"></div>
-            </div>
-
-            <div v-else class="max-h-[70vh] overflow-y-auto custom-scrollbar">
-              <button
-                v-for="r in rolesFiltered"
-                :key="r.id"
-                type="button"
-                @click="selectRole(r)"
-                :class="[
-                  'w-full text-left rounded-xl p-3 border transition-all mb-2',
-                  String(activeRoleId) === String(r.id)
-                    ? 'bg-gradient-to-r from-primary-600 to-primary-700 text-white border-transparent shadow-lg shadow-primary-600/20'
-                    : 'bg-white dark:bg-dark-900 border-gray-100 dark:border-dark-700 hover:bg-gray-50 dark:hover:bg-dark-800'
-                ]"
-              >
-                <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <div class="flex items-center gap-2">
-                      <span class="font-extrabold text-sm capitalize truncate">{{ prettyRoleName(r.name) }}</span>
-                      <span
-                        class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border"
-                        :class="[
-                          isSystemRole(r.name)
-                            ? (String(activeRoleId) === String(r.id) ? 'border-white/30 bg-white/10' : 'border-primary-200/60 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300 dark:border-primary-900/40')
-                            : (String(activeRoleId) === String(r.id) ? 'border-white/30 bg-white/10' : 'border-gray-200 bg-gray-50 text-gray-700 dark:bg-dark-800 dark:text-gray-300 dark:border-dark-700')
-                        ]"
-                      >
-                        {{ isSystemRole(r.name) ? 'SISTEM' : 'CUSTOM' }}
-                      </span>
-                    </div>
-                    <div
-                      class="mt-1 text-[11px] leading-snug"
-                      :class="[String(activeRoleId) === String(r.id) ? 'text-white/80' : 'text-gray-500 dark:text-gray-400']"
-                    >
-                      {{ (r.permissions || []).length }} permission
-                    </div>
-                  </div>
-
-                  <div class="shrink-0">
-                    <div
-                      class="h-9 w-9 rounded-xl flex items-center justify-center border"
-                      :class="[
-                        String(activeRoleId) === String(r.id)
-                          ? 'bg-white/10 border-white/20'
-                          : 'bg-primary-50 dark:bg-primary-900/20 border-primary-100 dark:border-primary-900/30'
-                      ]"
-                    >
-                      <svg v-if="isSystemRole(r.name)" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                      </svg>
-                      <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-              </button>
-
-              <div v-if="rolesFiltered.length === 0" class="p-6 text-center text-sm text-gray-500 dark:text-gray-400">
-                Tidak ada role yang cocok.
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        <!-- Right: Editor -->
-        <section
-          :class="[mobileEditorOpen ? '' : 'hidden md:block']"
-          class="bg-white dark:bg-dark-800 rounded-2xl border border-gray-100 dark:border-dark-700 shadow-card overflow-hidden"
-        >
-          <div class="p-5 border-b border-gray-100 dark:border-dark-700 bg-gradient-to-b from-gray-50/80 to-white dark:from-dark-800/60 dark:to-dark-800">
-            <div class="flex items-start justify-between gap-4">
-              <div class="min-w-0">
-                <div class="flex items-center gap-2">
-                  <button
-                    type="button"
-                    class="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-xl border border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200"
-                    @click="mobileEditorOpen = false"
-                  >
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-                    </svg>
-                  </button>
-
-                  <div class="text-sm font-extrabold text-gray-900 dark:text-white tracking-tight truncate">
-                    {{ isCreating ? 'Buat Role Baru' : (activeRole ? `Edit Role: ${prettyRoleName(activeRole.name)}` : 'Pilih Role') }}
-                  </div>
-
-                  <span
-                    v-if="isDirty"
-                    class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-900/40"
-                  >
-                    Belum disimpan
-                  </span>
-                </div>
-
-                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {{ form.permissions.length }} permission dipilih
-                  <span v-if="loadingPermissions" class="ml-2">(memuat katalog...)</span>
-                </div>
-              </div>
-
-              <div class="flex items-center gap-2 shrink-0">
-                <button
-                  v-if="isEditing"
-                  type="button"
-                  @click="duplicateActiveRole"
-                  class="hidden sm:inline-flex items-center justify-center px-3 py-2 text-xs font-semibold rounded-xl border border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-800 transition-colors"
+              <div class="mt-1 flex flex-col sm:flex-row sm:items-center gap-2">
+                <select
+                  :value="activeRoleId ? String(activeRoleId) : ''"
+                  @change="pickRoleById($event.target.value)"
+                  :disabled="loadingRoles"
+                  class="w-full sm:w-[360px] rounded-xl border border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-900 text-gray-900 dark:text-white text-sm px-3 py-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Duplikat
-                </button>
+                  <option value="" disabled>
+                    {{ loadingRoles ? 'Memuat role...' : 'Pilih role...' }}
+                  </option>
+                  <optgroup v-if="systemRoles.length > 0" label="Sistem">
+                    <option v-for="r in systemRoles" :key="r.id" :value="r.id">
+                      {{ prettyRoleName(r.name) }} ({{ (r.permissions || []).length }})
+                    </option>
+                  </optgroup>
+                  <optgroup v-if="customRoles.length > 0" label="Custom">
+                    <option v-for="r in customRoles" :key="r.id" :value="r.id">
+                      {{ prettyRoleName(r.name) }} ({{ (r.permissions || []).length }})
+                    </option>
+                  </optgroup>
+                </select>
 
-                <button
+                <span
                   v-if="isDirty"
-                  type="button"
-                  @click="resetChanges"
-                  class="hidden sm:inline-flex items-center justify-center px-3 py-2 text-xs font-semibold rounded-xl border border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-800 transition-colors"
+                  class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-900/40"
                 >
-                  Reset
-                </button>
+                  Belum disimpan
+                </span>
+              </div>
 
-                <button
-                  type="button"
-                  @click="saveRole"
-                  :disabled="processing || !form.name.trim()"
-                  class="inline-flex items-center justify-center px-4 py-2 text-xs font-semibold rounded-xl bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-60 disabled:cursor-not-allowed shadow-glow-blue"
-                >
-                  <svg v-if="processing" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Simpan
-                </button>
+              <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                <span v-if="isCreating">Mode: buat role baru.</span>
+                <span v-else-if="activeRole">Edit: {{ prettyRoleName(activeRole.name) }}.</span>
+                <span v-else>Pilih role dari dropdown untuk mulai mengatur akses.</span>
+                <span class="ml-2">Dipilih: {{ form.permissions.length }} permission</span>
+                <span v-if="loadingPermissions" class="ml-2">(memuat katalog...)</span>
               </div>
             </div>
+
+            <div class="flex items-center gap-2 shrink-0">
+              <button
+                v-if="isEditing"
+                type="button"
+                @click="duplicateActiveRole"
+                class="hidden sm:inline-flex items-center justify-center px-3 py-2 text-xs font-semibold rounded-xl border border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-800 transition-colors"
+              >
+                Duplikat
+              </button>
+
+              <button
+                v-if="isDirty"
+                type="button"
+                @click="resetChanges"
+                class="hidden sm:inline-flex items-center justify-center px-3 py-2 text-xs font-semibold rounded-xl border border-gray-200 dark:border-dark-700 bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-dark-800 transition-colors"
+              >
+                Reset
+              </button>
+
+              <button
+                type="button"
+                @click="saveRole"
+                :disabled="processing || !form.name.trim()"
+                class="inline-flex items-center justify-center px-4 py-2 text-xs font-semibold rounded-xl bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-60 disabled:cursor-not-allowed shadow-glow-blue"
+              >
+                <svg v-if="processing" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Simpan
+              </button>
+            </div>
           </div>
+        </div>
 
           <div v-if="mode === 'none'" class="p-10 text-center">
             <div class="max-w-md mx-auto">
               <div class="text-lg font-extrabold text-gray-900 dark:text-white">Pilih role</div>
               <div class="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                Pilih role di panel kiri untuk mengubah akses, atau buat role baru.
+                Pilih role dari dropdown di atas untuk mengubah akses, atau buat role baru.
               </div>
               <button
                 type="button"
@@ -1105,7 +968,6 @@ onMounted(() => {
             </div>
           </div>
         </section>
-      </div>
     </div>
   </AdminLayout>
 </template>
