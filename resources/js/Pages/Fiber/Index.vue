@@ -425,6 +425,17 @@ function pointNameById(id) {
   return p ? String(p.name || '') : null
 }
 
+function pointLatLngById(id) {
+  const n = Number(id || 0)
+  if (!n) return null
+  const p = (points.value || []).find((x) => Number(x?.id) === n)
+  if (!p) return null
+  const lat = roundCoord(Number(p?.latitude))
+  const lng = roundCoord(Number(p?.longitude))
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  return { lat, lng }
+}
+
 function cableNameById(id) {
   const n = Number(id || 0)
   if (!n) return null
@@ -780,6 +791,41 @@ function focusOnLatLng(lat, lng, zoom = 17) {
   }
 }
 
+function haversineMeters(a, b) {
+  const lat1 = Number(a?.lat)
+  const lon1 = Number(a?.lng)
+  const lat2 = Number(b?.lat)
+  const lon2 = Number(b?.lng)
+  if (!Number.isFinite(lat1) || !Number.isFinite(lon1) || !Number.isFinite(lat2) || !Number.isFinite(lon2)) return 0
+
+  const R = 6371000
+  const toRad = (deg) => (Number(deg) * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const s1 = Math.sin(dLat / 2)
+  const s2 = Math.sin(dLon / 2)
+  const x = s1 * s1 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * s2 * s2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)))
+}
+
+function calcPathLengthMeters(path) {
+  const pts = Array.isArray(path) ? path : []
+  if (pts.length < 2) return 0
+  let sum = 0
+  for (let i = 1; i < pts.length; i += 1) {
+    sum += haversineMeters(pts[i - 1], pts[i])
+  }
+  return sum
+}
+
+function formatLength(meters) {
+  const m = Number(meters)
+  if (!Number.isFinite(m) || m <= 0) return '-'
+  if (m < 1000) return `${Math.round(m)} m`
+  const km = m / 1000
+  return `${km.toFixed(km < 10 ? 2 : 1)} km`
+}
+
 function ensureMapReady() {
   if (mapLoadError.value) {
     if (toast) toast.error(mapLoadError.value)
@@ -797,6 +843,8 @@ const showCableModal = ref(false)
 const cableModalMode = ref('create') // create|edit
 const cableProcessing = ref(false)
 const cableErrors = ref({})
+const cableLengthAuto = ref(true)
+const cableAutoRouteArmed = ref(false)
 
 const cableForm = ref({
   id: null,
@@ -808,8 +856,11 @@ const cableForm = ref({
   from_point_id: '',
   to_point_id: '',
   path: [],
+  length_m: '',
   notes: '',
 })
+
+const cablePathLenM = computed(() => Math.round(calcPathLengthMeters(cableForm.value.path)))
 
 function resetCableForm() {
   cableForm.value = {
@@ -822,9 +873,12 @@ function resetCableForm() {
     from_point_id: '',
     to_point_id: '',
     path: [],
+    length_m: '',
     notes: '',
   }
   cableErrors.value = {}
+  cableLengthAuto.value = true
+  cableAutoRouteArmed.value = false
 }
 
 function openCreateCable() {
@@ -832,6 +886,8 @@ function openCreateCable() {
   resetCableForm()
   cableModalMode.value = 'create'
   drawUndoStack = []
+  cableLengthAuto.value = true
+  cableAutoRouteArmed.value = true
   showCableModal.value = true
   resumeModal.value = null
   stopMapMode({ reopen: false })
@@ -852,8 +908,11 @@ function openEditCable(item) {
     from_point_id: item.from_point_id ?? '',
     to_point_id: item.to_point_id ?? '',
     path: Array.isArray(item.path) ? item.path.slice() : [],
+    length_m: item.length_m ?? '',
     notes: item.notes || '',
   }
+  cableLengthAuto.value = !(cableForm.value.length_m !== '' && cableForm.value.length_m !== null && cableForm.value.length_m !== undefined)
+  cableAutoRouteArmed.value = false
   showCableModal.value = true
   resumeModal.value = null
   stopMapMode({ reopen: false })
@@ -862,6 +921,82 @@ function openEditCable(item) {
   if (p0 && Number.isFinite(Number(p0.lat)) && Number.isFinite(Number(p0.lng))) {
     focusOnLatLng(Number(p0.lat), Number(p0.lng), 16)
   }
+}
+
+function fitMapToPath(path) {
+  if (!map || !window.google?.maps) return
+  const pts = Array.isArray(path) ? path : []
+  if (pts.length < 1) return
+
+  const b = new window.google.maps.LatLngBounds()
+  let has = false
+  pts.forEach((p) => {
+    const lat = Number(p?.lat)
+    const lng = Number(p?.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+    b.extend({ lat, lng })
+    has = true
+  })
+  if (!has) return
+
+  try { map.fitBounds(b) } catch {}
+}
+
+async function autoCablePathFromEndpoints(options = {}) {
+  const force = options?.force === true
+
+  const fromId = Number(cableForm.value.from_point_id || 0)
+  const toId = Number(cableForm.value.to_point_id || 0)
+  if (!fromId || !toId) {
+    if (toast) toast.error('Pilih Dari Titik dan Ke Titik dulu.')
+    return false
+  }
+  if (fromId === toId) {
+    if (toast) toast.error('Dari Titik dan Ke Titik tidak boleh sama.')
+    return false
+  }
+
+  const a = pointLatLngById(fromId)
+  const b = pointLatLngById(toId)
+  if (!a || !b) {
+    if (toast) toast.error('Koordinat titik belum lengkap. Isi latitude/longitude di data Titik.')
+    return false
+  }
+
+  const hasExisting = Array.isArray(cableForm.value.path) && cableForm.value.path.length >= 2
+  if (hasExisting && !force) return false
+  if (hasExisting && force) {
+    const ok = confirm('Jalur sudah ada. Timpa jalur dengan jalur otomatis dari titik?')
+    if (!ok) return false
+  }
+
+  let newPath = []
+  const doFollow = !!drawFollowRoad.value
+
+  if (doFollow && window.google?.maps) {
+    try {
+      newPath = await getRoadPath(a, b)
+    } catch (e) {
+      newPath = []
+      if (toast) toast.error(e?.message || 'Gagal mengikuti jalan. Pakai garis lurus.')
+    }
+  }
+
+  if (!Array.isArray(newPath) || newPath.length < 2) {
+    newPath = [a, b]
+  }
+
+  drawUndoStack = []
+  cableForm.value.path = newPath
+  renderDraft()
+  fitMapToPath(newPath)
+
+  // Default: set length from path (editable later).
+  cableLengthAuto.value = true
+  cableForm.value.length_m = Math.round(calcPathLengthMeters(newPath))
+
+  if (toast) toast.success(doFollow ? 'Jalur otomatis dibuat (ikut jalan).' : 'Jalur otomatis dibuat.')
+  return true
 }
 
 async function saveCable() {
@@ -877,6 +1012,7 @@ async function saveCable() {
     from_point_id: cableForm.value.from_point_id !== '' ? Number(cableForm.value.from_point_id) : null,
     to_point_id: cableForm.value.to_point_id !== '' ? Number(cableForm.value.to_point_id) : null,
     path: Array.isArray(cableForm.value.path) && cableForm.value.path.length >= 2 ? cableForm.value.path : null,
+    length_m: cableForm.value.length_m !== '' && cableForm.value.length_m !== null && cableForm.value.length_m !== undefined ? Number(cableForm.value.length_m) : null,
     notes: cableForm.value.notes || null,
   }
 
@@ -982,6 +1118,18 @@ function clearCablePath() {
   cableForm.value.path = []
   drawUndoStack = []
   renderDraft()
+}
+
+function setCableLengthFromPath() {
+  const m = Number(cablePathLenM.value || 0)
+  if (!Number.isFinite(m) || m <= 0) {
+    if (toast) toast.error('Tidak ada jalur untuk dihitung.')
+    return
+  }
+
+  cableForm.value.length_m = Math.round(m)
+  cableLengthAuto.value = true
+  if (toast) toast.success('Panjang kabel diisi dari jalur.')
 }
 
 /* ───────────── Modals: Point ───────────── */
@@ -1660,6 +1808,43 @@ watch([showCables, showPoints, showBreaks], () => {
   renderAllLayers()
 })
 
+watch(showCableModal, (open) => {
+  if (!open) {
+    cableAutoRouteArmed.value = false
+    return
+  }
+  if (cableModalMode.value === 'create') {
+    cableAutoRouteArmed.value = true
+  }
+})
+
+watch([() => cableForm.value.from_point_id, () => cableForm.value.to_point_id], async () => {
+  if (!showCableModal.value) return
+  if (cableModalMode.value !== 'create') return
+  if (!cableAutoRouteArmed.value) return
+
+  const fromId = Number(cableForm.value.from_point_id || 0)
+  const toId = Number(cableForm.value.to_point_id || 0)
+  if (!fromId || !toId || fromId === toId) return
+
+  const hasExisting = Array.isArray(cableForm.value.path) && cableForm.value.path.length >= 2
+  if (hasExisting) {
+    cableAutoRouteArmed.value = false
+    return
+  }
+
+  const ok = await autoCablePathFromEndpoints({ force: false })
+  if (ok) cableAutoRouteArmed.value = false
+})
+
+watch(() => cableForm.value.path, () => {
+  if (!cableLengthAuto.value) return
+  const m = Math.round(calcPathLengthMeters(cableForm.value.path))
+  if (Number.isFinite(m) && m > 0) {
+    cableForm.value.length_m = m
+  }
+}, { deep: true })
+
 watch(mapStyle, () => {
   try { localStorage.setItem('fiber_map_style', mapStyle.value) } catch {}
   applyMapStyle()
@@ -1899,7 +2084,8 @@ onUnmounted(() => {
                       <div class="text-sm font-semibold text-gray-900 dark:text-white">{{ c.name }}</div>
                       <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                         <span v-if="c.cable_type">{{ c.cable_type }}</span>
-                        <span v-if="c.core_count" class="ml-2">• {{ c.core_count }} core</span>
+                        <span v-if="c.core_count" class="ml-2">| {{ c.core_count }} core</span>
+                        <span v-if="c.length_m" class="ml-2">| {{ formatLength(c.length_m) }}</span>
                       </div>
                       <div v-if="c.from_point_id || c.to_point_id" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                         <div>Dari: <span class="font-medium text-gray-700 dark:text-gray-200">{{ pointNameById(c.from_point_id) || '-' }}</span></div>
@@ -1937,7 +2123,7 @@ onUnmounted(() => {
                       <div class="text-sm font-semibold text-gray-900 dark:text-white">{{ p.name }}</div>
                       <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                         <span v-if="p.point_type">{{ p.point_type }}</span>
-                        <span v-if="p.latitude && p.longitude" class="ml-2">• {{ p.latitude }}, {{ p.longitude }}</span>
+                        <span v-if="p.latitude && p.longitude" class="ml-2">| {{ p.latitude }}, {{ p.longitude }}</span>
                       </div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
@@ -2144,7 +2330,7 @@ onUnmounted(() => {
                       </div>
                       <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                         <span>Titik: {{ pointNameById(b.point_id) || '-' }}</span>
-                        <span v-if="b.severity" class="ml-2">• {{ b.severity }}</span>
+                        <span v-if="b.severity" class="ml-2">| {{ b.severity }}</span>
                       </div>
                       <div v-if="b.description" class="text-xs text-gray-600 dark:text-gray-300 mt-1 line-clamp-2">{{ b.description }}</div>
                     </div>
@@ -2197,6 +2383,26 @@ onUnmounted(() => {
               <input v-model="cableForm.core_count" type="number" min="1" class="input w-full" placeholder="12" />
               <div v-if="cableErrors.core_count" class="text-xs text-red-600 mt-1">{{ cableErrors.core_count?.[0] }}</div>
             </div>
+            <div class="md:col-span-2">
+              <label class="text-xs text-gray-600 dark:text-gray-300">Panjang (meter)</label>
+              <div class="flex flex-col sm:flex-row gap-2">
+                <input
+                  v-model="cableForm.length_m"
+                  type="number"
+                  min="0"
+                  class="input w-full sm:flex-1"
+                  placeholder="(opsional)"
+                  @input="cableLengthAuto = false"
+                />
+                <button class="btn btn-secondary shrink-0 !py-2 !text-xs" @click="setCableLengthFromPath">Hitung dari jalur</button>
+              </div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Estimasi dari jalur:
+                <span class="font-medium text-gray-700 dark:text-gray-200">{{ formatLength(cablePathLenM) }}</span>
+                <span class="ml-2">({{ cablePathLenM }} m)</span>
+                <span v-if="cableLengthAuto" class="ml-2">[auto]</span>
+              </div>
+            </div>
             <div>
               <label class="text-xs text-gray-600 dark:text-gray-300">Dari Titik</label>
               <select v-model="cableForm.from_point_id" class="input w-full">
@@ -2235,6 +2441,13 @@ onUnmounted(() => {
                   <input type="checkbox" v-model="drawFollowRoad" />
                   Ikuti jalan
                 </label>
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  @click="autoCablePathFromEndpoints({ force: true })"
+                  :disabled="!cableForm.from_point_id || !cableForm.to_point_id"
+                >
+                  Auto
+                </button>
                 <button class="btn btn-secondary !py-2 !text-xs" @click="startDrawCable">Gambar</button>
                 <button class="btn btn-secondary !py-2 !text-xs" @click="startEditCablePath" :disabled="!cableForm.path || cableForm.path.length < 2">Edit</button>
                 <button class="btn btn-secondary !py-2 !text-xs" @click="undoCablePoint" :disabled="!cableForm.path || cableForm.path.length === 0">Undo</button>

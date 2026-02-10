@@ -18,6 +18,7 @@ class FoCable extends Model
         'from_point_id',
         'to_point_id',
         'path',
+        'length_m',
         'notes',
         'created_by',
         'updated_by',
@@ -29,6 +30,7 @@ class FoCable extends Model
         'from_point_id' => 'integer',
         'to_point_id' => 'integer',
         'path' => 'array',
+        'length_m' => 'integer',
         'created_by' => 'integer',
         'updated_by' => 'integer',
     ];
@@ -38,4 +40,3 @@ class FoCable extends Model
         return $query->where('tenant_id', $tenantId);
     }
 }
-

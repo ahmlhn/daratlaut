@@ -188,6 +188,7 @@ class FiberController extends Controller
                     'from_point_id',
                     'to_point_id',
                     'path',
+                    'length_m',
                     'notes',
                     'created_at',
                     'updated_at',
@@ -332,6 +333,7 @@ class FiberController extends Controller
             'path' => 'nullable|array|min:2',
             'path.*.lat' => 'required|numeric|between:-90,90',
             'path.*.lng' => 'required|numeric|between:-180,180',
+            'length_m' => 'nullable|integer|min:0',
             'notes' => 'nullable|string',
         ]);
 
@@ -357,6 +359,7 @@ class FiberController extends Controller
             'from_point_id' => $fromPointId > 0 ? $fromPointId : null,
             'to_point_id' => $toPointId > 0 ? $toPointId : null,
             'path' => $validated['path'] ?? null,
+            'length_m' => array_key_exists('length_m', $validated) ? ($validated['length_m'] ?? null) : null,
             'notes' => $validated['notes'] ?? null,
             'created_by' => $userId ?: null,
             'updated_by' => $userId ?: null,
@@ -388,6 +391,7 @@ class FiberController extends Controller
             'path' => 'nullable|array|min:2',
             'path.*.lat' => 'required|numeric|between:-90,90',
             'path.*.lng' => 'required|numeric|between:-180,180',
+            'length_m' => 'nullable|integer|min:0',
             'notes' => 'nullable|string',
         ]);
 
