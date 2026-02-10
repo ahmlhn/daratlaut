@@ -278,13 +278,14 @@ function stopMapMode(options = {}) {
 
   mapMode.value = null
   resumeModal.value = null
-  renderDraft()
 
   if (reopen && resume) {
     if (resume === 'cable') showCableModal.value = true
     if (resume === 'point') showPointModal.value = true
     if (resume === 'break') showBreakModal.value = true
   }
+
+  renderDraft()
 }
 
 /* ───────────── Map popups (safe text) ───────────── */
@@ -517,7 +518,7 @@ function renderDraft() {
     layerDraft.markers.push(m)
   }
 
-  if (showPointModal.value && pointForm.value.latitude !== null && pointForm.value.longitude !== null) {
+  if ((showPointModal.value || mapMode.value === 'pickPoint') && pointForm.value.latitude !== null && pointForm.value.longitude !== null) {
     const lat = Number(pointForm.value.latitude)
     const lng = Number(pointForm.value.longitude)
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
@@ -525,7 +526,7 @@ function renderDraft() {
     }
   }
 
-  if (showBreakModal.value && breakForm.value.latitude !== null && breakForm.value.longitude !== null) {
+  if ((showBreakModal.value || mapMode.value === 'pickBreak') && breakForm.value.latitude !== null && breakForm.value.longitude !== null) {
     const lat = Number(breakForm.value.latitude)
     const lng = Number(breakForm.value.longitude)
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
@@ -533,7 +534,7 @@ function renderDraft() {
     }
   }
 
-  if (showCableModal.value && Array.isArray(cableForm.value.path) && cableForm.value.path.length > 0) {
+  if ((showCableModal.value || mapMode.value === 'drawCable') && Array.isArray(cableForm.value.path) && cableForm.value.path.length > 0) {
     const latlngs = cableForm.value.path
       .map((p) => ({ lat: Number(p?.lat), lng: Number(p?.lng) }))
       .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
