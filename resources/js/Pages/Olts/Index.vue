@@ -1793,7 +1793,7 @@ onMounted(async () => {
 <template>
     <Head title="OLT Provisioning" />
     <AdminLayout>
-        <div id="olt-root" class="p-6">
+        <div id="olt-root" class="px-3 py-4 sm:p-6">
             <div class="flex flex-col gap-6 fade-in pb-20 md:pb-0">
                 <div class="border-b border-slate-200 dark:border-white/10 pb-4">
                     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -1825,7 +1825,7 @@ onMounted(async () => {
                             </select>
                         </div>
 
-                        <div v-if="!isTeknisi" class="grid grid-cols-2 gap-2 w-full lg:w-auto">
+                        <div v-if="!isTeknisi" class="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full lg:w-auto">
                             <button
                                 type="button"
                                 class="h-12 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-bold transition disabled:opacity-60 disabled:cursor-not-allowed"
@@ -1872,7 +1872,7 @@ onMounted(async () => {
                                 </div>
                             </div>
                         </div>
-                        <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2 w-full lg:w-auto">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 w-full lg:w-auto">
                             <button
                                 type="button"
                                 class="h-12 px-5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
@@ -1993,18 +1993,18 @@ onMounted(async () => {
                         <table class="w-full text-left text-sm whitespace-nowrap">
                             <thead class="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-slate-500 dark:text-slate-400 font-bold border-b border-slate-100 dark:border-white/5">
                                 <tr v-if="canManualRegister">
-                                    <th class="px-6 py-3">F/S/P</th>
-                                    <th class="px-6 py-3">SN</th>
-                                    <th class="px-6 py-3 text-right">Aksi</th>
+                                    <th class="px-3 sm:px-6 py-3">F/S/P</th>
+                                    <th class="px-3 sm:px-6 py-3">SN</th>
+                                    <th class="px-3 sm:px-6 py-3 text-right">Aksi</th>
                                 </tr>
                                 <tr v-else>
-                                    <th class="px-6 py-3">F/S/P</th>
-                                    <th class="px-6 py-3">SN</th>
+                                    <th class="px-3 sm:px-6 py-3">F/S/P</th>
+                                    <th class="px-3 sm:px-6 py-3">SN</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100 dark:divide-white/5">
                                 <tr v-if="!uncfg.length">
-                                    <td :colspan="canManualRegister ? 3 : 2" class="px-6 py-10 text-center text-slate-400 italic">
+                                    <td :colspan="canManualRegister ? 3 : 2" class="px-3 sm:px-6 py-10 text-center text-slate-400 italic">
                                         Belum ada data.
                                     </td>
                                 </tr>
@@ -2017,12 +2017,12 @@ onMounted(async () => {
                                         :class="idx === uncfgSelectedIndex ? 'bg-blue-50/80 dark:bg-blue-500/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'"
                                         @click="selectUncfg(idx)"
                                     >
-                                        <td class="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp }}</td>
-                                        <td class="px-6 py-4">
+                                        <td class="px-3 sm:px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp }}</td>
+                                        <td class="px-3 sm:px-6 py-4">
                                             <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">{{ item.sn }}</div>
                                             <div class="text-[10px] text-slate-400">Ketuk untuk pilih</div>
                                         </td>
-                                        <td class="px-6 py-4 text-right">
+                                        <td class="px-3 sm:px-6 py-4 text-right">
                                             <button
                                                 type="button"
                                                 class="h-9 px-4 rounded-xl text-xs font-bold"
@@ -2037,8 +2037,8 @@ onMounted(async () => {
 
                                 <template v-else>
                                     <tr v-for="item in uncfg" :key="`${item.fsp}:${item.sn}`" class="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                                        <td class="px-6 py-3 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp }}</td>
-                                        <td class="px-6 py-3 text-xs text-slate-600 dark:text-slate-300">{{ item.sn }}</td>
+                                        <td class="px-3 sm:px-6 py-3 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp }}</td>
+                                        <td class="px-3 sm:px-6 py-3 text-xs text-slate-600 dark:text-slate-300">{{ item.sn }}</td>
                                     </tr>
                                 </template>
                             </tbody>
@@ -2125,7 +2125,7 @@ onMounted(async () => {
                         <table class="w-full text-left text-sm whitespace-nowrap">
                             <thead class="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-slate-500 dark:text-slate-400 font-bold border-b border-slate-100 dark:border-white/5">
                                 <tr>
-                                    <th class="px-6 py-3 text-left" :aria-sort="getRegAriaSort('interface')">
+                                    <th class="px-3 sm:px-6 py-3 text-left" :aria-sort="getRegAriaSort('interface')">
                                         <button
                                             type="button"
                                             class="group inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-white"
@@ -2143,7 +2143,7 @@ onMounted(async () => {
                                             >
                                         </button>
                                     </th>
-                                    <th class="px-6 py-3 text-left" :aria-sort="getRegAriaSort('name')">
+                                    <th class="px-3 sm:px-6 py-3 text-left" :aria-sort="getRegAriaSort('name')">
                                         <button
                                             type="button"
                                             class="group inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-white"
@@ -2161,7 +2161,7 @@ onMounted(async () => {
                                             >
                                         </button>
                                     </th>
-                                    <th class="px-6 py-3 text-left" :aria-sort="getRegAriaSort('sn')">
+                                    <th class="px-3 sm:px-6 py-3 text-left" :aria-sort="getRegAriaSort('sn')">
                                         <button
                                             type="button"
                                             class="group inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-white"
@@ -2179,7 +2179,7 @@ onMounted(async () => {
                                             >
                                         </button>
                                     </th>
-                                    <th class="px-6 py-3 text-left" :aria-sort="getRegAriaSort('rx')">
+                                    <th class="px-3 sm:px-6 py-3 text-left" :aria-sort="getRegAriaSort('rx')">
                                         <button
                                             type="button"
                                             class="group inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-white"
@@ -2197,7 +2197,7 @@ onMounted(async () => {
                                             >
                                         </button>
                                     </th>
-                                    <th class="px-6 py-3 text-left" :aria-sort="getRegAriaSort('status')">
+                                    <th class="px-3 sm:px-6 py-3 text-left" :aria-sort="getRegAriaSort('status')">
                                         <button
                                             type="button"
                                             class="group inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-white"
@@ -2219,17 +2219,17 @@ onMounted(async () => {
                             </thead>
                             <tbody class="divide-y divide-slate-100 dark:divide-white/5">
                                 <tr v-if="regLoading">
-                                    <td colspan="5" class="px-6 py-10 text-center text-slate-400 italic">
+                                    <td colspan="5" class="px-3 sm:px-6 py-10 text-center text-slate-400 italic">
                                         {{ regLoadingText || 'Memuat data...' }}
                                     </td>
                                 </tr>
                                 <tr v-else-if="!registered.length">
-                                    <td colspan="5" class="px-6 py-10 text-center text-slate-400 italic">
+                                    <td colspan="5" class="px-3 sm:px-6 py-10 text-center text-slate-400 italic">
                                         {{ Object.keys(regLoadedFsp || {}).length ? 'Belum ada data.' : 'Data belum dimuat.' }}
                                     </td>
                                 </tr>
                                 <tr v-else-if="!regPageItems.length">
-                                    <td colspan="5" class="px-6 py-10 text-center text-slate-400 italic">
+                                    <td colspan="5" class="px-3 sm:px-6 py-10 text-center text-slate-400 italic">
                                         Tidak ada data yang cocok.
                                     </td>
                                 </tr>
@@ -2245,11 +2245,11 @@ onMounted(async () => {
                                             ]"
                                             @click="toggleRegDetail(item)"
                                         >
-                                            <td class="px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp_onu || `${item.fsp}:${item.onu_id}` }}</td>
-                                            <td class="px-6 py-4 text-sm font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</td>
-                                            <td class="px-6 py-4 text-xs text-slate-600 dark:text-slate-300">{{ item.sn || '-' }}</td>
-                                            <td class="px-6 py-4 text-xs" :class="getRxTextClass(item)">{{ formatRx(item.rx) }}</td>
-                                            <td class="px-6 py-4">
+                                            <td class="px-3 sm:px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp_onu || `${item.fsp}:${item.onu_id}` }}</td>
+                                            <td class="px-3 sm:px-6 py-4 text-sm font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</td>
+                                            <td class="px-3 sm:px-6 py-4 text-xs text-slate-600 dark:text-slate-300">{{ item.sn || '-' }}</td>
+                                            <td class="px-3 sm:px-6 py-4 text-xs" :class="getRxTextClass(item)">{{ formatRx(item.rx) }}</td>
+                                            <td class="px-3 sm:px-6 py-4">
                                                 <span
                                                     class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold"
                                                     :class="formatRegStatus(item).className"
@@ -2260,7 +2260,7 @@ onMounted(async () => {
                                         </tr>
 
                                         <tr v-if="regExpandedKey === onuKey(item)" class="bg-white dark:bg-slate-900/40">
-                                            <td colspan="5" class="px-6 py-4">
+                                            <td colspan="5" class="px-3 sm:px-6 py-4">
                                                 <div v-if="regDetailLoadingKey === onuKey(item)" class="flex items-center gap-3 text-sm text-slate-500">
                                                     <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-500">
                                                         <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -2490,8 +2490,8 @@ onMounted(async () => {
                                     />
                                 </div>
 
-                                <div class="grid grid-cols-3 gap-3">
-                                    <div class="col-span-2">
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div class="sm:col-span-2">
                                         <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Host/IP</label>
                                         <input
                                             v-model="formData.host"
@@ -2509,7 +2509,7 @@ onMounted(async () => {
                                     </div>
                                 </div>
 
-                                <div class="grid grid-cols-2 gap-3">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div>
                                         <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Username</label>
                                         <input
@@ -2530,7 +2530,7 @@ onMounted(async () => {
                                     </div>
                                 </div>
 
-                                <div class="grid grid-cols-2 gap-3">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div>
                                         <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">TCONT Default</label>
                                         <input
