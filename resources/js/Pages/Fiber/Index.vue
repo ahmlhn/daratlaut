@@ -8,6 +8,7 @@ const toast = inject('toast')
 const props = defineProps({
   tenantId: { type: Number, default: 0 },
   warning: { type: String, default: null },
+  googleMapsApiKey: { type: String, default: '' },
 })
 
 const page = usePage()
@@ -123,97 +124,118 @@ async function loadAll() {
   }
 }
 
-/* ───────────── Map setup ───────────── */
+/* ───────────── Map setup (Google Maps) ───────────── */
 const mapContainer = ref(null)
 let map = null
-let baseLayer = null
-let baseLabelLayer = null
+let infoWindow = null
 
-let layerCables = null
-let layerPoints = null
-let layerBreaks = null
-let layerDraft = null
+let layerCables = new Map() // cableId -> google.maps.Polyline
+let layerPoints = new Map() // pointId -> google.maps.Marker
+let layerBreaks = new Map() // breakId -> google.maps.Marker
+let layerDraft = { markers: [], polyline: null } // Draft overlay objects
 
 let fittedOnce = false
 
-const mapStyle = ref('voyager')
+const mapLoadError = ref('')
+
+const mapStyle = ref('roadmap')
 const MAP_STYLES = {
-  voyager: {
-    label: 'Voyager',
-    tile: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    tileOpts: { maxZoom: 19, subdomains: 'abcd' },
-    labels: null,
-  },
-  light: {
-    label: 'Light',
-    tile: 'https://{s}.basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}{r}.png',
-    tileOpts: { maxZoom: 19, subdomains: 'abcd' },
-    labels: null,
-  },
-  satellite: {
-    label: 'Satelit',
-    tile: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    tileOpts: { maxZoom: 19 },
-    labels: 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    labelOpts: { maxZoom: 19, opacity: 0.85 },
-  },
+  roadmap: { label: 'Roadmap', mapTypeId: 'roadmap' },
+  satellite: { label: 'Satelit', mapTypeId: 'satellite' },
+  hybrid: { label: 'Hybrid', mapTypeId: 'hybrid' },
+}
+
+function loadGoogleMaps(apiKey) {
+  const key = (apiKey || '').toString().trim()
+  if (!key) return Promise.reject(new Error('Google Maps API key belum di-set.'))
+  if (window.google?.maps) return Promise.resolve()
+
+  if (window.__fiberGoogleMapsPromise) return window.__fiberGoogleMapsPromise
+
+  window.__fiberGoogleMapsPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    const params = new URLSearchParams({
+      key,
+      v: 'weekly',
+    })
+    script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`
+    script.async = true
+    script.defer = true
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Gagal memuat Google Maps. Cek API key/koneksi.'))
+    document.head.appendChild(script)
+  })
+
+  return window.__fiberGoogleMapsPromise
 }
 
 function applyMapStyle() {
-  if (!map) return
-  const cfg = MAP_STYLES[mapStyle.value] || MAP_STYLES.voyager
+  if (!map || !window.google?.maps) return
+  const cfg = MAP_STYLES[mapStyle.value] || MAP_STYLES.roadmap
+  try { map.setMapTypeId(cfg.mapTypeId) } catch {}
+}
 
-  if (baseLayer) {
-    try { map.removeLayer(baseLayer) } catch {}
-    baseLayer = null
-  }
-  if (baseLabelLayer) {
-    try { map.removeLayer(baseLabelLayer) } catch {}
-    baseLabelLayer = null
-  }
-
-  baseLayer = window.L.tileLayer(cfg.tile, {
-    attribution: '&copy; OpenStreetMap contributors',
-    ...(cfg.tileOpts || {}),
-  })
-  baseLayer.addTo(map)
-
-  if (cfg.labels) {
-    baseLabelLayer = window.L.tileLayer(cfg.labels, {
-      ...(cfg.labelOpts || {}),
+function clearDraftLayer() {
+  try {
+    ;(layerDraft.markers || []).forEach((m) => {
+      try { m.setMap(null) } catch {}
     })
-    baseLabelLayer.addTo(map)
-  }
+  } catch {}
+  layerDraft.markers = []
+
+  try { layerDraft.polyline?.setMap(null) } catch {}
+  layerDraft.polyline = null
+}
+
+function clearLayer(layerMap) {
+  try {
+    Array.from(layerMap.values()).forEach((obj) => {
+      try { obj.setMap(null) } catch {}
+    })
+  } catch {}
+  try { layerMap.clear() } catch {}
 }
 
 function initMap() {
-  if (!window.L || !mapContainer.value) return
+  if (!window.google?.maps || !mapContainer.value) return
 
-  map = window.L.map(mapContainer.value, { zoomControl: true }).setView([-2.5489, 118.0149], 5)
-  layerCables = window.L.layerGroup().addTo(map)
-  layerPoints = window.L.layerGroup().addTo(map)
-  layerBreaks = window.L.layerGroup().addTo(map)
-  layerDraft = window.L.layerGroup().addTo(map)
+  const cfg = MAP_STYLES[mapStyle.value] || MAP_STYLES.roadmap
+  map = new window.google.maps.Map(mapContainer.value, {
+    center: { lat: -2.5489, lng: 118.0149 },
+    zoom: 5,
+    mapTypeId: cfg.mapTypeId,
+    clickableIcons: false,
+    fullscreenControl: false,
+    streetViewControl: false,
+    mapTypeControl: false,
+  })
 
-  applyMapStyle()
-  map.on('click', onMapClick)
+  infoWindow = new window.google.maps.InfoWindow()
+  map.addListener('click', onMapClick)
 }
 
 function destroyMap() {
-  if (!map) return
-  try { map.off('click', onMapClick) } catch {}
-  try { map.remove() } catch {}
+  if (!window.google?.maps) {
+    map = null
+    infoWindow = null
+    return
+  }
+
+  try { window.google.maps.event.clearInstanceListeners(map) } catch {}
+  try { infoWindow?.close() } catch {}
+
+  clearDraftLayer()
+  clearLayer(layerCables)
+  clearLayer(layerPoints)
+  clearLayer(layerBreaks)
+
   map = null
-  baseLayer = null
-  baseLabelLayer = null
-  layerCables = null
-  layerPoints = null
-  layerBreaks = null
-  layerDraft = null
+  infoWindow = null
 }
 
 /* ───────────── Map interaction modes ───────────── */
 const mapMode = ref(null) // null | pickPoint | pickBreak | drawCable
+const resumeModal = ref(null) // null | 'cable' | 'point' | 'break'
 
 function roundCoord(n) {
   const v = Number(n)
@@ -222,25 +244,23 @@ function roundCoord(n) {
 }
 
 function onMapClick(e) {
-  if (!e?.latlng) return
-  const lat = roundCoord(e.latlng.lat)
-  const lng = roundCoord(e.latlng.lng)
+  if (!e?.latLng) return
+  const lat = roundCoord(e.latLng.lat())
+  const lng = roundCoord(e.latLng.lng())
 
   if (mapMode.value === 'pickPoint') {
     pointForm.value.latitude = lat
     pointForm.value.longitude = lng
-    mapMode.value = null
     if (toast) toast.success('Lokasi titik dipilih dari peta.')
-    renderDraft()
+    stopMapMode()
     return
   }
 
   if (mapMode.value === 'pickBreak') {
     breakForm.value.latitude = lat
     breakForm.value.longitude = lng
-    mapMode.value = null
     if (toast) toast.success('Lokasi putus dipilih dari peta.')
-    renderDraft()
+    stopMapMode()
     return
   }
 
@@ -252,12 +272,22 @@ function onMapClick(e) {
   }
 }
 
-function stopMapMode() {
+function stopMapMode(options = {}) {
+  const reopen = options?.reopen !== false
+  const resume = reopen ? resumeModal.value : null
+
   mapMode.value = null
+  resumeModal.value = null
   renderDraft()
+
+  if (reopen && resume) {
+    if (resume === 'cable') showCableModal.value = true
+    if (resume === 'point') showPointModal.value = true
+    if (resume === 'break') showBreakModal.value = true
+  }
 }
 
-/* ───────────── Leaflet popups (safe text) ───────────── */
+/* ───────────── Map popups (safe text) ───────────── */
 function popupEl(lines) {
   const div = document.createElement('div')
   div.className = 'text-sm'
@@ -267,6 +297,25 @@ function popupEl(lines) {
     div.appendChild(row)
   })
   return div
+}
+
+function showInfoAt(latLng, lines, anchor = null) {
+  if (!map || !infoWindow) return
+
+  const items = (lines || []).filter(Boolean)
+  if (items.length < 1) return
+
+  try { infoWindow.close() } catch {}
+  infoWindow.setContent(popupEl(items))
+
+  try {
+    if (anchor) {
+      infoWindow.open({ map, anchor })
+      return
+    }
+    if (latLng) infoWindow.setPosition(latLng)
+    infoWindow.open({ map })
+  } catch {}
 }
 
 function pointNameById(id) {
@@ -293,7 +342,7 @@ function statusColor(status) {
 
 /* ───────────── Render layers ───────────── */
 function renderAllLayers() {
-  if (!map || !window.L) return
+  if (!map || !window.google?.maps) return
   renderCablesLayer()
   renderPointsLayer()
   renderBreaksLayer()
@@ -301,8 +350,8 @@ function renderAllLayers() {
 }
 
 function renderCablesLayer() {
-  if (!layerCables) return
-  layerCables.clearLayers()
+  if (!map || !window.google?.maps) return
+  clearLayer(layerCables)
   if (!showCables.value) return
 
   ;(cables.value || []).forEach((c) => {
@@ -310,8 +359,8 @@ function renderCablesLayer() {
     if (!path || path.length < 2) return
 
     const latlngs = path
-      .map((p) => [Number(p?.lat), Number(p?.lng)])
-      .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]))
+      .map((p) => ({ lat: Number(p?.lat), lng: Number(p?.lng) }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
 
     if (latlngs.length < 2) return
 
@@ -324,38 +373,40 @@ function renderCablesLayer() {
     const weight = inTrace ? Math.max(weightBase, 6) : weightBase
     const opacity = traceActive ? (inTrace ? 1 : 0.25) : 0.9
 
-    const poly = window.L.polyline(latlngs, {
-      color,
-      weight,
-      opacity,
+    const poly = new window.google.maps.Polyline({
+      path: latlngs,
+      strokeColor: color,
+      strokeWeight: weight,
+      strokeOpacity: opacity,
+      clickable: true,
     })
+    poly.setMap(map)
+    layerCables.set(Number(c?.id) || 0, poly)
 
-    poly.on('click', () => {
+    const fromName = pointNameById(c?.from_point_id) || '-'
+    const toName = pointNameById(c?.to_point_id) || '-'
+    poly.addListener('click', (ev) => {
       selectedCableId.value = c.id
       selectedPointId.value = null
       selectedBreakId.value = null
       activeTab.value = 'cables'
       renderCablesLayer()
+
+      showInfoAt(ev?.latLng || null, [
+        `Kabel: ${c?.name || '-'}`,
+        c?.code ? `Kode: ${c.code}` : null,
+        c?.cable_type ? `Tipe: ${c.cable_type}` : null,
+        c?.core_count ? `Core: ${c.core_count}` : null,
+        `Dari: ${fromName}`,
+        `Ke: ${toName}`,
+      ])
     })
-
-    const fromName = pointNameById(c?.from_point_id) || '-'
-    const toName = pointNameById(c?.to_point_id) || '-'
-    poly.bindPopup(popupEl([
-      `Kabel: ${c?.name || '-'}`,
-      c?.code ? `Kode: ${c.code}` : null,
-      c?.cable_type ? `Tipe: ${c.cable_type}` : null,
-      c?.core_count ? `Core: ${c.core_count}` : null,
-      `Dari: ${fromName}`,
-      `Ke: ${toName}`,
-    ].filter(Boolean)))
-
-    poly.addTo(layerCables)
   })
 }
 
 function renderPointsLayer() {
-  if (!layerPoints) return
-  layerPoints.clearLayers()
+  if (!map || !window.google?.maps) return
+  clearLayer(layerPoints)
   if (!showPoints.value) return
 
   ;(points.value || []).forEach((p) => {
@@ -364,35 +415,41 @@ function renderPointsLayer() {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
 
     const isSelected = Number(p?.id) === Number(selectedPointId.value || 0)
-    const marker = window.L.circleMarker([lat, lng], {
-      radius: isSelected ? 8 : 6,
-      color: '#0f766e',
-      weight: 2,
-      fillColor: '#14b8a6',
-      fillOpacity: 0.9,
+    const marker = new window.google.maps.Marker({
+      position: { lat, lng },
+      map,
+      title: (p?.name || '').toString(),
+      clickable: true,
+      icon: {
+        path: window.google.maps.SymbolPath.CIRCLE,
+        scale: isSelected ? 7 : 6,
+        fillColor: '#14b8a6',
+        fillOpacity: 0.9,
+        strokeColor: '#0f766e',
+        strokeWeight: 2,
+      },
     })
+    layerPoints.set(Number(p?.id) || 0, marker)
 
-    marker.on('click', () => {
+    marker.addListener('click', () => {
       selectedPointId.value = p.id
       selectedCableId.value = null
       selectedBreakId.value = null
       activeTab.value = 'points'
       renderPointsLayer()
+
+      showInfoAt(marker.getPosition(), [
+        `Titik: ${p?.name || '-'}`,
+        p?.point_type ? `Tipe: ${p.point_type}` : null,
+        `Koordinat: ${lat}, ${lng}`,
+      ], marker)
     })
-
-    marker.bindPopup(popupEl([
-      `Titik: ${p?.name || '-'}`,
-      p?.point_type ? `Tipe: ${p.point_type}` : null,
-      `Koordinat: ${lat}, ${lng}`,
-    ].filter(Boolean)))
-
-    marker.addTo(layerPoints)
   })
 }
 
 function renderBreaksLayer() {
-  if (!layerBreaks) return
-  layerBreaks.clearLayers()
+  if (!map || !window.google?.maps) return
+  clearLayer(layerBreaks)
   if (!showBreaks.value) return
 
   ;(breaks.value || []).forEach((b) => {
@@ -403,50 +460,68 @@ function renderBreaksLayer() {
     const colors = statusColor(b?.status)
     const isSelected = Number(b?.id) === Number(selectedBreakId.value || 0)
 
-    const marker = window.L.circleMarker([lat, lng], {
-      radius: isSelected ? 9 : 7,
-      color: colors.stroke,
-      weight: 2,
-      fillColor: colors.fill,
-      fillOpacity: 0.9,
+    const marker = new window.google.maps.Marker({
+      position: { lat, lng },
+      map,
+      title: `PUTUS: ${String(b?.status || 'OPEN').toUpperCase()}`,
+      clickable: true,
+      icon: {
+        path: window.google.maps.SymbolPath.CIRCLE,
+        scale: isSelected ? 8 : 7,
+        fillColor: colors.fill,
+        fillOpacity: 0.9,
+        strokeColor: colors.stroke,
+        strokeWeight: 2,
+      },
     })
+    layerBreaks.set(Number(b?.id) || 0, marker)
 
-    marker.on('click', () => {
+    marker.addListener('click', () => {
       selectedBreakId.value = b.id
       selectedCableId.value = null
       selectedPointId.value = null
       activeTab.value = 'breaks'
       renderBreaksLayer()
+
+      const cableName = cableNameById(b?.cable_id) || (b?.cable_id ? `#${b.cable_id}` : '-')
+      const pName = pointNameById(b?.point_id) || (b?.point_id ? `#${b.point_id}` : '-')
+      showInfoAt(marker.getPosition(), [
+        `PUTUS: ${String(b?.status || 'OPEN').toUpperCase()}`,
+        `Kabel: ${cableName}`,
+        `Titik: ${pName}`,
+        b?.severity ? `Severity: ${b.severity}` : null,
+      ], marker)
     })
-
-    const cableName = cableNameById(b?.cable_id) || (b?.cable_id ? `#${b.cable_id}` : '-')
-    const pName = pointNameById(b?.point_id) || (b?.point_id ? `#${b.point_id}` : '-')
-    marker.bindPopup(popupEl([
-      `PUTUS: ${String(b?.status || 'OPEN').toUpperCase()}`,
-      `Kabel: ${cableName}`,
-      `Titik: ${pName}`,
-      b?.severity ? `Severity: ${b.severity}` : null,
-    ].filter(Boolean)))
-
-    marker.addTo(layerBreaks)
   })
 }
 
 function renderDraft() {
-  if (!layerDraft || !window.L) return
-  layerDraft.clearLayers()
+  if (!map || !window.google?.maps) return
+  clearDraftLayer()
+
+  const addCircle = (lat, lng, opts = {}) => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+    const m = new window.google.maps.Marker({
+      position: { lat, lng },
+      map,
+      clickable: false,
+      icon: {
+        path: window.google.maps.SymbolPath.CIRCLE,
+        scale: Number(opts.scale ?? 6),
+        fillColor: (opts.fillColor || '#38bdf8').toString(),
+        fillOpacity: Number(opts.fillOpacity ?? 0.9),
+        strokeColor: (opts.strokeColor || '#0ea5e9').toString(),
+        strokeWeight: Number(opts.strokeWeight ?? 2),
+      },
+    })
+    layerDraft.markers.push(m)
+  }
 
   if (showPointModal.value && pointForm.value.latitude !== null && pointForm.value.longitude !== null) {
     const lat = Number(pointForm.value.latitude)
     const lng = Number(pointForm.value.longitude)
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      window.L.circleMarker([lat, lng], {
-        radius: 7,
-        color: '#0ea5e9',
-        weight: 2,
-        fillColor: '#38bdf8',
-        fillOpacity: 0.85,
-      }).addTo(layerDraft)
+      addCircle(lat, lng, { scale: 7, strokeColor: '#0ea5e9', fillColor: '#38bdf8', fillOpacity: 0.85 })
     }
   }
 
@@ -454,69 +529,88 @@ function renderDraft() {
     const lat = Number(breakForm.value.latitude)
     const lng = Number(breakForm.value.longitude)
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      window.L.circleMarker([lat, lng], {
-        radius: 8,
-        color: '#f97316',
-        weight: 2,
-        fillColor: '#fb923c',
-        fillOpacity: 0.85,
-      }).addTo(layerDraft)
+      addCircle(lat, lng, { scale: 8, strokeColor: '#f97316', fillColor: '#fb923c', fillOpacity: 0.85 })
     }
   }
 
   if (showCableModal.value && Array.isArray(cableForm.value.path) && cableForm.value.path.length > 0) {
     const latlngs = cableForm.value.path
-      .map((p) => [Number(p?.lat), Number(p?.lng)])
-      .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]))
+      .map((p) => ({ lat: Number(p?.lat), lng: Number(p?.lng) }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
 
     latlngs.forEach((ll) => {
-      window.L.circleMarker(ll, {
-        radius: 4,
-        color: '#1d4ed8',
-        weight: 2,
-        fillColor: '#60a5fa',
-        fillOpacity: 0.95,
-      }).addTo(layerDraft)
+      addCircle(ll.lat, ll.lng, { scale: 3, strokeColor: '#1d4ed8', fillColor: '#60a5fa', fillOpacity: 0.95 })
     })
 
     if (latlngs.length >= 2) {
-      window.L.polyline(latlngs, {
-        color: '#1d4ed8',
-        weight: 4,
-        opacity: 0.9,
-        dashArray: '6, 8',
-      }).addTo(layerDraft)
+      const lineSymbol = {
+        path: 'M 0,-1 0,1',
+        strokeOpacity: 1,
+        strokeColor: '#1d4ed8',
+        scale: 3,
+      }
+      layerDraft.polyline = new window.google.maps.Polyline({
+        path: latlngs,
+        strokeOpacity: 0,
+        icons: [{ icon: lineSymbol, offset: '0', repeat: '12px' }],
+        clickable: false,
+        map,
+      })
     }
   }
 }
 
 function fitOnce() {
-  if (!map || fittedOnce) return
+  if (!map || fittedOnce || !window.google?.maps) return
 
-  const bounds = []
-  try {
-    if (layerCables && showCables.value) layerCables.eachLayer((l) => { if (l.getBounds) bounds.push(l.getBounds()) })
-  } catch {}
-  try {
-    if (layerPoints && showPoints.value) layerPoints.eachLayer((l) => { if (l.getLatLng) bounds.push(window.L.latLngBounds([l.getLatLng(), l.getLatLng()])) })
-  } catch {}
-  try {
-    if (layerBreaks && showBreaks.value) layerBreaks.eachLayer((l) => { if (l.getLatLng) bounds.push(window.L.latLngBounds([l.getLatLng(), l.getLatLng()])) })
-  } catch {}
-
-  if (bounds.length === 0) return
+  const b = new window.google.maps.LatLngBounds()
+  let has = false
 
   try {
-    let b = null
-    bounds.forEach((x) => {
-      if (!b) b = x
-      else b.extend(x)
-    })
-
-    if (b && b.isValid && b.isValid()) {
-      map.fitBounds(b.pad(0.2))
-      fittedOnce = true
+    if (showCables.value) {
+      ;(cables.value || []).forEach((c) => {
+        const path = Array.isArray(c?.path) ? c.path : null
+        if (!path || path.length < 1) return
+        path.forEach((p) => {
+          const lat = Number(p?.lat)
+          const lng = Number(p?.lng)
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+          b.extend({ lat, lng })
+          has = true
+        })
+      })
     }
+  } catch {}
+
+  try {
+    if (showPoints.value) {
+      ;(points.value || []).forEach((p) => {
+        const lat = Number(p?.latitude)
+        const lng = Number(p?.longitude)
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+        b.extend({ lat, lng })
+        has = true
+      })
+    }
+  } catch {}
+
+  try {
+    if (showBreaks.value) {
+      ;(breaks.value || []).forEach((br) => {
+        const lat = Number(br?.latitude)
+        const lng = Number(br?.longitude)
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+        b.extend({ lat, lng })
+        has = true
+      })
+    }
+  } catch {}
+
+  if (!has) return
+
+  try {
+    map.fitBounds(b)
+    fittedOnce = true
   } catch {}
 }
 
@@ -536,8 +630,23 @@ function toDatetimeLocal(v) {
 }
 
 function focusOnLatLng(lat, lng, zoom = 17) {
-  if (!map || !Number.isFinite(lat) || !Number.isFinite(lng)) return
-  map.setView([lat, lng], zoom, { animate: true })
+  if (!map || !window.google?.maps || !Number.isFinite(lat) || !Number.isFinite(lng)) return
+  try { map.panTo({ lat, lng }) } catch {}
+  if (Number.isFinite(Number(zoom))) {
+    try { map.setZoom(Number(zoom)) } catch {}
+  }
+}
+
+function ensureMapReady() {
+  if (mapLoadError.value) {
+    if (toast) toast.error(mapLoadError.value)
+    return false
+  }
+  if (!map || !window.google?.maps) {
+    if (toast) toast.error('Peta belum siap.')
+    return false
+  }
+  return true
 }
 
 /* ───────────── Modals: Cable ───────────── */
@@ -580,8 +689,8 @@ function openCreateCable() {
   resetCableForm()
   cableModalMode.value = 'create'
   showCableModal.value = true
-  mapMode.value = null
-  renderDraft()
+  resumeModal.value = null
+  stopMapMode({ reopen: false })
 }
 
 function openEditCable(item) {
@@ -601,8 +710,8 @@ function openEditCable(item) {
     notes: item.notes || '',
   }
   showCableModal.value = true
-  mapMode.value = null
-  renderDraft()
+  resumeModal.value = null
+  stopMapMode({ reopen: false })
 
   const p0 = (cableForm.value.path || [])[0]
   if (p0 && Number.isFinite(Number(p0.lat)) && Number.isFinite(Number(p0.lng))) {
@@ -677,9 +786,12 @@ async function deleteCable(item) {
 
 function startDrawCable() {
   if (!showCableModal.value) return
+  if (!ensureMapReady()) return
+  resumeModal.value = 'cable'
+  showCableModal.value = false
   mapMode.value = 'drawCable'
   renderDraft()
-  if (toast) toast.info('Mode gambar jalur aktif: klik peta untuk menambah titik.')
+  if (toast) toast.info('Mode gambar jalur aktif: klik peta untuk menambah titik, lalu klik Selesai untuk kembali.')
 }
 
 function undoCablePoint() {
@@ -729,8 +841,8 @@ function openCreatePoint() {
   resetPointForm()
   pointModalMode.value = 'create'
   showPointModal.value = true
-  mapMode.value = null
-  renderDraft()
+  resumeModal.value = null
+  stopMapMode({ reopen: false })
 }
 
 function openEditPoint(item) {
@@ -747,8 +859,8 @@ function openEditPoint(item) {
     notes: item.notes || '',
   }
   showPointModal.value = true
-  mapMode.value = null
-  renderDraft()
+  resumeModal.value = null
+  stopMapMode({ reopen: false })
 
   const lat = Number(pointForm.value.latitude)
   const lng = Number(pointForm.value.longitude)
@@ -757,6 +869,9 @@ function openEditPoint(item) {
 
 function pickPointOnMap() {
   if (!showPointModal.value) return
+  if (!ensureMapReady()) return
+  resumeModal.value = 'point'
+  showPointModal.value = false
   mapMode.value = 'pickPoint'
   renderDraft()
   if (toast) toast.info('Klik peta untuk memilih lokasi titik.')
@@ -864,8 +979,8 @@ function openCreateBreak() {
   resetBreakForm()
   breakModalMode.value = 'create'
   showBreakModal.value = true
-  mapMode.value = null
-  renderDraft()
+  resumeModal.value = null
+  stopMapMode({ reopen: false })
 }
 
 function openEditBreak(item) {
@@ -885,8 +1000,8 @@ function openEditBreak(item) {
     description: item.description || '',
   }
   showBreakModal.value = true
-  mapMode.value = null
-  renderDraft()
+  resumeModal.value = null
+  stopMapMode({ reopen: false })
 
   const lat = Number(breakForm.value.latitude)
   const lng = Number(breakForm.value.longitude)
@@ -895,6 +1010,9 @@ function openEditBreak(item) {
 
 function pickBreakOnMap() {
   if (!showBreakModal.value) return
+  if (!ensureMapReady()) return
+  resumeModal.value = 'break'
+  showBreakModal.value = false
   mapMode.value = 'pickBreak'
   renderDraft()
   if (toast) toast.info('Klik peta untuk memilih lokasi putus.')
@@ -965,7 +1083,7 @@ async function deleteBreak(item) {
   }
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Ports (OLT PON / ODP OUT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Ports (OLT PON / ODP OUT) */
 const showPortModal = ref(false)
 const portModalMode = ref('create') // create|edit
 const portProcessing = ref(false)
@@ -1078,7 +1196,7 @@ async function deletePortItem(item) {
   }
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Links (splice/patch/split) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Links (splice/patch/split) */
 const showLinkModal = ref(false)
 const linkModalMode = ref('create') // create|edit
 const linkProcessing = ref(false)
@@ -1311,7 +1429,7 @@ async function deleteLinkItem(item) {
   }
 }
 
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Trace (OLT PON -> ODP OUT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* Trace (OLT PON -> ODP OUT) */
 const traceStartPortId = ref('')
 const traceLoading = ref(false)
 const traceError = ref('')
@@ -1376,30 +1494,24 @@ onMounted(() => {
     if (saved && MAP_STYLES[saved]) mapStyle.value = saved
   } catch {}
 
-  const loadLeaflet = () => {
-    if (window.L) return Promise.resolve()
-    return new Promise((resolve, reject) => {
-      const link = document.createElement('link')
-      link.rel = 'stylesheet'
-      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
-      document.head.appendChild(link)
+  mapLoadError.value = ''
 
-      const script = document.createElement('script')
-      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-      script.onload = () => resolve()
-      script.onerror = () => reject(new Error('Failed to load Leaflet'))
-      document.head.appendChild(script)
-    })
+  const key = (props.googleMapsApiKey || '').toString().trim()
+  if (!key) {
+    mapLoadError.value = 'Google Maps API key belum di-set. Buka Pengaturan -> System -> Google Maps.'
+    loadAll()
+    return
   }
 
-  loadLeaflet().then(() => {
+  loadGoogleMaps(key).then(() => {
     nextTick(() => {
       initMap()
       loadAll()
     })
   }).catch((e) => {
-    console.error('Fiber: Leaflet load failed', e)
-    errorMessage.value = 'Gagal memuat Leaflet. Cek koneksi internet.'
+    console.error('Fiber: Google Maps load failed', e)
+    mapLoadError.value = e?.message || 'Gagal memuat Google Maps.'
+    loadAll()
   })
 })
 
@@ -1435,8 +1547,8 @@ onUnmounted(() => {
 
           <div class="hidden lg:flex items-center gap-2 ml-2">
             <select v-model="mapStyle" class="input !py-2 !text-xs">
-              <option value="voyager">Voyager</option>
-              <option value="light">Light</option>
+              <option value="roadmap">Roadmap</option>
+              <option value="hybrid">Hybrid</option>
               <option value="satellite">Satelit</option>
             </select>
             <button @click="loadAll" class="btn btn-secondary !py-2 !text-xs" :disabled="loading">Refresh</button>
@@ -1474,8 +1586,8 @@ onUnmounted(() => {
 
             <div class="ml-auto flex items-center gap-2 lg:hidden">
               <select v-model="mapStyle" class="input !py-2 !text-xs">
-                <option value="voyager">Voyager</option>
-                <option value="light">Light</option>
+                <option value="roadmap">Roadmap</option>
+                <option value="hybrid">Hybrid</option>
                 <option value="satellite">Satelit</option>
               </select>
               <button @click="loadAll" class="btn btn-secondary !py-2 !text-xs" :disabled="loading">Refresh</button>
@@ -1484,6 +1596,16 @@ onUnmounted(() => {
 
           <div class="relative">
             <div ref="mapContainer" class="w-full h-[420px] lg:h-[calc(100vh-13rem)] bg-slate-100 dark:bg-slate-900"></div>
+
+            <div
+              v-if="mapLoadError"
+              class="absolute inset-0 z-10 flex items-center justify-center p-6 bg-white/85 dark:bg-dark-900/70 backdrop-blur"
+            >
+              <div class="max-w-md text-center">
+                <div class="text-sm font-semibold text-gray-900 dark:text-white">Peta tidak dapat dimuat</div>
+                <div class="mt-1 text-xs text-gray-600 dark:text-gray-300">{{ mapLoadError }}</div>
+              </div>
+            </div>
 
             <div v-if="mapMode" class="absolute bottom-3 left-3 right-3 lg:right-auto lg:max-w-md bg-white/90 dark:bg-dark-900/80 backdrop-blur border border-gray-200 dark:border-white/10 rounded-xl p-3 text-xs text-gray-700 dark:text-gray-200 shadow-lg">
               <div class="font-semibold">
@@ -1650,7 +1772,7 @@ onUnmounted(() => {
                         <div v-if="p.cable_id && p.core_no">
                           Kabel:
                           <span class="font-medium text-gray-700 dark:text-gray-200">{{ cableNameById(p.cable_id) || ('Kabel #' + p.cable_id) }}</span>
-                          <span class="ml-1">â€¢ core {{ p.core_no }}</span>
+                          <span class="ml-1">- core {{ p.core_no }}</span>
                         </div>
                       </div>
                     </div>
@@ -1681,20 +1803,20 @@ onUnmounted(() => {
                     <div class="min-w-0">
                       <div class="text-xs font-bold text-amber-700 dark:text-amber-300">
                         {{ ln.kind === 'SPLIT_GROUP' ? 'SPLIT' : String(ln.link_type || '').toUpperCase() }}
-                        <span v-if="ln.kind === 'SPLIT_GROUP'" class="ml-1">â€¢ {{ (ln.outputs || []).length }} output</span>
+                        <span v-if="ln.kind === 'SPLIT_GROUP'" class="ml-1">- {{ (ln.outputs || []).length }} output</span>
                       </div>
                       <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                         Titik:
                         <span class="font-medium text-gray-700 dark:text-gray-200">{{ pointNameById(ln.point_id) || ('#' + ln.point_id) }}</span>
                       </div>
                       <div class="text-sm font-semibold text-gray-900 dark:text-white mt-1 truncate">
-                        {{ cableNameById(ln.from_cable_id) || ('Kabel #' + ln.from_cable_id) }} â€¢ core {{ ln.from_core_no }}
-                        <span class="mx-1 text-gray-400">â†’</span>
+                        {{ cableNameById(ln.from_cable_id) || ('Kabel #' + ln.from_cable_id) }} - core {{ ln.from_core_no }}
+                        <span class="mx-1 text-gray-400">-&gt;</span>
                         <template v-if="ln.kind === 'SPLIT_GROUP'">
                           <span class="text-gray-700 dark:text-gray-200">splitter</span>
                         </template>
                         <template v-else>
-                          {{ cableNameById(ln.to_cable_id) || ('Kabel #' + ln.to_cable_id) }} â€¢ core {{ ln.to_core_no }}
+                          {{ cableNameById(ln.to_cable_id) || ('Kabel #' + ln.to_cable_id) }} - core {{ ln.to_core_no }}
                         </template>
                       </div>
                       <div v-if="ln.kind === 'SPLIT_GROUP' && (ln.outputs || []).length" class="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
@@ -1731,7 +1853,7 @@ onUnmounted(() => {
                   <select v-model="traceStartPortId" class="input w-full">
                     <option value="">(pilih port)</option>
                     <option v-for="p in oltPonPorts" :key="p.id" :value="p.id">
-                      {{ pointNameById(p.point_id) || ('#' + p.point_id) }} â€¢ {{ p.port_label }} â€¢ {{ cableNameById(p.cable_id) || ('Kabel #' + p.cable_id) }}:{{ p.core_no }}
+                      {{ pointNameById(p.point_id) || ('#' + p.point_id) }} | {{ p.port_label }} | {{ cableNameById(p.cable_id) || ('Kabel #' + p.cable_id) }}:{{ p.core_no }}
                     </option>
                   </select>
                 </div>
@@ -1749,7 +1871,7 @@ onUnmounted(() => {
               <div v-if="traceResult" class="space-y-3">
                 <div class="text-xs text-gray-500 dark:text-gray-400">
                   Endpoint: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ (traceResult.endpoints || []).length }}</span>
-                  <span class="mx-2">â€¢</span>
+                  <span class="mx-2">|</span>
                   Visited: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ traceResult.visited_nodes || 0 }}</span>
                   <span v-if="traceResult.truncated" class="ml-2 text-amber-700 dark:text-amber-300">(truncated)</span>
                 </div>
@@ -1771,7 +1893,7 @@ onUnmounted(() => {
                     </div>
                     <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                       Port: <span class="font-medium text-gray-700 dark:text-gray-200">{{ e.port?.port_label || ('#' + e.port?.id) }}</span>
-                      <span class="mx-2">â€¢</span>
+                      <span class="mx-2">|</span>
                       {{ cableNameById(e.port?.cable_id) || ('Kabel #' + e.port?.cable_id) }}:{{ e.port?.core_no }}
                     </div>
                   </div>
@@ -1783,11 +1905,11 @@ onUnmounted(() => {
                     <div v-for="(s, i) in selectedTraceEndpoint.path" :key="i" class="text-xs">
                       <div class="font-medium text-gray-900 dark:text-white">
                         {{ i === 0 ? 'START' : (s.edge?.type === 'CABLE' ? 'KABEL' : ('LINK ' + (s.edge?.link_type || ''))) }}
-                        <span class="mx-1 text-gray-400">â€¢</span>
+                        <span class="mx-1 text-gray-400">|</span>
                         {{ s.point?.name || ('Titik #' + s.node?.point_id) }}
                       </div>
                       <div class="text-gray-600 dark:text-gray-300">
-                        {{ s.cable?.name || ('Kabel #' + s.node?.cable_id) }} â€¢ core {{ s.node?.core_no }}
+                        {{ s.cable?.name || ('Kabel #' + s.node?.cable_id) }} - core {{ s.node?.core_no }}
                       </div>
                     </div>
                   </div>

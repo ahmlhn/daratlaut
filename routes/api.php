@@ -160,6 +160,8 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::delete('/settings/recap-groups/{id}', [SettingsController::class, 'deleteRecapGroup']);
     Route::get('/settings/fee-settings', [SettingsController::class, 'getFeeSettings']);
     Route::post('/settings/fee-settings', [SettingsController::class, 'saveFeeSettings']);
+    Route::get('/settings/maps', [SettingsController::class, 'getMapsConfig']);
+    Route::post('/settings/maps', [SettingsController::class, 'saveMapsConfig']);
     Route::get('/settings/gateway-status', [SettingsController::class, 'getGatewayStatus']);
     Route::get('/settings/public-url', [SettingsController::class, 'getPublicUrlEndpoint']);
     Route::get('/settings/install-variables', [SettingsController::class, 'getInstallVariables']);

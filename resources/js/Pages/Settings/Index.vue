@@ -34,6 +34,8 @@ const recapForm = reactive({ id: 0, name: '', group_id: '' });
 const editingRecap = ref(false);
 
 const feeSettings = reactive({ teknisi_fee_install: 0, sales_fee_install: 0, expense_categories: [] });
+const mapsConfig = reactive({ google_maps_api_key: '' });
+const showMapsKey = ref(false);
 
 const publicUrl = ref('');
 
@@ -51,6 +53,7 @@ const sections = [
     { id: 'pops', name: 'Manajemen POP', icon: 'map-pin' },
     { id: 'recap_groups', name: 'Group Rekap', icon: 'user-group' },
     { id: 'fee', name: 'Fee Teknisi', icon: 'cash' },
+    { id: 'maps', name: 'Google Maps', icon: 'map' },
     { id: 'public_url', name: 'Link Isolir', icon: 'link' },
     { id: 'logs', name: 'Log Notifikasi', icon: 'clock' },
     { id: 'system_update', name: 'Update Sistem', icon: 'refresh' },
@@ -61,7 +64,7 @@ const tabs = [
     { id: 'gateway', title: 'Gateway', items: ['status', 'wa', 'mpwa', 'tg'] },
     { id: 'pesan', title: 'Pesan', items: ['templates', 'logs'] },
     { id: 'operasional', title: 'Operasional', items: ['pops', 'recap_groups', 'fee'] },
-    { id: 'system', title: 'System', items: ['public_url', 'system_update'] },
+    { id: 'system', title: 'System', items: ['public_url', 'maps', 'system_update'] },
 ];
 
 const sectionById = computed(() => Object.fromEntries(sections.map((s) => [s.id, s])));
@@ -180,6 +183,12 @@ async function loadAll(opts = {}) {
         recapGroups.value = data.recap_groups || [];
         // Fee
         if (data.fee_settings) Object.assign(feeSettings, data.fee_settings);
+        // Maps
+        if (data.maps_config) {
+            mapsConfig.google_maps_api_key = data.maps_config.google_maps_api_key || '';
+        } else {
+            mapsConfig.google_maps_api_key = '';
+        }
         // Public URL
         publicUrl.value = data.public_url || '';
     } catch (e) {
@@ -344,6 +353,16 @@ async function saveFee() {
     try {
         await api('/fee-settings', { method: 'POST', body: JSON.stringify(feeSettings) });
         alert('Fee settings tersimpan!');
+    } catch (e) { alert('Gagal'); }
+    finally { saving.value = false; }
+}
+
+// ===== Google Maps =====
+async function saveMaps() {
+    saving.value = true;
+    try {
+        await api('/maps', { method: 'POST', body: JSON.stringify(mapsConfig) });
+        alert('Google Maps API key tersimpan!');
     } catch (e) { alert('Gagal'); }
     finally { saving.value = false; }
 }
@@ -904,6 +923,44 @@ onMounted(loadAll);
                                 <button @click="copyUrl" class="btn btn-primary shrink-0">Copy</button>
                             </div>
                             <p class="text-sm text-gray-500 dark:text-gray-400">Bagikan link ini ke pelanggan agar masuk ke halaman isolir/chat.</p>
+                        </div>
+                    </div>
+
+                    <!-- ===== GOOGLE MAPS ===== -->
+                    <div v-if="activeSection === 'maps'" class="card p-0 overflow-hidden rounded-2xl">
+                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                            <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Google Maps</h2>
+                            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">API key untuk modul yang membutuhkan peta (contoh: Kabel FO).</p>
+                        </div>
+
+                        <div class="px-6 py-6 sm:px-8 space-y-5">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Google Maps API Key</label>
+                                <div class="flex flex-col sm:flex-row gap-2">
+                                    <input
+                                        v-model="mapsConfig.google_maps_api_key"
+                                        :type="showMapsKey ? 'text' : 'password'"
+                                        class="input flex-1 font-mono text-sm"
+                                        placeholder="AIzaSy..."
+                                        autocomplete="off"
+                                    >
+                                    <button @click="showMapsKey = !showMapsKey" class="btn btn-secondary shrink-0">
+                                        {{ showMapsKey ? 'Hide' : 'Show' }}
+                                    </button>
+                                </div>
+                                <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                                    Catatan: API key dipakai di browser (bukan rahasia). Tetap wajib dibatasi via HTTP referrer/domain agar aman.
+                                </p>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                    Pastikan API <span class="font-semibold">Maps JavaScript API</span> aktif di Google Cloud dan billing aktif.
+                                </p>
+                            </div>
+
+                            <div class="pt-1">
+                                <button @click="saveMaps" :disabled="saving" class="btn btn-primary">
+                                    {{ saving ? 'Menyimpan...' : 'Simpan Google Maps Key' }}
+                                </button>
+                            </div>
                         </div>
                     </div>
 

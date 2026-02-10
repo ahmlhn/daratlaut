@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
 
 class SettingsController extends Controller
 {
@@ -44,6 +45,7 @@ class SettingsController extends Controller
         $pops = Pop::forTenant($tid)->orderBy('pop_name')->get();
         $recapGroups = $this->getRecapGroupsData($tid);
         $feeSettings = $this->getFeeSettingsData($tid);
+        $mapsConfig = $this->getMapsConfigData($tid);
         $publicUrl = $this->getPublicUrl($tid);
         $gatewayStatus = $this->getGatewayStatusData($tid);
 
@@ -56,6 +58,7 @@ class SettingsController extends Controller
             'pops' => $pops,
             'recap_groups' => $recapGroups,
             'fee_settings' => $feeSettings,
+            'maps_config' => $mapsConfig,
             'public_url' => $publicUrl,
             'gateway_status' => $gatewayStatus,
         ]);
@@ -359,6 +362,60 @@ class SettingsController extends Controller
         } catch (\Exception $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
         }
+    }
+
+    // ========== Maps Settings (Google Maps API Key) ==========
+
+    private function getMapsConfigData(int $tid): array
+    {
+        try {
+            if (!Schema::hasTable('noci_conf_maps')) {
+                return ['google_maps_api_key' => ''];
+            }
+
+            $row = DB::table('noci_conf_maps')->where('tenant_id', $tid)->first();
+            return [
+                'google_maps_api_key' => $row->google_maps_api_key ?? '',
+            ];
+        } catch (\Throwable) {
+            return ['google_maps_api_key' => ''];
+        }
+    }
+
+    public function getMapsConfig(Request $request): JsonResponse
+    {
+        return response()->json(['data' => $this->getMapsConfigData($this->tenantId($request))]);
+    }
+
+    public function saveMapsConfig(Request $request): JsonResponse
+    {
+        $tid = $this->tenantId($request);
+
+        if (!Schema::hasTable('noci_conf_maps')) {
+            return response()->json(['status' => 'error', 'message' => 'Table noci_conf_maps not found. Run migration.'], 500);
+        }
+
+        $apiKey = trim((string) $request->input('google_maps_api_key', ''));
+        if (strlen($apiKey) > 255) {
+            return response()->json(['status' => 'error', 'message' => 'API key terlalu panjang'], 422);
+        }
+
+        $now = now();
+        $data = [
+            'google_maps_api_key' => $apiKey !== '' ? $apiKey : null,
+            'updated_at' => $now,
+        ];
+
+        if (DB::table('noci_conf_maps')->where('tenant_id', $tid)->exists()) {
+            DB::table('noci_conf_maps')->where('tenant_id', $tid)->update($data);
+        } else {
+            DB::table('noci_conf_maps')->insert(array_merge($data, [
+                'tenant_id' => $tid,
+                'created_at' => $now,
+            ]));
+        }
+
+        return response()->json(['status' => 'success']);
     }
 
     // ========== Gateway Status ==========
