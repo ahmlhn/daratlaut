@@ -1838,9 +1838,13 @@ onUnmounted(() => {
     </div>
 
     <!-- Cable Modal -->
-    <div v-if="showCableModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
-      <div class="absolute inset-0 bg-black/40" @click="showCableModal=false; stopMapMode()"></div>
-      <div class="relative w-full max-w-2xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+    <div v-if="showCableModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4" :class="mapMode ? 'pointer-events-none' : ''">
+      <div
+        class="absolute inset-0 bg-black/40"
+        :class="mapMode ? 'pointer-events-none opacity-20' : ''"
+        @click="showCableModal=false; stopMapMode()"
+      ></div>
+      <div class="relative pointer-events-auto w-full max-w-2xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
           <div class="font-semibold text-gray-900 dark:text-white">{{ cableModalMode === 'edit' ? 'Edit Kabel' : 'Tambah Kabel' }}</div>
           <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showCableModal=false; stopMapMode()">Tutup</button>
@@ -1918,9 +1922,13 @@ onUnmounted(() => {
     </div>
 
     <!-- Point Modal -->
-    <div v-if="showPointModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
-      <div class="absolute inset-0 bg-black/40" @click="showPointModal=false; stopMapMode()"></div>
-      <div class="relative w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+    <div v-if="showPointModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4" :class="mapMode ? 'pointer-events-none' : ''">
+      <div
+        class="absolute inset-0 bg-black/40"
+        :class="mapMode ? 'pointer-events-none opacity-20' : ''"
+        @click="showPointModal=false; stopMapMode()"
+      ></div>
+      <div class="relative pointer-events-auto w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
           <div class="font-semibold text-gray-900 dark:text-white">{{ pointModalMode === 'edit' ? 'Edit Titik' : 'Tambah Titik' }}</div>
           <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showPointModal=false; stopMapMode()">Tutup</button>
@@ -1972,9 +1980,13 @@ onUnmounted(() => {
     </div>
 
     <!-- Break Modal -->
-    <div v-if="showBreakModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
-      <div class="absolute inset-0 bg-black/40" @click="showBreakModal=false; stopMapMode()"></div>
-      <div class="relative w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+    <div v-if="showBreakModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4" :class="mapMode ? 'pointer-events-none' : ''">
+      <div
+        class="absolute inset-0 bg-black/40"
+        :class="mapMode ? 'pointer-events-none opacity-20' : ''"
+        @click="showBreakModal=false; stopMapMode()"
+      ></div>
+      <div class="relative pointer-events-auto w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
           <div class="font-semibold text-gray-900 dark:text-white">{{ breakModalMode === 'edit' ? 'Edit Data Putus' : 'Tambah Data Putus' }}</div>
           <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showBreakModal=false; stopMapMode()">Tutup</button>
