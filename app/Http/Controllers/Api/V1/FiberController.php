@@ -176,23 +176,27 @@ class FiberController extends Controller
                     'updated_at',
                 ]);
 
+            $cableCols = [
+                'id',
+                'name',
+                'code',
+                'cable_type',
+                'core_count',
+                'map_color',
+                'from_point_id',
+                'to_point_id',
+                'path',
+                'notes',
+                'created_at',
+                'updated_at',
+            ];
+            if (Schema::hasColumn('noci_fo_cables', 'length_m')) {
+                $cableCols[] = 'length_m';
+            }
+
             $cables = FoCable::forTenant($tenantId)
                 ->orderBy('name')
-                ->get([
-                    'id',
-                    'name',
-                    'code',
-                    'cable_type',
-                    'core_count',
-                    'map_color',
-                    'from_point_id',
-                    'to_point_id',
-                    'path',
-                    'length_m',
-                    'notes',
-                    'created_at',
-                    'updated_at',
-                ]);
+                ->get($cableCols);
 
             $breaks = FoBreak::forTenant($tenantId)
                 ->orderByDesc('reported_at')
@@ -359,11 +363,13 @@ class FiberController extends Controller
             'from_point_id' => $fromPointId > 0 ? $fromPointId : null,
             'to_point_id' => $toPointId > 0 ? $toPointId : null,
             'path' => $validated['path'] ?? null,
-            'length_m' => array_key_exists('length_m', $validated) ? ($validated['length_m'] ?? null) : null,
             'notes' => $validated['notes'] ?? null,
             'created_by' => $userId ?: null,
             'updated_by' => $userId ?: null,
         ];
+        if (Schema::hasColumn('noci_fo_cables', 'length_m')) {
+            $payload['length_m'] = array_key_exists('length_m', $validated) ? ($validated['length_m'] ?? null) : null;
+        }
 
         try {
             $cable = FoCable::create($payload);
@@ -394,6 +400,9 @@ class FiberController extends Controller
             'length_m' => 'nullable|integer|min:0',
             'notes' => 'nullable|string',
         ]);
+        if (!Schema::hasColumn('noci_fo_cables', 'length_m')) {
+            unset($validated['length_m']);
+        }
 
         $fromPointId = array_key_exists('from_point_id', $validated) ? (int) ($validated['from_point_id'] ?? 0) : null;
         $toPointId = array_key_exists('to_point_id', $validated) ? (int) ($validated['to_point_id'] ?? 0) : null;
