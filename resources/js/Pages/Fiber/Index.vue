@@ -39,8 +39,10 @@ const summary = ref({ cables: 0, points: 0, breaks_total: 0, breaks_open: 0 })
 const cables = ref([])
 const points = ref([])
 const breaks = ref([])
+const ports = ref([])
+const links = ref([])
 
-const activeTab = ref('cables') // cables|points|breaks
+const activeTab = ref('cables') // cables|points|ports|links|trace|breaks
 
 const showCables = ref(true)
 const showPoints = ref(true)
@@ -49,6 +51,17 @@ const showBreaks = ref(true)
 const selectedCableId = ref(null)
 const selectedPointId = ref(null)
 const selectedBreakId = ref(null)
+
+const traceResult = ref(null)
+const traceUsedCableIds = ref([])
+const traceUsedCableSet = computed(() => {
+  const s = new Set()
+  ;(traceUsedCableIds.value || []).forEach((id) => {
+    const n = Number(id)
+    if (Number.isFinite(n) && n > 0) s.add(n)
+  })
+  return s
+})
 
 /* ───────────── API helper ───────────── */
 async function requestJson(url, options = {}) {
@@ -97,6 +110,8 @@ async function loadAll() {
     cables.value = mapRes.data?.data?.cables || []
     points.value = mapRes.data?.data?.points || []
     breaks.value = mapRes.data?.data?.breaks || []
+    ports.value = mapRes.data?.data?.ports || []
+    links.value = mapRes.data?.data?.links || []
 
     renderAllLayers()
     fitOnce()
@@ -301,12 +316,18 @@ function renderCablesLayer() {
     if (latlngs.length < 2) return
 
     const isSelected = Number(c?.id) === Number(selectedCableId.value || 0)
+    const traceActive = traceUsedCableSet.value.size > 0
+    const inTrace = traceUsedCableSet.value.has(Number(c?.id))
     const color = (c?.map_color || '#2563eb').toString()
+
+    const weightBase = isSelected ? 6 : 4
+    const weight = inTrace ? Math.max(weightBase, 6) : weightBase
+    const opacity = traceActive ? (inTrace ? 1 : 0.25) : 0.9
 
     const poly = window.L.polyline(latlngs, {
       color,
-      weight: isSelected ? 6 : 4,
-      opacity: 0.9,
+      weight,
+      opacity,
     })
 
     poly.on('click', () => {
@@ -944,6 +965,402 @@ async function deleteBreak(item) {
   }
 }
 
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Ports (OLT PON / ODP OUT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+const showPortModal = ref(false)
+const portModalMode = ref('create') // create|edit
+const portProcessing = ref(false)
+const portErrors = ref({})
+
+const portForm = ref({
+  id: null,
+  point_id: '',
+  port_type: 'OLT_PON',
+  port_label: '',
+  cable_id: '',
+  core_no: '',
+  notes: '',
+})
+
+function resetPortForm() {
+  portForm.value = {
+    id: null,
+    point_id: '',
+    port_type: 'OLT_PON',
+    port_label: '',
+    cable_id: '',
+    core_no: '',
+    notes: '',
+  }
+  portErrors.value = {}
+}
+
+function openCreatePort() {
+  if (!canCreate.value) return
+  resetPortForm()
+  if (selectedPointId.value) portForm.value.point_id = String(selectedPointId.value)
+  portModalMode.value = 'create'
+  showPortModal.value = true
+}
+
+function openEditPort(item) {
+  if (!canEdit.value) return
+  resetPortForm()
+  portModalMode.value = 'edit'
+  portForm.value = {
+    id: item.id,
+    point_id: item.point_id ?? '',
+    port_type: item.port_type || 'OLT_PON',
+    port_label: item.port_label || '',
+    cable_id: item.cable_id ?? '',
+    core_no: item.core_no ?? '',
+    notes: item.notes || '',
+  }
+  showPortModal.value = true
+}
+
+async function savePort() {
+  portProcessing.value = true
+  portErrors.value = {}
+
+  const payload = {
+    point_id: portForm.value.point_id !== '' ? Number(portForm.value.point_id) : null,
+    port_type: (portForm.value.port_type || 'OLT_PON').toString().toUpperCase(),
+    port_label: portForm.value.port_label || '',
+    cable_id: portForm.value.cable_id !== '' ? Number(portForm.value.cable_id) : null,
+    core_no: portForm.value.core_no !== '' ? Number(portForm.value.core_no) : null,
+    notes: portForm.value.notes || null,
+  }
+
+  const isEdit = portModalMode.value === 'edit' && portForm.value.id
+  const url = isEdit ? `/api/v1/fiber/ports/${portForm.value.id}` : '/api/v1/fiber/ports'
+  const method = isEdit ? 'PUT' : 'POST'
+
+  try {
+    const res = await requestJson(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    if (!res.ok) {
+      if (res.status === 422 && res.data?.errors) {
+        portErrors.value = res.data.errors
+        throw new Error(res.data?.message || 'Validasi gagal.')
+      }
+      throw new Error(res.data?.message || `Gagal menyimpan port (HTTP ${res.status}).`)
+    }
+
+    showPortModal.value = false
+    await loadAll()
+    if (toast) toast.success('Port tersimpan.')
+  } catch (e) {
+    console.error('Fiber: savePort failed', e)
+    if (toast) toast.error(e?.message || 'Gagal menyimpan port.')
+  } finally {
+    portProcessing.value = false
+  }
+}
+
+async function deletePortItem(item) {
+  if (!canDelete.value) return
+  const ok = confirm(`Hapus port "${item?.port_label || ''}"?`)
+  if (!ok) return
+
+  try {
+    const res = await requestJson(`/api/v1/fiber/ports/${item.id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(res.data?.message || `Gagal hapus port (HTTP ${res.status}).`)
+
+    if (toast) toast.success('Port dihapus.')
+    await loadAll()
+  } catch (e) {
+    console.error('Fiber: deletePort failed', e)
+    if (toast) toast.error(e?.message || 'Gagal hapus port.')
+  }
+}
+
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Links (splice/patch/split) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+const showLinkModal = ref(false)
+const linkModalMode = ref('create') // create|edit
+const linkProcessing = ref(false)
+const linkErrors = ref({})
+const splitOutputCount = ref(8)
+
+const linkForm = ref({
+  id: null,
+  point_id: '',
+  link_type: 'SPLICE',
+  from_cable_id: '',
+  from_core_no: '',
+  to_cable_id: '',
+  to_core_no: '',
+  split_group: '',
+  outputs: [],
+  loss_db: '',
+  notes: '',
+})
+
+const linkItems = computed(() => {
+  const rows = Array.isArray(links.value) ? links.value : []
+  const out = []
+  const groups = {}
+
+  rows.forEach((ln) => {
+    const lt = (ln?.link_type || '').toString().toUpperCase()
+    const sg = (ln?.split_group || '').toString()
+
+    if (lt === 'SPLIT' && sg) {
+      const key = `${Number(ln.point_id) || 0}|${sg}`
+      if (!groups[key]) {
+        groups[key] = {
+          kind: 'SPLIT_GROUP',
+          id: ln.id,
+          point_id: ln.point_id,
+          link_type: 'SPLIT',
+          split_group: sg,
+          from_cable_id: ln.from_cable_id,
+          from_core_no: ln.from_core_no,
+          loss_db: ln.loss_db ?? null,
+          notes: ln.notes || '',
+          outputs: [],
+          link_ids: [],
+        }
+      }
+      groups[key].outputs.push({ to_cable_id: ln.to_cable_id, to_core_no: ln.to_core_no })
+      groups[key].link_ids.push(ln.id)
+      return
+    }
+
+    out.push({ kind: 'LINK', ...(ln || {}) })
+  })
+
+  Object.values(groups).forEach((g) => {
+    g.outputs = (g.outputs || []).filter((x) => x?.to_cable_id && x?.to_core_no)
+    out.push(g)
+  })
+
+  out.sort((a, b) => {
+    const ap = Number(a?.point_id || 0)
+    const bp = Number(b?.point_id || 0)
+    if (ap !== bp) return ap - bp
+    const at = (a?.link_type || '').toString()
+    const bt = (b?.link_type || '').toString()
+    return at.localeCompare(bt)
+  })
+
+  return out
+})
+
+function resetLinkForm() {
+  linkForm.value = {
+    id: null,
+    point_id: '',
+    link_type: 'SPLICE',
+    from_cable_id: '',
+    from_core_no: '',
+    to_cable_id: '',
+    to_core_no: '',
+    split_group: '',
+    outputs: [],
+    loss_db: '',
+    notes: '',
+  }
+  linkErrors.value = {}
+  splitOutputCount.value = 8
+}
+
+function ensureSplitOutputs(n) {
+  const count = Math.max(1, Math.min(64, Number(n) || 1))
+  linkForm.value.outputs = Array.from({ length: count }).map(() => ({ to_cable_id: '', to_core_no: '' }))
+}
+
+function addSplitOutputRow() {
+  const arr = Array.isArray(linkForm.value.outputs) ? linkForm.value.outputs : []
+  arr.push({ to_cable_id: '', to_core_no: '' })
+  linkForm.value.outputs = arr
+}
+
+function removeSplitOutputRow(idx) {
+  const arr = Array.isArray(linkForm.value.outputs) ? linkForm.value.outputs : []
+  if (idx < 0 || idx >= arr.length) return
+  arr.splice(idx, 1)
+  linkForm.value.outputs = arr
+}
+
+function openCreateLink() {
+  if (!canCreate.value) return
+  resetLinkForm()
+  if (selectedPointId.value) linkForm.value.point_id = String(selectedPointId.value)
+  linkModalMode.value = 'create'
+  showLinkModal.value = true
+}
+
+function openEditLink(item) {
+  if (!canEdit.value) return
+  resetLinkForm()
+  linkModalMode.value = 'edit'
+
+  if (item?.kind === 'SPLIT_GROUP') {
+    linkForm.value = {
+      id: item.id,
+      point_id: item.point_id ?? '',
+      link_type: 'SPLIT',
+      from_cable_id: item.from_cable_id ?? '',
+      from_core_no: item.from_core_no ?? '',
+      to_cable_id: '',
+      to_core_no: '',
+      split_group: item.split_group || '',
+      outputs: (item.outputs || []).map((o) => ({ to_cable_id: o.to_cable_id ?? '', to_core_no: o.to_core_no ?? '' })),
+      loss_db: item.loss_db ?? '',
+      notes: item.notes || '',
+    }
+    splitOutputCount.value = (linkForm.value.outputs || []).length || 8
+    showLinkModal.value = true
+    return
+  }
+
+  linkForm.value = {
+    id: item.id,
+    point_id: item.point_id ?? '',
+    link_type: (item.link_type || 'SPLICE').toString().toUpperCase(),
+    from_cable_id: item.from_cable_id ?? '',
+    from_core_no: item.from_core_no ?? '',
+    to_cable_id: item.to_cable_id ?? '',
+    to_core_no: item.to_core_no ?? '',
+    split_group: item.split_group || '',
+    outputs: [],
+    loss_db: item.loss_db ?? '',
+    notes: item.notes || '',
+  }
+  showLinkModal.value = true
+}
+
+async function saveLink() {
+  linkProcessing.value = true
+  linkErrors.value = {}
+
+  const linkType = (linkForm.value.link_type || 'SPLICE').toString().toUpperCase()
+
+  const payload = {
+    point_id: linkForm.value.point_id !== '' ? Number(linkForm.value.point_id) : null,
+    link_type: linkType,
+    from_cable_id: linkForm.value.from_cable_id !== '' ? Number(linkForm.value.from_cable_id) : null,
+    from_core_no: linkForm.value.from_core_no !== '' ? Number(linkForm.value.from_core_no) : null,
+    split_group: linkForm.value.split_group || null,
+    loss_db: linkForm.value.loss_db !== '' ? Number(linkForm.value.loss_db) : null,
+    notes: linkForm.value.notes || null,
+  }
+
+  if (linkType === 'SPLIT') {
+    const outs = Array.isArray(linkForm.value.outputs) ? linkForm.value.outputs : []
+    payload.outputs = outs
+      .map((o) => ({
+        to_cable_id: o.to_cable_id !== '' ? Number(o.to_cable_id) : null,
+        to_core_no: o.to_core_no !== '' ? Number(o.to_core_no) : null,
+      }))
+      .filter((o) => o.to_cable_id && o.to_core_no)
+  } else {
+    payload.to_cable_id = linkForm.value.to_cable_id !== '' ? Number(linkForm.value.to_cable_id) : null
+    payload.to_core_no = linkForm.value.to_core_no !== '' ? Number(linkForm.value.to_core_no) : null
+  }
+
+  const isEdit = linkModalMode.value === 'edit' && linkForm.value.id
+  const url = isEdit ? `/api/v1/fiber/links/${linkForm.value.id}` : '/api/v1/fiber/links'
+  const method = isEdit ? 'PUT' : 'POST'
+
+  try {
+    const res = await requestJson(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    if (!res.ok) {
+      if (res.status === 422 && res.data?.errors) {
+        linkErrors.value = res.data.errors
+        throw new Error(res.data?.message || 'Validasi gagal.')
+      }
+      throw new Error(res.data?.message || `Gagal menyimpan sambungan (HTTP ${res.status}).`)
+    }
+
+    showLinkModal.value = false
+    await loadAll()
+    if (toast) toast.success('Sambungan tersimpan.')
+  } catch (e) {
+    console.error('Fiber: saveLink failed', e)
+    if (toast) toast.error(e?.message || 'Gagal menyimpan sambungan.')
+  } finally {
+    linkProcessing.value = false
+  }
+}
+
+async function deleteLinkItem(item) {
+  if (!canDelete.value) return
+  const title = item?.kind === 'SPLIT_GROUP' ? `splitter "${item?.split_group || ''}"` : 'sambungan ini'
+  const ok = confirm(`Hapus ${title}?`)
+  if (!ok) return
+
+  try {
+    const res = await requestJson(`/api/v1/fiber/links/${item.id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(res.data?.message || `Gagal hapus sambungan (HTTP ${res.status}).`)
+
+    if (toast) toast.success('Sambungan dihapus.')
+    await loadAll()
+  } catch (e) {
+    console.error('Fiber: deleteLink failed', e)
+    if (toast) toast.error(e?.message || 'Gagal hapus sambungan.')
+  }
+}
+
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Trace (OLT PON -> ODP OUT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+const traceStartPortId = ref('')
+const traceLoading = ref(false)
+const traceError = ref('')
+const selectedTraceEndpoint = ref(null)
+
+const oltPonPorts = computed(() => {
+  return (ports.value || []).filter((p) => (p?.port_type || '').toString().toUpperCase() === 'OLT_PON')
+})
+
+function clearTrace() {
+  traceResult.value = null
+  traceError.value = ''
+  selectedTraceEndpoint.value = null
+  traceUsedCableIds.value = []
+  renderCablesLayer()
+}
+
+async function runTrace() {
+  if (!traceStartPortId.value) return
+  traceLoading.value = true
+  traceError.value = ''
+  traceResult.value = null
+  selectedTraceEndpoint.value = null
+  traceUsedCableIds.value = []
+
+  try {
+    const res = await requestJson(`/api/v1/fiber/trace/${Number(traceStartPortId.value)}?stop_at_odp_out=1`)
+    if (!res.ok) throw new Error(res.data?.message || `Gagal trace (HTTP ${res.status}).`)
+
+    traceResult.value = res.data?.data || null
+    traceUsedCableIds.value = res.data?.data?.used_cable_ids || []
+
+    renderCablesLayer()
+
+    const endpoints = res.data?.data?.endpoints || []
+    if (endpoints.length > 0) {
+      selectedTraceEndpoint.value = endpoints[0]
+    }
+
+    if (toast) toast.success('Trace selesai.')
+  } catch (e) {
+    console.error('Fiber: runTrace failed', e)
+    traceError.value = e?.message || 'Gagal trace.'
+    if (toast) toast.error(traceError.value)
+  } finally {
+    traceLoading.value = false
+  }
+}
+
 watch([showCables, showPoints, showBreaks], () => {
   renderAllLayers()
 })
@@ -1087,24 +1504,45 @@ onUnmounted(() => {
 
         <!-- Panel -->
         <div class="lg:col-span-4 bg-white dark:bg-dark-800 rounded-xl shadow-card border border-gray-100 dark:border-dark-700 overflow-hidden">
-          <div class="flex items-center border-b border-gray-100 dark:border-dark-700">
+          <div class="flex items-center gap-1 border-b border-gray-100 dark:border-dark-700 overflow-x-auto">
             <button
               @click="activeTab='cables'"
-              class="flex-1 px-3 py-3 text-xs font-semibold"
+              class="px-3 py-3 text-xs font-semibold whitespace-nowrap"
               :class="activeTab==='cables' ? 'text-blue-700 dark:text-blue-300 bg-blue-50/60 dark:bg-blue-900/10' : 'text-gray-600 dark:text-gray-300'"
             >
               Kabel ({{ cables.length }})
             </button>
             <button
               @click="activeTab='points'"
-              class="flex-1 px-3 py-3 text-xs font-semibold"
+              class="px-3 py-3 text-xs font-semibold whitespace-nowrap"
               :class="activeTab==='points' ? 'text-teal-700 dark:text-teal-300 bg-teal-50/60 dark:bg-teal-900/10' : 'text-gray-600 dark:text-gray-300'"
             >
               Titik ({{ points.length }})
             </button>
             <button
+              @click="activeTab='ports'"
+              class="px-3 py-3 text-xs font-semibold whitespace-nowrap"
+              :class="activeTab==='ports' ? 'text-indigo-700 dark:text-indigo-300 bg-indigo-50/60 dark:bg-indigo-900/10' : 'text-gray-600 dark:text-gray-300'"
+            >
+              Port ({{ ports.length }})
+            </button>
+            <button
+              @click="activeTab='links'"
+              class="px-3 py-3 text-xs font-semibold whitespace-nowrap"
+              :class="activeTab==='links' ? 'text-amber-700 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-900/10' : 'text-gray-600 dark:text-gray-300'"
+            >
+              Sambungan ({{ links.length }})
+            </button>
+            <button
+              @click="activeTab='trace'"
+              class="px-3 py-3 text-xs font-semibold whitespace-nowrap"
+              :class="activeTab==='trace' ? 'text-slate-700 dark:text-slate-200 bg-slate-50/60 dark:bg-slate-700/30' : 'text-gray-600 dark:text-gray-300'"
+            >
+              Trace
+            </button>
+            <button
               @click="activeTab='breaks'"
-              class="flex-1 px-3 py-3 text-xs font-semibold"
+              class="px-3 py-3 text-xs font-semibold whitespace-nowrap"
               :class="activeTab==='breaks' ? 'text-red-700 dark:text-red-300 bg-red-50/60 dark:bg-red-900/10' : 'text-gray-600 dark:text-gray-300'"
             >
               Putus ({{ breaks.length }})
@@ -1180,6 +1618,177 @@ onUnmounted(() => {
                     <div class="flex items-center gap-1 shrink-0">
                       <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditPoint(p)">Edit</button>
                       <button v-if="canDelete" class="btn btn-danger !py-1 !px-2 !text-xs" @click.stop="deletePoint(p)">Hapus</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Ports tab -->
+            <div v-else-if="activeTab==='ports'" class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-semibold text-gray-900 dark:text-white">Port (OLT/ODP)</div>
+                <button v-if="canCreate" class="btn btn-primary !py-2 !text-xs" @click="openCreatePort">Tambah</button>
+              </div>
+
+              <div v-if="ports.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data port.</div>
+              <div v-else class="space-y-2 max-h-[420px] lg:max-h-[calc(100vh-18rem)] overflow-auto pr-1">
+                <div
+                  v-for="p in ports"
+                  :key="p.id"
+                  class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-indigo-200 dark:hover:border-indigo-900/40 bg-white dark:bg-dark-800"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <div>
+                      <div class="text-xs font-bold text-indigo-700 dark:text-indigo-300">{{ String(p.port_type || '').toUpperCase() }}</div>
+                      <div class="text-sm font-semibold text-gray-900 dark:text-white mt-1">{{ p.port_label || ('#' + p.id) }}</div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 space-y-0.5">
+                        <div>
+                          Titik:
+                          <span class="font-medium text-gray-700 dark:text-gray-200">{{ pointNameById(p.point_id) || ('#' + p.point_id) }}</span>
+                        </div>
+                        <div v-if="p.cable_id && p.core_no">
+                          Kabel:
+                          <span class="font-medium text-gray-700 dark:text-gray-200">{{ cableNameById(p.cable_id) || ('Kabel #' + p.cable_id) }}</span>
+                          <span class="ml-1">â€¢ core {{ p.core_no }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0">
+                      <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditPort(p)">Edit</button>
+                      <button v-if="canDelete" class="btn btn-danger !py-1 !px-2 !text-xs" @click.stop="deletePortItem(p)">Hapus</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Links tab -->
+            <div v-else-if="activeTab==='links'" class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-semibold text-gray-900 dark:text-white">Sambungan (Splice/Split)</div>
+                <button v-if="canCreate" class="btn btn-primary !py-2 !text-xs" @click="openCreateLink">Tambah</button>
+              </div>
+
+              <div v-if="linkItems.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data sambungan.</div>
+              <div v-else class="space-y-2 max-h-[420px] lg:max-h-[calc(100vh-18rem)] overflow-auto pr-1">
+                <div
+                  v-for="ln in linkItems"
+                  :key="(ln.kind === 'SPLIT_GROUP' ? ('g:' + ln.split_group + ':' + ln.point_id) : ('l:' + ln.id))"
+                  class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-amber-200 dark:hover:border-amber-900/40 bg-white dark:bg-dark-800"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="min-w-0">
+                      <div class="text-xs font-bold text-amber-700 dark:text-amber-300">
+                        {{ ln.kind === 'SPLIT_GROUP' ? 'SPLIT' : String(ln.link_type || '').toUpperCase() }}
+                        <span v-if="ln.kind === 'SPLIT_GROUP'" class="ml-1">â€¢ {{ (ln.outputs || []).length }} output</span>
+                      </div>
+                      <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Titik:
+                        <span class="font-medium text-gray-700 dark:text-gray-200">{{ pointNameById(ln.point_id) || ('#' + ln.point_id) }}</span>
+                      </div>
+                      <div class="text-sm font-semibold text-gray-900 dark:text-white mt-1 truncate">
+                        {{ cableNameById(ln.from_cable_id) || ('Kabel #' + ln.from_cable_id) }} â€¢ core {{ ln.from_core_no }}
+                        <span class="mx-1 text-gray-400">â†’</span>
+                        <template v-if="ln.kind === 'SPLIT_GROUP'">
+                          <span class="text-gray-700 dark:text-gray-200">splitter</span>
+                        </template>
+                        <template v-else>
+                          {{ cableNameById(ln.to_cable_id) || ('Kabel #' + ln.to_cable_id) }} â€¢ core {{ ln.to_core_no }}
+                        </template>
+                      </div>
+                      <div v-if="ln.kind === 'SPLIT_GROUP' && (ln.outputs || []).length" class="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
+                        Output: {{
+                          (ln.outputs || [])
+                            .slice(0, 4)
+                            .map((o) => `${cableNameById(o.to_cable_id) || ('#' + o.to_cable_id)}:${o.to_core_no}`)
+                            .join(', ')
+                        }}<span v-if="(ln.outputs || []).length > 4">, ...</span>
+                      </div>
+                      <div v-if="ln.loss_db !== null && ln.loss_db !== undefined && ln.loss_db !== ''" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Loss: <span class="font-medium text-gray-700 dark:text-gray-200">{{ ln.loss_db }} dB</span>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0">
+                      <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditLink(ln)">Edit</button>
+                      <button v-if="canDelete" class="btn btn-danger !py-1 !px-2 !text-xs" @click.stop="deleteLinkItem(ln)">Hapus</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Trace tab -->
+            <div v-else-if="activeTab==='trace'" class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-semibold text-gray-900 dark:text-white">Tracing End-to-End</div>
+                <button class="btn btn-secondary !py-2 !text-xs" @click="clearTrace" :disabled="traceLoading">Clear</button>
+              </div>
+
+              <div class="space-y-2">
+                <div>
+                  <label class="text-xs text-gray-600 dark:text-gray-300">Start Port (OLT_PON)</label>
+                  <select v-model="traceStartPortId" class="input w-full">
+                    <option value="">(pilih port)</option>
+                    <option v-for="p in oltPonPorts" :key="p.id" :value="p.id">
+                      {{ pointNameById(p.point_id) || ('#' + p.point_id) }} â€¢ {{ p.port_label }} â€¢ {{ cableNameById(p.cable_id) || ('Kabel #' + p.cable_id) }}:{{ p.core_no }}
+                    </option>
+                  </select>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <button class="btn btn-primary !py-2 !text-xs" @click="runTrace" :disabled="traceLoading || !traceStartPortId">
+                    {{ traceLoading ? 'Tracing...' : 'Trace' }}
+                  </button>
+                  <button class="btn btn-secondary !py-2 !text-xs" @click="loadAll" :disabled="loading || traceLoading">Refresh Data</button>
+                </div>
+
+                <div v-if="traceError" class="text-xs text-red-600 dark:text-red-300">{{ traceError }}</div>
+              </div>
+
+              <div v-if="traceResult" class="space-y-3">
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                  Endpoint: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ (traceResult.endpoints || []).length }}</span>
+                  <span class="mx-2">â€¢</span>
+                  Visited: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ traceResult.visited_nodes || 0 }}</span>
+                  <span v-if="traceResult.truncated" class="ml-2 text-amber-700 dark:text-amber-300">(truncated)</span>
+                </div>
+
+                <div v-if="(traceResult.endpoints || []).length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+                  Tidak ada endpoint <span class="font-mono">ODP_OUT</span> terjangkau dari port ini.
+                </div>
+
+                <div v-else class="space-y-2 max-h-[260px] overflow-auto pr-1">
+                  <div
+                    v-for="(e, idx) in (traceResult.endpoints || [])"
+                    :key="e.port?.id || idx"
+                    class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-slate-200 dark:hover:border-slate-700 cursor-pointer"
+                    :class="selectedTraceEndpoint === e ? 'bg-slate-50/60 dark:bg-slate-700/30' : 'bg-white dark:bg-dark-800'"
+                    @click="selectedTraceEndpoint = e"
+                  >
+                    <div class="text-sm font-semibold text-gray-900 dark:text-white">
+                      {{ e.point?.name || pointNameById(e.port?.point_id) || '-' }}
+                    </div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      Port: <span class="font-medium text-gray-700 dark:text-gray-200">{{ e.port?.port_label || ('#' + e.port?.id) }}</span>
+                      <span class="mx-2">â€¢</span>
+                      {{ cableNameById(e.port?.cable_id) || ('Kabel #' + e.port?.cable_id) }}:{{ e.port?.core_no }}
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="selectedTraceEndpoint?.path" class="rounded-xl border border-gray-100 dark:border-dark-700 p-3 bg-gray-50/40 dark:bg-dark-900/30">
+                  <div class="text-xs font-semibold text-gray-900 dark:text-white">Path (ringkas)</div>
+                  <div class="mt-2 space-y-1 max-h-[220px] overflow-auto pr-1">
+                    <div v-for="(s, i) in selectedTraceEndpoint.path" :key="i" class="text-xs">
+                      <div class="font-medium text-gray-900 dark:text-white">
+                        {{ i === 0 ? 'START' : (s.edge?.type === 'CABLE' ? 'KABEL' : ('LINK ' + (s.edge?.link_type || ''))) }}
+                        <span class="mx-1 text-gray-400">â€¢</span>
+                        {{ s.point?.name || ('Titik #' + s.node?.point_id) }}
+                      </div>
+                      <div class="text-gray-600 dark:text-gray-300">
+                        {{ s.cable?.name || ('Kabel #' + s.node?.cable_id) }} â€¢ core {{ s.node?.core_no }}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1446,6 +2055,182 @@ onUnmounted(() => {
         <div class="p-4 border-t border-gray-100 dark:border-dark-700 flex items-center justify-end gap-2">
           <button class="btn btn-secondary" @click="showBreakModal=false; stopMapMode()">Batal</button>
           <button class="btn btn-primary" :disabled="breakProcessing" @click="saveBreak">{{ breakProcessing ? 'Menyimpan...' : 'Simpan' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Port Modal -->
+    <div v-if="showPortModal" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-black/40" @click="showPortModal=false"></div>
+      <div class="relative w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+        <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
+          <div class="font-semibold text-gray-900 dark:text-white">{{ portModalMode === 'edit' ? 'Edit Port' : 'Tambah Port' }}</div>
+          <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showPortModal=false">Tutup</button>
+        </div>
+
+        <div class="p-4 space-y-3">
+          <div>
+            <label class="text-xs text-gray-600 dark:text-gray-300">Titik</label>
+            <select v-model="portForm.point_id" class="input w-full">
+              <option value="">(pilih titik)</option>
+              <option v-for="p in points" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+            <div v-if="portErrors.point_id" class="text-xs text-red-600 mt-1">{{ portErrors.point_id?.[0] }}</div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Tipe</label>
+              <select v-model="portForm.port_type" class="input w-full">
+                <option value="OLT_PON">OLT_PON</option>
+                <option value="ODP_OUT">ODP_OUT</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Label</label>
+              <input v-model="portForm.port_label" class="input w-full" placeholder="PON 1/1/1 / OUT 1" />
+              <div v-if="portErrors.port_label" class="text-xs text-red-600 mt-1">{{ portErrors.port_label?.[0] }}</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Kabel</label>
+              <select v-model="portForm.cable_id" class="input w-full">
+                <option value="">(pilih kabel)</option>
+                <option v-for="c in cables" :key="c.id" :value="c.id">{{ c.name }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Core</label>
+              <input v-model="portForm.core_no" type="number" min="1" class="input w-full" placeholder="1" />
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-600 dark:text-gray-300">Catatan</label>
+            <textarea v-model="portForm.notes" class="input w-full min-h-[90px]" placeholder="(opsional)"></textarea>
+          </div>
+        </div>
+
+        <div class="p-4 border-t border-gray-100 dark:border-dark-700 flex items-center justify-end gap-2">
+          <button class="btn btn-secondary" @click="showPortModal=false">Batal</button>
+          <button class="btn btn-primary" :disabled="portProcessing" @click="savePort">{{ portProcessing ? 'Menyimpan...' : 'Simpan' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Link Modal -->
+    <div v-if="showLinkModal" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-black/40" @click="showLinkModal=false"></div>
+      <div class="relative w-full max-w-2xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+        <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
+          <div class="font-semibold text-gray-900 dark:text-white">{{ linkModalMode === 'edit' ? 'Edit Sambungan' : 'Tambah Sambungan' }}</div>
+          <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showLinkModal=false">Tutup</button>
+        </div>
+
+        <div class="p-4 space-y-3">
+          <div>
+            <label class="text-xs text-gray-600 dark:text-gray-300">Titik</label>
+            <select v-model="linkForm.point_id" class="input w-full">
+              <option value="">(pilih titik)</option>
+              <option v-for="p in points" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+            <div v-if="linkErrors.point_id" class="text-xs text-red-600 mt-1">{{ linkErrors.point_id?.[0] }}</div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Tipe</label>
+              <select v-model="linkForm.link_type" class="input w-full">
+                <option value="SPLICE">SPLICE</option>
+                <option value="PATCH">PATCH</option>
+                <option value="SPLIT">SPLIT</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Loss (dB)</label>
+              <input v-model="linkForm.loss_db" class="input w-full" placeholder="0.20" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">From Cable</label>
+              <select v-model="linkForm.from_cable_id" class="input w-full">
+                <option value="">(pilih kabel)</option>
+                <option v-for="c in cables" :key="c.id" :value="c.id">{{ c.name }}</option>
+              </select>
+              <div v-if="linkErrors.from_cable_id" class="text-xs text-red-600 mt-1">{{ linkErrors.from_cable_id?.[0] }}</div>
+            </div>
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">From Core</label>
+              <input v-model="linkForm.from_core_no" type="number" min="1" class="input w-full" placeholder="1" />
+              <div v-if="linkErrors.from_core_no" class="text-xs text-red-600 mt-1">{{ linkErrors.from_core_no?.[0] }}</div>
+            </div>
+          </div>
+
+          <div v-if="String(linkForm.link_type).toUpperCase() !== 'SPLIT'" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">To Cable</label>
+              <select v-model="linkForm.to_cable_id" class="input w-full">
+                <option value="">(pilih kabel)</option>
+                <option v-for="c in cables" :key="c.id" :value="c.id">{{ c.name }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">To Core</label>
+              <input v-model="linkForm.to_core_no" type="number" min="1" class="input w-full" placeholder="1" />
+            </div>
+          </div>
+
+          <div v-else class="space-y-3 rounded-xl border border-gray-100 dark:border-dark-700 p-3">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Splitter Group (opsional)</label>
+                <input v-model="linkForm.split_group" class="input w-full" placeholder="ODP-01 1:8" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-600 dark:text-gray-300">Jumlah Output</label>
+                <div class="flex items-center gap-2">
+                  <input v-model="splitOutputCount" type="number" min="1" max="64" class="input w-full" />
+                  <button class="btn btn-secondary !py-2 !text-xs" @click="ensureSplitOutputs(splitOutputCount)">Buat</button>
+                  <button class="btn btn-secondary !py-2 !text-xs" @click="addSplitOutputRow">Tambah</button>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="(linkForm.outputs || []).length === 0" class="text-xs text-gray-500 dark:text-gray-400">
+              Output masih kosong. Klik <span class="font-semibold">Buat</span> untuk generate baris output.
+            </div>
+
+            <div v-else class="space-y-2 max-h-[260px] overflow-auto pr-1">
+              <div v-for="(o, idx) in linkForm.outputs" :key="idx" class="grid grid-cols-12 gap-2 items-center">
+                <div class="col-span-7">
+                  <select v-model="o.to_cable_id" class="input w-full">
+                    <option value="">(kabel output)</option>
+                    <option v-for="c in cables" :key="c.id" :value="c.id">{{ c.name }}</option>
+                  </select>
+                </div>
+                <div class="col-span-3">
+                  <input v-model="o.to_core_no" type="number" min="1" class="input w-full" placeholder="core" />
+                </div>
+                <div class="col-span-2 flex items-center justify-end">
+                  <button class="btn btn-danger !py-1 !px-2 !text-xs" @click="removeSplitOutputRow(idx)">Hapus</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-600 dark:text-gray-300">Catatan</label>
+            <textarea v-model="linkForm.notes" class="input w-full min-h-[90px]" placeholder="(opsional)"></textarea>
+          </div>
+        </div>
+
+        <div class="p-4 border-t border-gray-100 dark:border-dark-700 flex items-center justify-end gap-2">
+          <button class="btn btn-secondary" @click="showLinkModal=false">Batal</button>
+          <button class="btn btn-primary" :disabled="linkProcessing" @click="saveLink">{{ linkProcessing ? 'Menyimpan...' : 'Simpan' }}</button>
         </div>
       </div>
     </div>

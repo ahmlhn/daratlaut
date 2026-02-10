@@ -120,6 +120,18 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::put('/fiber/breaks/{id}', [FiberController::class, 'updateBreak']);
     Route::delete('/fiber/breaks/{id}', [FiberController::class, 'deleteBreak']);
 
+    Route::get('/fiber/ports', [FiberController::class, 'listPorts']);
+    Route::post('/fiber/ports', [FiberController::class, 'storePort']);
+    Route::put('/fiber/ports/{id}', [FiberController::class, 'updatePort']);
+    Route::delete('/fiber/ports/{id}', [FiberController::class, 'deletePort']);
+
+    Route::get('/fiber/links', [FiberController::class, 'listLinks']);
+    Route::post('/fiber/links', [FiberController::class, 'storeLink']);
+    Route::put('/fiber/links/{id}', [FiberController::class, 'updateLink']);
+    Route::delete('/fiber/links/{id}', [FiberController::class, 'deleteLink']);
+
+    Route::get('/fiber/trace/{portId}', [FiberController::class, 'trace']);
+
     // Team
     Route::get('/team/stats', [TeamController::class, 'stats']);
     Route::get('/team/technicians', [TeamController::class, 'technicians']);

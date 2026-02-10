@@ -14,7 +14,11 @@ class FiberController
         $tenantId = (int) $request->attributes->get('tenant_id', 0);
 
         $warning = null;
-        if (!Schema::hasTable('noci_fo_cables') || !Schema::hasTable('noci_fo_points') || !Schema::hasTable('noci_fo_breaks')) {
+        if (!Schema::hasTable('noci_fo_cables')
+            || !Schema::hasTable('noci_fo_points')
+            || !Schema::hasTable('noci_fo_breaks')
+            || !Schema::hasTable('noci_fo_ports')
+            || !Schema::hasTable('noci_fo_links')) {
             $warning = 'Tabel Fiber Optik belum ada. Jalankan migration: php artisan migrate';
         }
 
@@ -24,4 +28,3 @@ class FiberController
         ]);
     }
 }
-
