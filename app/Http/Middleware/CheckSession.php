@@ -5,19 +5,65 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
+use Spatie\Permission\Models\Role;
 use Symfony\Component\HttpFoundation\Response;
 
 class CheckSession
 {
-    private function bootstrapLegacySession(Request $request): void
+    private function normalizeRole(?string $role): string
     {
-        $user = Auth::user();
-        if (!$user) {
+        $role = strtolower(trim((string) $role));
+        if ($role === 'svp lapangan') return 'svp_lapangan';
+        return $role;
+    }
+
+    private function syncSpatieRoleFromLegacy(mixed $user): void
+    {
+        if (!$user) return;
+
+        // Only for HasRoles models (NociUser).
+        if (!method_exists($user, 'getRoleNames') || !method_exists($user, 'syncRoles')) {
             return;
         }
 
-        // Only backfill if the legacy session keys are missing (e.g. remember-me cookie restored auth).
-        if ($request->session()->has('user_id')) {
+        $legacyRole = $this->normalizeRole($user->role ?? null);
+        if ($legacyRole === '') {
+            return;
+        }
+
+        // Avoid hard failures on early DBs that haven't run RBAC migrations yet.
+        try {
+            if (!Schema::hasTable('roles') || !Schema::hasTable('model_has_roles')) {
+                return;
+            }
+        } catch (\Throwable) {
+            return;
+        }
+
+        try {
+            $current = $user->getRoleNames()
+                ->map(fn ($r) => $this->normalizeRole((string) $r))
+                ->filter()
+                ->values();
+
+            if ($current->count() === 1 && $current->first() === $legacyRole) {
+                return;
+            }
+
+            Role::findOrCreate($legacyRole, 'web');
+
+            // Single source of truth: `noci_users.role` legacy column.
+            $user->syncRoles([$legacyRole]);
+        } catch (\Throwable) {
+            // Best-effort; ignore RBAC sync failures.
+        }
+    }
+
+    private function syncLegacySession(Request $request): void
+    {
+        $user = Auth::user();
+        if (!$user) {
             return;
         }
 
@@ -25,8 +71,8 @@ class CheckSession
         if (!empty($user->name)) $displayName = $user->name;
         if (!empty($user->fullname)) $displayName = $user->fullname;
 
-        $role = strtolower(trim((string) ($user->role ?? 'cs')));
-        $isTeknisi = in_array($role, ['teknisi', 'svp lapangan', 'svp_lapangan'], true);
+        $role = $this->normalizeRole($user->role ?? 'cs');
+        $isTeknisi = in_array($role, ['teknisi', 'svp_lapangan'], true);
 
         $request->session()->put([
             'tenant_id' => $user->tenant_id ?? 0,
@@ -68,7 +114,9 @@ class CheckSession
 
         // If Auth is already restored (e.g. remember cookie), backfill legacy session keys.
         if (Auth::check()) {
-            $this->bootstrapLegacySession($request);
+            $user = Auth::user();
+            $this->syncSpatieRoleFromLegacy($user);
+            $this->syncLegacySession($request);
         }
 
         // Check if user is logged in via our session

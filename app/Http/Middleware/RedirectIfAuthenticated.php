@@ -9,6 +9,23 @@ use Symfony\Component\HttpFoundation\Response;
 
 class RedirectIfAuthenticated
 {
+    private function normalizeRole(?string $role): string
+    {
+        $role = strtolower(trim((string) $role));
+        if ($role === 'svp lapangan') return 'svp_lapangan';
+        return $role;
+    }
+
+    private function redirectPath(Request $request): string
+    {
+        $role = $this->normalizeRole($request->user()?->role ?? session('level', ''));
+        $isTeknisi = in_array($role, ['teknisi', 'svp_lapangan'], true)
+            || (bool) session('is_teknisi')
+            || (bool) session('teknisi_logged_in');
+
+        return $isTeknisi ? '/teknisi' : '/dashboard';
+    }
+
     private function bootstrapLegacySession(Request $request): void
     {
         $user = Auth::user();
@@ -56,6 +73,11 @@ class RedirectIfAuthenticated
      */
     public function handle(Request $request, Closure $next, string ...$guards): Response
     {
+        // If logged-in via legacy session only (no Laravel auth), restore Auth so we can redirect correctly.
+        if (!Auth::check() && $userId = session('user_id')) {
+            Auth::loginUsingId($userId);
+        }
+
         // If auth is restored (e.g. remember cookie), backfill legacy session keys.
         if (Auth::check()) {
             $this->bootstrapLegacySession($request);
@@ -69,7 +91,7 @@ class RedirectIfAuthenticated
             || session('user_id');
         
         if ($isLoggedIn) {
-            return redirect('/dashboard');
+            return redirect($this->redirectPath($request));
         }
 
         return $next($request);

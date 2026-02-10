@@ -125,7 +125,8 @@ class AuthController extends Controller
 
         $request->session()->regenerate();
 
-        return redirect()->intended('/dashboard');
+        $defaultRedirect = $isTeknisi ? '/teknisi' : '/dashboard';
+        return redirect()->intended($defaultRedirect);
     }
 
     /**
