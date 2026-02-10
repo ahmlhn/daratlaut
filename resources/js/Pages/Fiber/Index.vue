@@ -176,6 +176,8 @@ function applyMapStyle() {
 }
 
 function clearDraftLayer() {
+  cleanupDraftPathListeners()
+
   try {
     ;(layerDraft.markers || []).forEach((m) => {
       try { m.setMap(null) } catch {}
@@ -234,8 +236,30 @@ function destroyMap() {
 }
 
 /* ───────────── Map interaction modes ───────────── */
-const mapMode = ref(null) // null | pickPoint | pickBreak | drawCable
+const mapMode = ref(null) // null | pickPoint | pickBreak | drawCable | editCable
 const resumeModal = ref(null) // null | 'cable' | 'point' | 'break'
+
+const drawFollowRoad = ref(true) // Use Google Directions to follow road while drawing
+const drawBusy = ref(false)
+let drawUndoStack = []
+let directionsService = null
+let draftPathListeners = []
+
+function removeMapsListener(l) {
+  if (!l) return
+  try {
+    if (typeof l.remove === 'function') {
+      l.remove()
+      return
+    }
+  } catch {}
+  try { window.google?.maps?.event?.removeListener?.(l) } catch {}
+}
+
+function cleanupDraftPathListeners() {
+  try { (draftPathListeners || []).forEach((l) => removeMapsListener(l)) } catch {}
+  draftPathListeners = []
+}
 
 function roundCoord(n) {
   const v = Number(n)
@@ -243,7 +267,44 @@ function roundCoord(n) {
   return Math.round(v * 1e7) / 1e7
 }
 
-function onMapClick(e) {
+function getDirectionsService() {
+  if (!window.google?.maps) return null
+  if (!directionsService) directionsService = new window.google.maps.DirectionsService()
+  return directionsService
+}
+
+async function getRoadPath(from, to) {
+  const svc = getDirectionsService()
+  if (!svc) throw new Error('Google Maps Directions belum siap.')
+
+  const request = {
+    origin: from,
+    destination: to,
+    travelMode: window.google.maps.TravelMode.DRIVING,
+  }
+
+  return new Promise((resolve, reject) => {
+    try {
+      svc.route(request, (result, status) => {
+        if (status !== 'OK' || !result?.routes?.[0]) {
+          reject(new Error(`Gagal ambil rute jalan (${status || 'UNKNOWN'}).`))
+          return
+        }
+
+        const overview = result.routes[0].overview_path || []
+        const pts = overview
+          .map((ll) => ({ lat: roundCoord(ll.lat()), lng: roundCoord(ll.lng()) }))
+          .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+
+        resolve(pts)
+      })
+    } catch (e) {
+      reject(e)
+    }
+  })
+}
+
+async function onMapClick(e) {
   if (!e?.latLng) return
   const lat = roundCoord(e.latLng.lat())
   const lng = roundCoord(e.latLng.lng())
@@ -266,9 +327,46 @@ function onMapClick(e) {
 
   if (mapMode.value === 'drawCable') {
     const path = Array.isArray(cableForm.value.path) ? cableForm.value.path : []
-    path.push({ lat, lng })
-    cableForm.value.path = path
-    renderDraft()
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+
+    // First point: just set start
+    if (path.length < 1 || !drawFollowRoad.value) {
+      // Checkpoint length so Undo can revert a whole segment even when follow-road adds many points
+      drawUndoStack.push(path.length)
+      path.push({ lat, lng })
+      cableForm.value.path = path
+      renderDraft()
+      return
+    }
+
+    // Follow road between last point and new point
+    if (drawBusy.value) return
+    drawUndoStack.push(path.length)
+    drawBusy.value = true
+
+    try {
+      const last = path[path.length - 1]
+      const roadPts = await getRoadPath(
+        { lat: Number(last?.lat), lng: Number(last?.lng) },
+        { lat, lng }
+      )
+
+      if (Array.isArray(roadPts) && roadPts.length >= 2) {
+        const seg = roadPts.slice(1) // skip first (same as last)
+        cableForm.value.path = path.concat(seg)
+      } else {
+        path.push({ lat, lng })
+        cableForm.value.path = path
+      }
+    } catch (err) {
+      // Fallback: straight segment
+      path.push({ lat, lng })
+      cableForm.value.path = path
+      if (toast) toast.error(err?.message || 'Gagal mengikuti jalan. Pakai garis lurus.')
+    } finally {
+      drawBusy.value = false
+      renderDraft()
+    }
   }
 }
 
@@ -276,6 +374,7 @@ function stopMapMode(options = {}) {
   const reopen = options?.reopen !== false
   const resume = reopen ? resumeModal.value : null
 
+  cleanupDraftPathListeners()
   mapMode.value = null
   resumeModal.value = null
 
@@ -496,6 +595,39 @@ function renderBreaksLayer() {
   })
 }
 
+function syncCablePathFromEditablePolyline(poly) {
+  try {
+    const p = poly?.getPath?.()
+    if (!p || typeof p.getLength !== 'function') return
+
+    const pts = []
+    for (let i = 0; i < p.getLength(); i += 1) {
+      const ll = p.getAt(i)
+      const lat = roundCoord(ll?.lat?.())
+      const lng = roundCoord(ll?.lng?.())
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+      pts.push({ lat, lng })
+    }
+
+    cableForm.value.path = pts
+  } catch {}
+}
+
+function bindDraftEditablePolyline(poly) {
+  cleanupDraftPathListeners()
+  if (!poly || !window.google?.maps) return
+
+  const p = poly.getPath?.()
+  if (!p || typeof p.addListener !== 'function') return
+
+  const sync = () => syncCablePathFromEditablePolyline(poly)
+  draftPathListeners.push(p.addListener('insert_at', sync))
+  draftPathListeners.push(p.addListener('set_at', sync))
+  draftPathListeners.push(p.addListener('remove_at', sync))
+
+  sync()
+}
+
 function renderDraft() {
   if (!map || !window.google?.maps) return
   clearDraftLayer()
@@ -534,14 +666,17 @@ function renderDraft() {
     }
   }
 
-  if ((showCableModal.value || mapMode.value === 'drawCable') && Array.isArray(cableForm.value.path) && cableForm.value.path.length > 0) {
+  if ((showCableModal.value || mapMode.value === 'drawCable' || mapMode.value === 'editCable') && Array.isArray(cableForm.value.path) && cableForm.value.path.length > 0) {
+    const isEdit = mapMode.value === 'editCable'
     const latlngs = cableForm.value.path
       .map((p) => ({ lat: Number(p?.lat), lng: Number(p?.lng) }))
       .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
 
-    latlngs.forEach((ll) => {
-      addCircle(ll.lat, ll.lng, { scale: 3, strokeColor: '#1d4ed8', fillColor: '#60a5fa', fillOpacity: 0.95 })
-    })
+    if (!isEdit) {
+      latlngs.forEach((ll) => {
+        addCircle(ll.lat, ll.lng, { scale: 3, strokeColor: '#1d4ed8', fillColor: '#60a5fa', fillOpacity: 0.95 })
+      })
+    }
 
     if (latlngs.length >= 2) {
       const lineSymbol = {
@@ -552,11 +687,18 @@ function renderDraft() {
       }
       layerDraft.polyline = new window.google.maps.Polyline({
         path: latlngs,
-        strokeOpacity: 0,
-        icons: [{ icon: lineSymbol, offset: '0', repeat: '12px' }],
-        clickable: false,
+        strokeColor: '#1d4ed8',
+        strokeOpacity: isEdit ? 0.85 : 0,
+        strokeWeight: isEdit ? 4 : 0,
+        icons: isEdit ? [] : [{ icon: lineSymbol, offset: '0', repeat: '12px' }],
+        clickable: isEdit,
+        editable: isEdit,
         map,
       })
+
+      if (isEdit) {
+        bindDraftEditablePolyline(layerDraft.polyline)
+      }
     }
   }
 }
@@ -689,6 +831,7 @@ function openCreateCable() {
   if (!canCreate.value) return
   resetCableForm()
   cableModalMode.value = 'create'
+  drawUndoStack = []
   showCableModal.value = true
   resumeModal.value = null
   stopMapMode({ reopen: false })
@@ -698,6 +841,7 @@ function openEditCable(item) {
   if (!canEdit.value) return
   resetCableForm()
   cableModalMode.value = 'edit'
+  drawUndoStack = []
   cableForm.value = {
     id: item.id,
     name: item.name || '',
@@ -790,21 +934,53 @@ function startDrawCable() {
   if (!ensureMapReady()) return
   resumeModal.value = 'cable'
   showCableModal.value = false
+  drawUndoStack = []
   mapMode.value = 'drawCable'
   renderDraft()
-  if (toast) toast.info('Mode gambar jalur aktif: klik peta untuk menambah titik, lalu klik Selesai untuk kembali.')
+  if (toast) toast.info(drawFollowRoad.value
+    ? 'Mode gambar jalur aktif (ikut jalan): klik peta untuk set titik berikutnya, lalu klik Selesai untuk kembali.'
+    : 'Mode gambar jalur aktif: klik peta untuk menambah titik, lalu klik Selesai untuk kembali.'
+  )
+}
+
+function startEditCablePath() {
+  if (!showCableModal.value) return
+  if (!ensureMapReady()) return
+
+  const path = Array.isArray(cableForm.value.path) ? cableForm.value.path : []
+  if (path.length < 2) {
+    if (toast) toast.error('Jalur belum ada. Klik Gambar dulu minimal 2 titik.')
+    return
+  }
+
+  resumeModal.value = 'cable'
+  showCableModal.value = false
+  mapMode.value = 'editCable'
+  renderDraft()
+  if (toast) toast.info('Mode edit jalur aktif: geser titik/segmen di peta, lalu klik Selesai untuk kembali.')
 }
 
 function undoCablePoint() {
   const path = Array.isArray(cableForm.value.path) ? cableForm.value.path : []
   if (path.length === 0) return
-  path.pop()
-  cableForm.value.path = path
+  if (drawUndoStack.length > 0) {
+    const prevLen = Number(drawUndoStack.pop())
+    if (Number.isFinite(prevLen) && prevLen >= 0) {
+      cableForm.value.path = path.slice(0, prevLen)
+    } else {
+      path.pop()
+      cableForm.value.path = path
+    }
+  } else {
+    path.pop()
+    cableForm.value.path = path
+  }
   renderDraft()
 }
 
 function clearCablePath() {
   cableForm.value.path = []
+  drawUndoStack = []
   renderDraft()
 }
 
@@ -1489,10 +1665,20 @@ watch(mapStyle, () => {
   applyMapStyle()
 })
 
+watch(drawFollowRoad, () => {
+  try { localStorage.setItem('fiber_follow_road', drawFollowRoad.value ? '1' : '0') } catch {}
+})
+
 onMounted(() => {
   try {
     const saved = localStorage.getItem('fiber_map_style')
     if (saved && MAP_STYLES[saved]) mapStyle.value = saved
+  } catch {}
+
+  try {
+    const v = localStorage.getItem('fiber_follow_road')
+    if (v === '0') drawFollowRoad.value = false
+    if (v === '1') drawFollowRoad.value = true
   } catch {}
 
   mapLoadError.value = ''
@@ -1612,14 +1798,30 @@ onUnmounted(() => {
               <div class="font-semibold">
                 Mode peta aktif:
                 <span class="uppercase">
-                  {{ mapMode === 'drawCable' ? 'gambar kabel' : (mapMode === 'pickPoint' ? 'pilih titik' : 'pilih putus') }}
+                  {{ mapMode === 'drawCable' ? 'gambar kabel' : (mapMode === 'editCable' ? 'edit jalur' : (mapMode === 'pickPoint' ? 'pilih titik' : 'pilih putus')) }}
                 </span>
               </div>
-              <div class="text-gray-600 dark:text-gray-300 mt-1">Klik peta untuk input. Tekan tombol untuk berhenti.</div>
+              <div v-if="mapMode === 'editCable'" class="text-gray-600 dark:text-gray-300 mt-1">
+                Geser titik/segmen untuk merapikan jalur, lalu klik tombol Selesai.
+              </div>
+              <div v-else-if="mapMode === 'drawCable'" class="text-gray-600 dark:text-gray-300 mt-1">
+                Klik peta untuk menambah titik. Mode: <span class="font-semibold">{{ drawFollowRoad ? 'Ikuti jalan' : 'Garis lurus' }}</span>.
+                <span v-if="drawBusy" class="ml-1 text-blue-700 dark:text-blue-300">Menghitung rute...</span>
+              </div>
+              <div v-else class="text-gray-600 dark:text-gray-300 mt-1">
+                Klik peta untuk memilih lokasi, lalu klik tombol Selesai.
+              </div>
+
+              <label v-if="mapMode === 'drawCable'" class="mt-2 flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200">
+                <input type="checkbox" v-model="drawFollowRoad" :disabled="drawBusy" />
+                Ikuti jalan
+              </label>
+
               <div class="mt-2 flex items-center gap-2">
-                <button class="btn btn-secondary !py-1 !text-xs" @click="stopMapMode">Selesai</button>
-                <button v-if="mapMode === 'drawCable'" class="btn btn-secondary !py-1 !text-xs" @click="undoCablePoint">Undo</button>
-                <button v-if="mapMode === 'drawCable'" class="btn btn-secondary !py-1 !text-xs" @click="clearCablePath">Clear</button>
+                <button class="btn btn-secondary !py-1 !text-xs" @click="stopMapMode" :disabled="mapMode === 'drawCable' && drawBusy">Selesai</button>
+                <button v-if="mapMode === 'drawCable'" class="btn btn-secondary !py-1 !text-xs" @click="undoCablePoint" :disabled="drawBusy">Undo</button>
+                <button v-if="mapMode === 'drawCable'" class="btn btn-secondary !py-1 !text-xs" @click="clearCablePath" :disabled="drawBusy">Clear</button>
+                <button v-if="mapMode === 'editCable'" class="btn btn-secondary !py-1 !text-xs" @click="clearCablePath">Clear</button>
               </div>
             </div>
           </div>
@@ -2023,16 +2225,24 @@ onUnmounted(() => {
           </div>
 
           <div class="rounded-xl border border-gray-100 dark:border-dark-700 p-3">
-            <div class="flex items-center justify-between gap-2">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
               <div>
                 <div class="text-sm font-semibold text-gray-900 dark:text-white">Jalur di Peta</div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">Titik: {{ Array.isArray(cableForm.path) ? cableForm.path.length : 0 }}</div>
               </div>
               <div class="flex flex-wrap items-center gap-2">
+                <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200 px-3 py-2 rounded-xl border border-gray-200/70 dark:border-white/10 bg-white/70 dark:bg-dark-900/40">
+                  <input type="checkbox" v-model="drawFollowRoad" />
+                  Ikuti jalan
+                </label>
                 <button class="btn btn-secondary !py-2 !text-xs" @click="startDrawCable">Gambar</button>
-                <button class="btn btn-secondary !py-2 !text-xs" @click="undoCablePoint">Undo</button>
-                <button class="btn btn-secondary !py-2 !text-xs" @click="clearCablePath">Clear</button>
+                <button class="btn btn-secondary !py-2 !text-xs" @click="startEditCablePath" :disabled="!cableForm.path || cableForm.path.length < 2">Edit</button>
+                <button class="btn btn-secondary !py-2 !text-xs" @click="undoCablePoint" :disabled="!cableForm.path || cableForm.path.length === 0">Undo</button>
+                <button class="btn btn-secondary !py-2 !text-xs" @click="clearCablePath" :disabled="!cableForm.path || cableForm.path.length === 0">Clear</button>
               </div>
+            </div>
+            <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              Tips: mode <span class="font-semibold">Ikuti jalan</span> memakai Google Directions. Jika gagal/limit, otomatis fallback ke garis lurus. Jalur bisa dirapikan lewat tombol <span class="font-semibold">Edit</span>.
             </div>
           </div>
         </div>
