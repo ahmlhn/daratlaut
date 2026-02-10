@@ -1838,7 +1838,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Cable Modal -->
-    <div v-if="showCableModal" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+    <div v-if="showCableModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
       <div class="absolute inset-0 bg-black/40" @click="showCableModal=false; stopMapMode()"></div>
       <div class="relative w-full max-w-2xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
@@ -1918,7 +1918,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Point Modal -->
-    <div v-if="showPointModal" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+    <div v-if="showPointModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
       <div class="absolute inset-0 bg-black/40" @click="showPointModal=false; stopMapMode()"></div>
       <div class="relative w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
@@ -1972,7 +1972,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Break Modal -->
-    <div v-if="showBreakModal" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+    <div v-if="showBreakModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
       <div class="absolute inset-0 bg-black/40" @click="showBreakModal=false; stopMapMode()"></div>
       <div class="relative w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
@@ -2060,7 +2060,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Port Modal -->
-    <div v-if="showPortModal" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+    <div v-if="showPortModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
       <div class="absolute inset-0 bg-black/40" @click="showPortModal=false"></div>
       <div class="relative w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
@@ -2121,7 +2121,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Link Modal -->
-    <div v-if="showLinkModal" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+    <div v-if="showLinkModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
       <div class="absolute inset-0 bg-black/40" @click="showLinkModal=false"></div>
       <div class="relative w-full max-w-2xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
