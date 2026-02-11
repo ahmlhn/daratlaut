@@ -154,6 +154,7 @@ const MAP_STYLES = {
   satellite: { label: 'Satelit', mapTypeId: 'satellite' },
   hybrid: { label: 'Hybrid', mapTypeId: 'hybrid' },
 }
+const legendCollapsed = ref(false)
 
 function loadGoogleMaps(apiKey) {
   const key = (apiKey || '').toString().trim()
@@ -452,6 +453,188 @@ const cableById = computed(() => {
   })
   return m
 })
+
+const breakById = computed(() => {
+  const m = new Map()
+  ;(breaks.value || []).forEach((b) => {
+    const id = Number(b?.id || 0)
+    if (id > 0) m.set(id, b)
+  })
+  return m
+})
+
+const selectedCable = computed(() => {
+  const id = Number(selectedCableId.value || 0)
+  if (!id) return null
+  return cableById.value.get(id) || null
+})
+
+const selectedPoint = computed(() => {
+  const id = Number(selectedPointId.value || 0)
+  if (!id) return null
+  return pointById.value.get(id) || null
+})
+
+const selectedBreak = computed(() => {
+  const id = Number(selectedBreakId.value || 0)
+  if (!id) return null
+  return breakById.value.get(id) || null
+})
+
+function formatCoordPair(lat, lng) {
+  const a = Number(lat)
+  const b = Number(lng)
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return '-'
+  return `${a.toFixed(6)}, ${b.toFixed(6)}`
+}
+
+function formatDateTime(v) {
+  if (!v) return '-'
+  const d = new Date(v)
+  if (!Number.isFinite(d.getTime())) return '-'
+  try {
+    return d.toLocaleString('id-ID', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    })
+  } catch {
+    return d.toISOString()
+  }
+}
+
+const selectedDrawerItem = computed(() => {
+  if (selectedCable.value) {
+    const c = selectedCable.value
+    return {
+      type: 'cable',
+      tone: 'blue',
+      badge: 'KABEL',
+      title: c.name || `Kabel #${c.id}`,
+      subtitle: [c.code, c.cable_type].filter(Boolean).join(' | ') || 'Jalur kabel',
+      rows: [
+        { label: 'Core', value: c.core_count ? `${c.core_count} core` : '-' },
+        { label: 'Panjang', value: formatLength(c.length_m) },
+        { label: 'Dari', value: pointNameById(c.from_point_id) || '-' },
+        { label: 'Ke', value: pointNameById(c.to_point_id) || '-' },
+      ],
+      note: c.notes || '',
+    }
+  }
+
+  if (selectedPoint.value) {
+    const p = selectedPoint.value
+    const pointId = Number(p?.id || 0)
+    const connected = (cables.value || []).filter((c) => {
+      return Number(c?.from_point_id || 0) === pointId || Number(c?.to_point_id || 0) === pointId
+    }).length
+    const pointPorts = (ports.value || []).filter((pt) => Number(pt?.point_id || 0) === pointId).length
+
+    return {
+      type: 'point',
+      tone: 'teal',
+      badge: 'TITIK',
+      title: p.name || `Titik #${p.id}`,
+      subtitle: p.point_type || 'Tanpa tipe',
+      rows: [
+        { label: 'Koordinat', value: formatCoordPair(p.latitude, p.longitude) },
+        { label: 'Port', value: String(pointPorts) },
+        { label: 'Kabel terkait', value: String(connected) },
+      ],
+      note: p.address || p.notes || '',
+    }
+  }
+
+  if (selectedBreak.value) {
+    const b = selectedBreak.value
+    const status = formatStatus(b.status)
+    const tone = status === 'OPEN'
+      ? 'red'
+      : (status === 'IN PROGRESS' ? 'amber' : (status === 'FIXED' ? 'green' : 'slate'))
+
+    return {
+      type: 'break',
+      tone,
+      badge: 'PUTUS',
+      title: cableNameById(b.cable_id) || (b.cable_id ? `Kabel #${b.cable_id}` : 'Tanpa kabel'),
+      subtitle: status,
+      rows: [
+        { label: 'Titik', value: pointNameById(b.point_id) || '-' },
+        { label: 'Severity', value: b.severity || '-' },
+        { label: 'Koordinat', value: formatCoordPair(b.latitude, b.longitude) },
+        { label: 'Dilaporkan', value: formatDateTime(b.reported_at) },
+      ],
+      note: b.description || '',
+    }
+  }
+
+  return null
+})
+
+const selectedCardClass = computed(() => {
+  const tone = selectedDrawerItem.value?.tone
+  if (tone === 'blue') return 'border-blue-200/80 dark:border-blue-900/40'
+  if (tone === 'teal') return 'border-teal-200/80 dark:border-teal-900/40'
+  if (tone === 'red') return 'border-red-200/80 dark:border-red-900/40'
+  if (tone === 'amber') return 'border-amber-200/80 dark:border-amber-900/40'
+  if (tone === 'green') return 'border-emerald-200/80 dark:border-emerald-900/40'
+  return 'border-slate-200/80 dark:border-white/10'
+})
+
+const selectedBadgeClass = computed(() => {
+  const tone = selectedDrawerItem.value?.tone
+  if (tone === 'blue') return 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-200'
+  if (tone === 'teal') return 'bg-teal-50 text-teal-700 dark:bg-teal-900/20 dark:text-teal-200'
+  if (tone === 'red') return 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-200'
+  if (tone === 'amber') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-200'
+  if (tone === 'green') return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-200'
+  return 'bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200'
+})
+
+function clearSelection() {
+  selectedCableId.value = null
+  selectedPointId.value = null
+  selectedBreakId.value = null
+  try { infoWindow?.close() } catch {}
+  renderCablesLayer()
+  renderPointsLayer()
+  renderBreaksLayer()
+}
+
+function focusSelectedItem() {
+  if (selectedCable.value) {
+    zoomToCable(selectedCable.value)
+    return
+  }
+  if (selectedPoint.value) {
+    focusOnLatLng(Number(selectedPoint.value.latitude), Number(selectedPoint.value.longitude), 18)
+    return
+  }
+  if (selectedBreak.value) {
+    focusOnLatLng(Number(selectedBreak.value.latitude), Number(selectedBreak.value.longitude), 18)
+  }
+}
+
+function openSelectedInPanel() {
+  if (selectedCable.value) activeTab.value = 'cables'
+  else if (selectedPoint.value) activeTab.value = 'points'
+  else if (selectedBreak.value) activeTab.value = 'breaks'
+  revealPanelOnMobile('open')
+}
+
+function editSelectedItem() {
+  if (!canEdit.value) return
+  if (selectedCable.value) {
+    openEditCable(selectedCable.value)
+    return
+  }
+  if (selectedPoint.value) {
+    openEditPoint(selectedPoint.value)
+    return
+  }
+  if (selectedBreak.value) {
+    openEditBreak(selectedBreak.value)
+  }
+}
 
 function pointNameById(id) {
   const n = Number(id || 0)
@@ -2150,6 +2333,10 @@ watch(drawFollowRoad, () => {
   try { localStorage.setItem('fiber_follow_road', drawFollowRoad.value ? '1' : '0') } catch {}
 })
 
+watch(legendCollapsed, () => {
+  try { localStorage.setItem('fiber_legend_collapsed', legendCollapsed.value ? '1' : '0') } catch {}
+})
+
 onMounted(() => {
   try {
     const saved = localStorage.getItem('fiber_map_style')
@@ -2160,6 +2347,12 @@ onMounted(() => {
     const v = localStorage.getItem('fiber_follow_road')
     if (v === '0') drawFollowRoad.value = false
     if (v === '1') drawFollowRoad.value = true
+  } catch {}
+
+  try {
+    const v = localStorage.getItem('fiber_legend_collapsed')
+    if (v === '1') legendCollapsed.value = true
+    if (v === '0') legendCollapsed.value = false
   } catch {}
 
   mapLoadError.value = ''
@@ -2263,6 +2456,46 @@ onUnmounted(() => {
               </button>
             </div>
 
+            <div class="absolute top-16 left-3 z-20 w-64 max-w-[calc(100%-1.5rem)] bg-white/90 dark:bg-dark-900/80 backdrop-blur border border-gray-200 dark:border-white/10 rounded-xl shadow-lg overflow-hidden">
+              <div class="flex items-center justify-between px-3 py-2 border-b border-gray-200/70 dark:border-white/10">
+                <div class="text-[11px] font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wide">Legend Peta</div>
+                <button class="text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white" @click="legendCollapsed=!legendCollapsed">
+                  {{ legendCollapsed ? 'Tampilkan' : 'Ringkas' }}
+                </button>
+              </div>
+              <div v-if="!legendCollapsed" class="p-3 space-y-2">
+                <div class="grid grid-cols-2 gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+                  <div class="flex items-center gap-2">
+                    <span class="w-5 h-1 rounded-full bg-blue-600"></span>
+                    <span>Kabel</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full border-2 border-teal-700 bg-teal-400"></span>
+                    <span>Titik</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full border-2 border-red-700 bg-red-500"></span>
+                    <span>Putus OPEN</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full border-2 border-amber-700 bg-amber-500"></span>
+                    <span>IN PROGRESS</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full border-2 border-emerald-700 bg-emerald-500"></span>
+                    <span>FIXED</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="w-5 h-1 rounded-full bg-sky-700"></span>
+                    <span>Trace aktif</span>
+                  </div>
+                </div>
+                <div class="text-[11px] text-gray-500 dark:text-gray-400">
+                  Klik objek di peta untuk membuka detail cepat.
+                </div>
+              </div>
+            </div>
+
             <div class="absolute top-3 right-3 z-20 flex items-center gap-2 bg-white/90 dark:bg-dark-900/80 backdrop-blur border border-gray-200 dark:border-white/10 rounded-xl p-2 shadow-lg">
               <select v-model="mapStyle" class="input !py-1.5 !text-xs">
                 <option value="roadmap">Roadmap</option>
@@ -2277,6 +2510,42 @@ onUnmounted(() => {
               <button class="btn btn-secondary !py-1.5 !text-xs hidden lg:inline-flex" @click="panelCollapsed=!panelCollapsed">
                 {{ panelCollapsed ? 'Panel' : 'Full Map' }}
               </button>
+            </div>
+
+            <div
+              v-if="selectedDrawerItem && (!panelOpen || !isMobileViewport())"
+              class="absolute z-20 left-3 right-3 sm:left-auto sm:w-80 bg-white/95 dark:bg-dark-900/90 backdrop-blur rounded-2xl border shadow-xl p-3"
+              :class="[selectedCardClass, mapMode ? 'bottom-36' : 'bottom-3']"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="inline-flex px-2 py-1 rounded-full text-[10px] font-bold tracking-wide" :class="selectedBadgeClass">{{ selectedDrawerItem.badge }}</div>
+                  <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white truncate">{{ selectedDrawerItem.title }}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ selectedDrawerItem.subtitle }}</div>
+                </div>
+                <button class="text-xs text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="clearSelection">Tutup</button>
+              </div>
+
+              <div class="mt-3 grid grid-cols-1 gap-1.5">
+                <div
+                  v-for="(row, idx) in selectedDrawerItem.rows"
+                  :key="idx"
+                  class="flex items-start justify-between gap-2 text-xs"
+                >
+                  <span class="text-gray-500 dark:text-gray-400">{{ row.label }}</span>
+                  <span class="text-right font-medium text-gray-800 dark:text-gray-200">{{ row.value }}</span>
+                </div>
+              </div>
+
+              <div v-if="selectedDrawerItem.note" class="mt-2 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">
+                {{ selectedDrawerItem.note }}
+              </div>
+
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <button class="btn btn-secondary !py-1.5 !text-xs" @click="focusSelectedItem">Zoom</button>
+                <button class="btn btn-secondary !py-1.5 !text-xs lg:hidden" @click="openSelectedInPanel">Panel</button>
+                <button v-if="canEdit" class="btn btn-primary !py-1.5 !text-xs" @click="editSelectedItem">Edit</button>
+              </div>
             </div>
 
             <div
