@@ -2420,13 +2420,13 @@ onUnmounted(() => {
         :class="mapMode ? 'pointer-events-none opacity-20' : ''"
         @click="showCableModal=false; stopMapMode()"
       ></div>
-      <div class="relative pointer-events-auto w-full max-w-2xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+      <div class="relative pointer-events-auto w-full max-w-2xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
           <div class="font-semibold text-gray-900 dark:text-white">{{ cableModalMode === 'edit' ? 'Edit Kabel' : 'Tambah Kabel' }}</div>
           <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showCableModal=false; stopMapMode()">Tutup</button>
         </div>
 
-        <div class="p-4 space-y-3">
+        <div class="p-4 space-y-3 overflow-y-auto flex-1 min-h-0">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label class="text-xs text-gray-600 dark:text-gray-300">Nama</label>
@@ -2539,13 +2539,13 @@ onUnmounted(() => {
         :class="mapMode ? 'pointer-events-none opacity-20' : ''"
         @click="showPointModal=false; stopMapMode()"
       ></div>
-      <div class="relative pointer-events-auto w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+      <div class="relative pointer-events-auto w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
           <div class="font-semibold text-gray-900 dark:text-white">{{ pointModalMode === 'edit' ? 'Edit Titik' : 'Tambah Titik' }}</div>
           <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showPointModal=false; stopMapMode()">Tutup</button>
         </div>
 
-        <div class="p-4 space-y-3">
+        <div class="p-4 space-y-3 overflow-y-auto flex-1 min-h-0">
           <div>
             <label class="text-xs text-gray-600 dark:text-gray-300">Nama</label>
             <input v-model="pointForm.name" class="input w-full" placeholder="ODP-01 / Joint A" />
@@ -2597,13 +2597,13 @@ onUnmounted(() => {
         :class="mapMode ? 'pointer-events-none opacity-20' : ''"
         @click="showBreakModal=false; stopMapMode()"
       ></div>
-      <div class="relative pointer-events-auto w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+      <div class="relative pointer-events-auto w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
           <div class="font-semibold text-gray-900 dark:text-white">{{ breakModalMode === 'edit' ? 'Edit Data Putus' : 'Tambah Data Putus' }}</div>
           <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showBreakModal=false; stopMapMode()">Tutup</button>
         </div>
 
-        <div class="p-4 space-y-3">
+        <div class="p-4 space-y-3 overflow-y-auto flex-1 min-h-0">
           <div>
             <label class="text-xs text-gray-600 dark:text-gray-300">Kabel</label>
             <select v-model="breakForm.cable_id" class="input w-full">
@@ -2685,13 +2685,13 @@ onUnmounted(() => {
     <!-- Port Modal -->
     <div v-if="showPortModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
       <div class="absolute inset-0 bg-black/40" @click="showPortModal=false"></div>
-      <div class="relative w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+      <div class="relative w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
           <div class="font-semibold text-gray-900 dark:text-white">{{ portModalMode === 'edit' ? 'Edit Port' : 'Tambah Port' }}</div>
           <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showPortModal=false">Tutup</button>
         </div>
 
-        <div class="p-4 space-y-3">
+        <div class="p-4 space-y-3 overflow-y-auto flex-1 min-h-0">
           <div>
             <label class="text-xs text-gray-600 dark:text-gray-300">Titik</label>
             <select v-model="portForm.point_id" class="input w-full">
@@ -2746,13 +2746,13 @@ onUnmounted(() => {
     <!-- Link Modal -->
     <div v-if="showLinkModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
       <div class="absolute inset-0 bg-black/40" @click="showLinkModal=false"></div>
-      <div class="relative w-full max-w-2xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden">
+      <div class="relative w-full max-w-2xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
         <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
           <div class="font-semibold text-gray-900 dark:text-white">{{ linkModalMode === 'edit' ? 'Edit Sambungan' : 'Tambah Sambungan' }}</div>
           <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showLinkModal=false">Tutup</button>
         </div>
 
-        <div class="p-4 space-y-3">
+        <div class="p-4 space-y-3 overflow-y-auto flex-1 min-h-0">
           <div>
             <label class="text-xs text-gray-600 dark:text-gray-300">Titik</label>
             <select v-model="linkForm.point_id" class="input w-full">
