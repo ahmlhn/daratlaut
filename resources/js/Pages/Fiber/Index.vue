@@ -1408,6 +1408,63 @@ async function deleteBreak(item) {
   }
 }
 
+const breakFixing = ref({})
+
+function isFixingBreak(id) {
+  const k = String(Number(id || 0))
+  return !!breakFixing.value?.[k]
+}
+
+async function fixBreakWithJoint(item) {
+  if (!canEdit.value) return
+  if (!canCreate.value) return
+
+  const status = String(item?.status || 'OPEN').toUpperCase()
+  if (!['OPEN', 'IN_PROGRESS'].includes(status)) {
+    if (toast) toast.info('Status putus sudah bukan OPEN/IN_PROGRESS.')
+    return
+  }
+
+  const ok = confirm('Selesaikan data putus ini? Sistem akan membuat titik JOINT_CLOSURE di lokasi putus dan mengubah status menjadi FIXED.')
+  if (!ok) return
+
+  const k = String(Number(item?.id || 0))
+  breakFixing.value = { ...(breakFixing.value || {}), [k]: true }
+
+  try {
+    const cName = cableNameById(item?.cable_id) || (item?.cable_id ? `Kabel #${item.cable_id}` : '')
+    const jointName = (cName ? `JC - ${cName}` : `Joint Closure - Break #${item?.id || ''}`).slice(0, 160)
+
+    const res = await requestJson(`/api/v1/fiber/breaks/${item.id}/fix`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        joint_name: jointName,
+        joint_type: 'JOINT_CLOSURE',
+        joint_notes: `Auto dari data putus #${item?.id || ''}`,
+      }),
+    })
+
+    if (!res.ok) throw new Error(res.data?.message || `Gagal menyelesaikan putus (HTTP ${res.status}).`)
+
+    await loadAll()
+
+    const jp = res.data?.data?.joint_point || null
+    const lat = Number(jp?.latitude)
+    const lng = Number(jp?.longitude)
+    if (Number.isFinite(lat) && Number.isFinite(lng)) focusOnLatLng(lat, lng, 18)
+
+    if (toast) toast.success('Data putus diselesaikan. Titik Joint Closure dibuat.')
+  } catch (e) {
+    console.error('Fiber: fixBreakWithJoint failed', e)
+    if (toast) toast.error(e?.message || 'Gagal menyelesaikan putus.')
+  } finally {
+    const next = { ...(breakFixing.value || {}) }
+    delete next[k]
+    breakFixing.value = next
+  }
+}
+
 /* Ports (OLT PON / ODP OUT) */
 const showPortModal = ref(false)
 const portModalMode = ref('create') // create|edit
@@ -2335,6 +2392,14 @@ onUnmounted(() => {
                       <div v-if="b.description" class="text-xs text-gray-600 dark:text-gray-300 mt-1 line-clamp-2">{{ b.description }}</div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
+                      <button
+                        v-if="canCreate && canEdit && ['OPEN','IN_PROGRESS'].includes(String(b.status || 'OPEN').toUpperCase())"
+                        class="btn btn-primary !py-1 !px-2 !text-xs"
+                        :disabled="isFixingBreak(b.id)"
+                        @click.stop="fixBreakWithJoint(b)"
+                      >
+                        {{ isFixingBreak(b.id) ? 'Memproses...' : 'Selesaikan' }}
+                      </button>
                       <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditBreak(b)">Edit</button>
                       <button v-if="canDelete" class="btn btn-danger !py-1 !px-2 !text-xs" @click.stop="deleteBreak(b)">Hapus</button>
                     </div>

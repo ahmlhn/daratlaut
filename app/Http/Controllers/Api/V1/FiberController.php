@@ -839,6 +839,158 @@ class FiberController extends Controller
         }
     }
 
+    public function fixBreak(Request $request, int $id): JsonResponse
+    {
+        if ($resp = $this->requirePermission($request, 'edit fiber')) return $resp;
+
+        if (!$this->tablesReady()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Fiber tables not found. Run php artisan migrate.',
+            ], 500);
+        }
+
+        $tenantId = $this->tenantId($request);
+        $br = FoBreak::forTenant($tenantId)->findOrFail($id);
+
+        $currentStatus = strtoupper((string) ($br->status ?? 'OPEN'));
+        if ($currentStatus === 'CANCELLED') {
+            return response()->json(['message' => 'Data putus sudah CANCELLED.'], 409);
+        }
+
+        // Idempotent: if already FIXED and has a point, just return it (avoid duplicating joint points).
+        if ($currentStatus === 'FIXED' && (int) ($br->point_id ?? 0) > 0) {
+            $jp = null;
+            try {
+                $jp = FoPoint::forTenant($tenantId)->where('id', (int) $br->point_id)->first();
+            } catch (\Throwable) {
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'break' => $br,
+                    'joint_point' => $jp,
+                ],
+            ]);
+        }
+
+        $validated = $request->validate([
+            'joint_point_id' => 'nullable|integer|min:1',
+            'joint_name' => 'nullable|string|max:160',
+            'joint_type' => 'nullable|string|max:60',
+            'joint_address' => 'nullable|string|max:255',
+            'joint_notes' => 'nullable|string',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
+            'fixed_at' => 'nullable|date',
+        ]);
+
+        $latProvided = array_key_exists('latitude', $validated) && $validated['latitude'] !== null;
+        $lngProvided = array_key_exists('longitude', $validated) && $validated['longitude'] !== null;
+        if ($latProvided xor $lngProvided) {
+            return response()->json(['message' => 'Latitude dan longitude harus diisi berpasangan'], 422);
+        }
+
+        // Determine joint coordinates.
+        $lat = null;
+        $lng = null;
+        if ($latProvided) {
+            $lat = (float) $validated['latitude'];
+            $lng = (float) $validated['longitude'];
+        } elseif ($br->latitude !== null && $br->longitude !== null) {
+            $lat = (float) $br->latitude;
+            $lng = (float) $br->longitude;
+        } elseif ((int) ($br->point_id ?? 0) > 0) {
+            try {
+                $p = FoPoint::forTenant($tenantId)->where('id', (int) $br->point_id)->first(['latitude', 'longitude']);
+                if ($p && $p->latitude !== null && $p->longitude !== null) {
+                    $lat = (float) $p->latitude;
+                    $lng = (float) $p->longitude;
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        if ($lat === null || $lng === null) {
+            return response()->json(['message' => 'Lokasi putus belum lengkap. Isi lat/lng atau pilih titik lokasi dulu.'], 422);
+        }
+
+        $jointPointId = (int) ($validated['joint_point_id'] ?? 0);
+
+        // Creating a joint point requires create permission.
+        if ($jointPointId <= 0 && !$this->userCan($request, 'create fiber')) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $userId = (int) ($request->user()?->id ?? 0);
+
+        try {
+            return DB::transaction(function () use ($tenantId, $br, $validated, $jointPointId, $lat, $lng, $userId) {
+                $joint = null;
+
+                if ($jointPointId > 0) {
+                    $joint = FoPoint::forTenant($tenantId)->where('id', $jointPointId)->first();
+                    if (!$joint) {
+                        return response()->json(['message' => 'Joint point not found'], 422);
+                    }
+                } else {
+                    $jointName = trim((string) ($validated['joint_name'] ?? ''));
+                    if ($jointName === '') {
+                        $cName = null;
+                        try {
+                            if ((int) ($br->cable_id ?? 0) > 0) {
+                                $c = FoCable::forTenant($tenantId)->where('id', (int) $br->cable_id)->first(['name']);
+                                $cName = $c ? (string) ($c->name ?? '') : null;
+                            }
+                        } catch (\Throwable) {
+                        }
+
+                        $jointName = $cName ? ('JC - ' . $cName) : ('Joint Closure - Break #' . (int) $br->id);
+                    }
+
+                    $jointType = trim((string) ($validated['joint_type'] ?? 'JOINT_CLOSURE'));
+                    if ($jointType === '') $jointType = 'JOINT_CLOSURE';
+
+                    $joint = FoPoint::create([
+                        'tenant_id' => $tenantId,
+                        'name' => $jointName,
+                        'point_type' => $jointType,
+                        'latitude' => $lat,
+                        'longitude' => $lng,
+                        'address' => $validated['joint_address'] ?? null,
+                        'notes' => $validated['joint_notes'] ?? null,
+                        'created_by' => $userId ?: null,
+                        'updated_by' => $userId ?: null,
+                    ]);
+                }
+
+                $fixedAt = $validated['fixed_at'] ?? now();
+
+                $br->update([
+                    'status' => 'FIXED',
+                    'fixed_at' => $fixedAt,
+                    'point_id' => $joint?->id,
+                    'latitude' => $lat,
+                    'longitude' => $lng,
+                    'updated_by' => $userId ?: null,
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'break' => $br->fresh(),
+                        'joint_point' => $joint,
+                    ],
+                ]);
+            });
+        } catch (QueryException) {
+            return response()->json(['success' => false, 'message' => 'Failed to fix break'], 500);
+        } catch (\Throwable) {
+            return response()->json(['success' => false, 'message' => 'Failed to fix break'], 500);
+        }
+    }
+
     public function deleteBreak(Request $request, int $id): JsonResponse
     {
         if ($resp = $this->requirePermission($request, 'delete fiber')) return $resp;

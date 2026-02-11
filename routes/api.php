@@ -118,6 +118,7 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::get('/fiber/breaks', [FiberController::class, 'listBreaks']);
     Route::post('/fiber/breaks', [FiberController::class, 'storeBreak']);
     Route::put('/fiber/breaks/{id}', [FiberController::class, 'updateBreak']);
+    Route::post('/fiber/breaks/{id}/fix', [FiberController::class, 'fixBreak']);
     Route::delete('/fiber/breaks/{id}', [FiberController::class, 'deleteBreak']);
 
     Route::get('/fiber/ports', [FiberController::class, 'listPorts']);
