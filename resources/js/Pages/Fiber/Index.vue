@@ -53,6 +53,12 @@ const selectedCableId = ref(null)
 const selectedPointId = ref(null)
 const selectedBreakId = ref(null)
 
+// UI layout controls:
+// - Desktop: allow collapsing the right panel for a full-width map.
+// - Mobile: show the panel as a bottom sheet overlay (map-first workflow).
+const panelCollapsed = ref(false)
+const panelOpen = ref(false)
+
 const traceResult = ref(null)
 const traceUsedCableIds = ref([])
 const traceUsedCableSet = computed(() => {
@@ -173,6 +179,13 @@ function applyMapStyle() {
   if (!map || !window.google?.maps) return
   const cfg = MAP_STYLES[mapStyle.value] || MAP_STYLES.roadmap
   try { map.setMapTypeId(cfg.mapTypeId) } catch {}
+}
+
+function requestMapResize() {
+  if (!map || !window.google?.maps) return
+  try {
+    window.google.maps.event.trigger(map, 'resize')
+  } catch {}
 }
 
 function clearDraftLayer() {
@@ -1865,6 +1878,16 @@ watch([showCables, showPoints, showBreaks], () => {
   renderAllLayers()
 })
 
+watch(mapMode, (v) => {
+  // When user is interacting with the map (pick/draw/edit), keep the map unobstructed on mobile.
+  if (v) panelOpen.value = false
+})
+
+watch(panelCollapsed, () => {
+  // Map container width changes on desktop when panel is collapsed/expanded.
+  nextTick(() => requestMapResize())
+})
+
 watch(showCableModal, (open) => {
   if (!open) {
     cableAutoRouteArmed.value = false
@@ -1935,6 +1958,7 @@ onMounted(() => {
   loadGoogleMaps(key).then(() => {
     nextTick(() => {
       initMap()
+      requestMapResize()
       loadAll()
     })
   }).catch((e) => {
@@ -1981,6 +2005,9 @@ onUnmounted(() => {
               <option value="satellite">Satelit</option>
             </select>
             <button @click="loadAll" class="btn btn-secondary !py-2 !text-xs" :disabled="loading">Refresh</button>
+            <button @click="panelCollapsed=!panelCollapsed" class="btn btn-secondary !py-2 !text-xs">
+              {{ panelCollapsed ? 'Tampilkan Panel' : 'Full Map' }}
+            </button>
           </div>
         </div>
       </div>
@@ -1996,9 +2023,15 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <div v-else class="relative">
+        <div v-if="panelOpen" class="fixed inset-0 z-[9000] bg-black/35 backdrop-blur-sm lg:hidden" @click="panelOpen=false"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <!-- Map -->
-        <div class="lg:col-span-8 bg-white dark:bg-dark-800 rounded-xl shadow-card border border-gray-100 dark:border-dark-700 overflow-hidden">
+        <div
+          class="bg-white dark:bg-dark-800 rounded-xl shadow-card border border-gray-100 dark:border-dark-700 overflow-hidden flex flex-col lg:h-[calc(100vh-13rem)]"
+          :class="panelCollapsed ? 'lg:col-span-12' : 'lg:col-span-8'"
+        >
           <div class="flex flex-wrap items-center gap-2 p-3 border-b border-gray-100 dark:border-dark-700">
             <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
               <input type="checkbox" v-model="showCables" />
@@ -2020,11 +2053,14 @@ onUnmounted(() => {
                 <option value="satellite">Satelit</option>
               </select>
               <button @click="loadAll" class="btn btn-secondary !py-2 !text-xs" :disabled="loading">Refresh</button>
+              <button @click="panelOpen=!panelOpen" class="btn btn-primary !py-2 !text-xs">
+                {{ panelOpen ? 'Tutup' : 'Data' }}
+              </button>
             </div>
           </div>
 
-          <div class="relative">
-            <div ref="mapContainer" class="w-full h-[420px] lg:h-[calc(100vh-13rem)] bg-slate-100 dark:bg-slate-900"></div>
+          <div class="relative flex-1 min-h-[420px] lg:min-h-0">
+            <div ref="mapContainer" class="absolute inset-0 w-full h-full bg-slate-100 dark:bg-slate-900"></div>
 
             <div
               v-if="mapLoadError"
@@ -2070,7 +2106,21 @@ onUnmounted(() => {
         </div>
 
         <!-- Panel -->
-        <div class="lg:col-span-4 bg-white dark:bg-dark-800 rounded-xl shadow-card border border-gray-100 dark:border-dark-700 overflow-hidden">
+        <div
+          class="bg-white dark:bg-dark-800 shadow-card border border-gray-100 dark:border-dark-700 overflow-hidden flex flex-col lg:h-[calc(100vh-13rem)] fixed inset-x-0 bottom-0 z-[9001] lg:static lg:z-auto rounded-t-2xl lg:rounded-xl max-h-[calc(100vh-5rem)] lg:max-h-none transform transition-transform duration-200 ease-out lg:transform-none"
+          :class="[
+            panelCollapsed ? 'lg:hidden' : 'lg:col-span-4',
+            panelOpen ? 'translate-y-0 pointer-events-auto' : 'translate-y-full pointer-events-none lg:pointer-events-auto lg:translate-y-0',
+          ]"
+        >
+          <div class="lg:hidden px-4 pt-2 pb-3 border-b border-gray-100 dark:border-dark-700">
+            <div class="mx-auto h-1 w-10 rounded-full bg-gray-200 dark:bg-white/10"></div>
+            <div class="mt-2 flex items-center justify-between">
+              <div class="text-sm font-semibold text-gray-900 dark:text-white">Data Fiber</div>
+              <button class="btn btn-secondary !py-1.5 !text-xs" @click="panelOpen=false">Tutup</button>
+            </div>
+          </div>
+
           <div class="flex items-center gap-1 border-b border-gray-100 dark:border-dark-700 overflow-x-auto">
             <button
               @click="activeTab='cables'"
@@ -2116,7 +2166,7 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <div class="p-4">
+          <div class="p-4 overflow-y-auto flex-1 min-h-0">
             <div v-if="loading" class="text-sm text-gray-500 dark:text-gray-400">Memuat...</div>
             <div v-else-if="errorMessage" class="text-sm text-red-600 dark:text-red-300">{{ errorMessage }}</div>
 
@@ -2128,7 +2178,7 @@ onUnmounted(() => {
               </div>
 
               <div v-if="cables.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data kabel.</div>
-              <div v-else class="space-y-2 max-h-[420px] lg:max-h-[calc(100vh-18rem)] overflow-auto pr-1">
+              <div v-else class="space-y-2 pr-1">
                 <div
                   v-for="c in cables"
                   :key="c.id"
@@ -2167,7 +2217,7 @@ onUnmounted(() => {
               </div>
 
               <div v-if="points.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data titik.</div>
-              <div v-else class="space-y-2 max-h-[420px] lg:max-h-[calc(100vh-18rem)] overflow-auto pr-1">
+              <div v-else class="space-y-2 pr-1">
                 <div
                   v-for="p in points"
                   :key="p.id"
@@ -2200,7 +2250,7 @@ onUnmounted(() => {
               </div>
 
               <div v-if="ports.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data port.</div>
-              <div v-else class="space-y-2 max-h-[420px] lg:max-h-[calc(100vh-18rem)] overflow-auto pr-1">
+              <div v-else class="space-y-2 pr-1">
                 <div
                   v-for="p in ports"
                   :key="p.id"
@@ -2239,7 +2289,7 @@ onUnmounted(() => {
               </div>
 
               <div v-if="linkItems.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data sambungan.</div>
-              <div v-else class="space-y-2 max-h-[420px] lg:max-h-[calc(100vh-18rem)] overflow-auto pr-1">
+              <div v-else class="space-y-2 pr-1">
                 <div
                   v-for="ln in linkItems"
                   :key="(ln.kind === 'SPLIT_GROUP' ? ('g:' + ln.split_group + ':' + ln.point_id) : ('l:' + ln.id))"
@@ -2371,7 +2421,7 @@ onUnmounted(() => {
               </div>
 
               <div v-if="breaks.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data putus.</div>
-              <div v-else class="space-y-2 max-h-[420px] lg:max-h-[calc(100vh-18rem)] overflow-auto pr-1">
+              <div v-else class="space-y-2 pr-1">
                 <div
                   v-for="b in breaks"
                   :key="b.id"
@@ -2409,6 +2459,7 @@ onUnmounted(() => {
             </div>
 
           </div>
+        </div>
         </div>
       </div>
     </div>
