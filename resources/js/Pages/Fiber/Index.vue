@@ -791,6 +791,11 @@ function fitOnce() {
   } catch {}
 }
 
+function fitToVisible() {
+  fittedOnce = false
+  fitOnce()
+}
+
 /* ───────────── UI helpers ───────────── */
 function formatStatus(s) {
   const v = String(s || 'OPEN').toUpperCase()
@@ -2208,18 +2213,6 @@ onUnmounted(() => {
             <span class="font-semibold text-red-700 dark:text-red-300">{{ summary.breaks_open }}</span>
             <span class="text-red-600/70 dark:text-red-300/70 ml-1">putus aktif</span>
           </div>
-
-          <div class="hidden lg:flex items-center gap-2 ml-2">
-            <select v-model="mapStyle" class="input !py-2 !text-xs">
-              <option value="roadmap">Roadmap</option>
-              <option value="hybrid">Hybrid</option>
-              <option value="satellite">Satelit</option>
-            </select>
-            <button @click="loadAll" class="btn btn-secondary !py-2 !text-xs" :disabled="loading">Refresh</button>
-            <button @click="panelCollapsed=!panelCollapsed" class="btn btn-secondary !py-2 !text-xs">
-              {{ panelCollapsed ? 'Tampilkan Panel' : 'Full Map' }}
-            </button>
-          </div>
         </div>
       </div>
 
@@ -2243,39 +2236,52 @@ onUnmounted(() => {
           class="bg-white dark:bg-dark-800 rounded-xl shadow-card border border-gray-100 dark:border-dark-700 overflow-hidden flex flex-col lg:h-[calc(100vh-13rem)]"
           :class="panelCollapsed ? 'lg:col-span-12' : 'lg:col-span-8'"
         >
-          <div class="flex flex-wrap items-center gap-2 p-3 border-b border-gray-100 dark:border-dark-700">
-            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-              <input type="checkbox" v-model="showCables" />
-              Kabel
-            </label>
-            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-              <input type="checkbox" v-model="showPoints" />
-              Titik
-            </label>
-            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-              <input type="checkbox" v-model="showBreaks" />
-              Putus
-            </label>
+          <div class="relative flex-1 min-h-[420px] lg:min-h-0">
+            <div ref="mapContainer" class="absolute inset-0 w-full h-full bg-slate-100 dark:bg-slate-900"></div>
 
-            <div class="ml-auto flex items-center gap-2 lg:hidden">
-              <select v-model="mapStyle" class="input !py-2 !text-xs">
+            <div class="absolute top-3 left-3 z-20 flex flex-wrap items-center gap-2 bg-white/90 dark:bg-dark-900/80 backdrop-blur border border-gray-200 dark:border-white/10 rounded-xl p-2 shadow-lg">
+              <button
+                class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition"
+                :class="showCables ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/20 dark:border-blue-900/30 dark:text-blue-200' : 'bg-white/70 dark:bg-dark-800/70 border-gray-200/70 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                @click="showCables=!showCables"
+              >
+                Kabel ({{ summary.cables }})
+              </button>
+              <button
+                class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition"
+                :class="showPoints ? 'bg-teal-50 border-teal-200 text-teal-700 dark:bg-teal-900/20 dark:border-teal-900/30 dark:text-teal-200' : 'bg-white/70 dark:bg-dark-800/70 border-gray-200/70 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                @click="showPoints=!showPoints"
+              >
+                Titik ({{ summary.points }})
+              </button>
+              <button
+                class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition"
+                :class="showBreaks ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/10 dark:border-red-900/30 dark:text-red-300' : 'bg-white/70 dark:bg-dark-800/70 border-gray-200/70 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                @click="showBreaks=!showBreaks"
+              >
+                Putus ({{ summary.breaks_open }})
+              </button>
+            </div>
+
+            <div class="absolute top-3 right-3 z-20 flex items-center gap-2 bg-white/90 dark:bg-dark-900/80 backdrop-blur border border-gray-200 dark:border-white/10 rounded-xl p-2 shadow-lg">
+              <select v-model="mapStyle" class="input !py-1.5 !text-xs">
                 <option value="roadmap">Roadmap</option>
                 <option value="hybrid">Hybrid</option>
                 <option value="satellite">Satelit</option>
               </select>
-              <button @click="loadAll" class="btn btn-secondary !py-2 !text-xs" :disabled="loading">Refresh</button>
-              <button @click="panelOpen=!panelOpen" class="btn btn-primary !py-2 !text-xs">
+              <button @click="fitToVisible" class="btn btn-secondary !py-1.5 !text-xs">Fit</button>
+              <button @click="loadAll" class="btn btn-secondary !py-1.5 !text-xs" :disabled="loading">Refresh</button>
+              <button class="btn btn-primary !py-1.5 !text-xs lg:hidden" @click="panelOpen=!panelOpen">
                 {{ panelOpen ? 'Tutup' : 'Data' }}
               </button>
+              <button class="btn btn-secondary !py-1.5 !text-xs hidden lg:inline-flex" @click="panelCollapsed=!panelCollapsed">
+                {{ panelCollapsed ? 'Panel' : 'Full Map' }}
+              </button>
             </div>
-          </div>
-
-          <div class="relative flex-1 min-h-[420px] lg:min-h-0">
-            <div ref="mapContainer" class="absolute inset-0 w-full h-full bg-slate-100 dark:bg-slate-900"></div>
 
             <div
               v-if="mapLoadError"
-              class="absolute inset-0 z-10 flex items-center justify-center p-6 bg-white/85 dark:bg-dark-900/70 backdrop-blur"
+              class="absolute inset-0 z-40 flex items-center justify-center p-6 bg-white/85 dark:bg-dark-900/70 backdrop-blur"
             >
               <div class="max-w-md text-center">
                 <div class="text-sm font-semibold text-gray-900 dark:text-white">Peta tidak dapat dimuat</div>
