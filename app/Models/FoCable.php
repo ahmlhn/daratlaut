@@ -19,6 +19,7 @@ class FoCable extends Model
         'to_point_id',
         'path',
         'length_m',
+        'reserved_cores',
         'notes',
         'created_by',
         'updated_by',
@@ -31,6 +32,7 @@ class FoCable extends Model
         'to_point_id' => 'integer',
         'path' => 'array',
         'length_m' => 'integer',
+        'reserved_cores' => 'array',
         'created_by' => 'integer',
         'updated_by' => 'integer',
     ];

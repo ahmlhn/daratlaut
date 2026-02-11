@@ -43,7 +43,7 @@ const breaks = ref([])
 const ports = ref([])
 const links = ref([])
 
-const activeTab = ref('cables') // cables|points|ports|links|trace|breaks
+const activeTab = ref('cables') // cables|points|ports|links|cores|trace|breaks
 
 const showCables = ref(true)
 const showPoints = ref(true)
@@ -61,7 +61,10 @@ const panelOpen = ref(false)
 
 // Panel search/filter (client-side).
 const panelSearch = ref('')
-const breakStatusFilter = ref('ALL') // ALL|OPEN|IN_PROGRESS|FIXED|CANCELLED
+const breakStatusFilter = ref('ALL') // ALL|OPEN|IN_PROGRESS|FIXED|VERIFIED|CANCELLED
+
+// Mobile panel snap: ringkas/sedang/penuh.
+const panelSnap = ref('half') // peek|half|full
 
 const traceResult = ref(null)
 const traceUsedCableIds = ref([])
@@ -322,10 +325,51 @@ async function getRoadPath(from, to) {
   })
 }
 
+const SNAP_RADIUS_M = 25
+const MID_NODE_MIN_TURN_DEG = 18
+
+function nearestPointForLatLng(lat, lng, maxMeters = SNAP_RADIUS_M) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  let best = null
+  let bestDist = Number.POSITIVE_INFINITY
+  ;(points.value || []).forEach((p) => {
+    const pLat = Number(p?.latitude)
+    const pLng = Number(p?.longitude)
+    if (!Number.isFinite(pLat) || !Number.isFinite(pLng)) return
+    const d = haversineMeters({ lat, lng }, { lat: pLat, lng: pLng })
+    if (d < bestDist) {
+      bestDist = d
+      best = p
+    }
+  })
+
+  if (!best || !Number.isFinite(bestDist) || bestDist > Number(maxMeters || SNAP_RADIUS_M)) return null
+  return {
+    point: best,
+    distance_m: Math.round(bestDist),
+    lat: Number(best?.latitude),
+    lng: Number(best?.longitude),
+  }
+}
+
+function snapLatLngToKnownPoint(lat, lng, maxMeters = SNAP_RADIUS_M) {
+  const near = nearestPointForLatLng(lat, lng, maxMeters)
+  if (!near) return { lat, lng, snapped: false, point: null, distance_m: null }
+  return {
+    lat: roundCoord(near.lat),
+    lng: roundCoord(near.lng),
+    snapped: true,
+    point: near.point,
+    distance_m: near.distance_m,
+  }
+}
+
 async function onMapClick(e) {
   if (!e?.latLng) return
-  const lat = roundCoord(e.latLng.lat())
-  const lng = roundCoord(e.latLng.lng())
+  const rawLat = roundCoord(e.latLng.lat())
+  const rawLng = roundCoord(e.latLng.lng())
+  const lat = rawLat
+  const lng = rawLng
 
   if (mapMode.value === 'pickPoint') {
     pointForm.value.latitude = lat
@@ -345,15 +389,22 @@ async function onMapClick(e) {
 
   if (mapMode.value === 'drawCable') {
     const path = Array.isArray(cableForm.value.path) ? cableForm.value.path : []
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+    if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng)) return
+    const snap = snapLatLngToKnownPoint(rawLat, rawLng, SNAP_RADIUS_M)
+    const nextLat = Number(snap?.lat)
+    const nextLng = Number(snap?.lng)
+    if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) return
 
     // First point: just set start
     if (path.length < 1 || !drawFollowRoad.value) {
       // Checkpoint length so Undo can revert a whole segment even when follow-road adds many points
       drawUndoStack.push(path.length)
-      path.push({ lat, lng })
+      path.push({ lat: nextLat, lng: nextLng })
       cableForm.value.path = path
       renderDraft()
+      if (snap?.snapped && toast) {
+        toast.info(`Snap ke titik: ${snap?.point?.name || 'NODE'} (${snap?.distance_m || 0}m)`)
+      }
       return
     }
 
@@ -366,24 +417,27 @@ async function onMapClick(e) {
       const last = path[path.length - 1]
       const roadPts = await getRoadPath(
         { lat: Number(last?.lat), lng: Number(last?.lng) },
-        { lat, lng }
+        { lat: nextLat, lng: nextLng }
       )
 
       if (Array.isArray(roadPts) && roadPts.length >= 2) {
         const seg = roadPts.slice(1) // skip first (same as last)
         cableForm.value.path = path.concat(seg)
       } else {
-        path.push({ lat, lng })
+        path.push({ lat: nextLat, lng: nextLng })
         cableForm.value.path = path
       }
     } catch (err) {
       // Fallback: straight segment
-      path.push({ lat, lng })
+      path.push({ lat: nextLat, lng: nextLng })
       cableForm.value.path = path
       if (toast) toast.error(err?.message || 'Gagal mengikuti jalan. Pakai garis lurus.')
     } finally {
       drawBusy.value = false
       renderDraft()
+      if (snap?.snapped && toast) {
+        toast.info(`Snap ke titik: ${snap?.point?.name || 'NODE'} (${snap?.distance_m || 0}m)`)
+      }
     }
   }
 }
@@ -549,7 +603,7 @@ const selectedDrawerItem = computed(() => {
     const status = formatStatus(b.status)
     const tone = status === 'OPEN'
       ? 'red'
-      : (status === 'IN PROGRESS' ? 'amber' : (status === 'FIXED' ? 'green' : 'slate'))
+      : (status === 'IN PROGRESS' ? 'amber' : (['FIXED', 'VERIFIED'].includes(status) ? 'green' : 'slate'))
 
     return {
       type: 'break',
@@ -559,7 +613,9 @@ const selectedDrawerItem = computed(() => {
       subtitle: status,
       rows: [
         { label: 'Titik', value: pointNameById(b.point_id) || '-' },
+        { label: 'Core', value: b.core_no ? String(b.core_no) : '-' },
         { label: 'Severity', value: b.severity || '-' },
+        { label: 'Teknisi', value: b.technician_name || '-' },
         { label: 'Koordinat', value: formatCoordPair(b.latitude, b.longitude) },
         { label: 'Dilaporkan', value: formatDateTime(b.reported_at) },
       ],
@@ -666,6 +722,7 @@ function statusColor(status) {
   if (s === 'OPEN') return { stroke: '#dc2626', fill: '#ef4444' }
   if (s === 'IN_PROGRESS') return { stroke: '#b45309', fill: '#f59e0b' }
   if (s === 'FIXED') return { stroke: '#047857', fill: '#10b981' }
+  if (s === 'VERIFIED') return { stroke: '#065f46', fill: '#34d399' }
   return { stroke: '#64748b', fill: '#94a3b8' }
 }
 
@@ -1006,6 +1063,18 @@ function isMobileViewport() {
   try { return window.innerWidth < 1024 } catch { return false }
 }
 
+const panelSnapClass = computed(() => {
+  const v = String(panelSnap.value || 'half')
+  if (v === 'peek') return 'max-h-[38vh]'
+  if (v === 'full') return 'max-h-[calc(100vh-4rem)]'
+  return 'max-h-[68vh]'
+})
+
+function cyclePanelSnap() {
+  const curr = String(panelSnap.value || 'half')
+  panelSnap.value = curr === 'peek' ? 'half' : (curr === 'half' ? 'full' : 'peek')
+}
+
 function revealPanelOnMobile(action) {
   if (!isMobileViewport()) return
   if (action === 'open') panelOpen.value = true
@@ -1288,9 +1357,84 @@ async function autoCablePathFromEndpoints(options = {}) {
   return true
 }
 
+function turnAngleDeg(a, b, c) {
+  const ax = Number(a?.lng) - Number(b?.lng)
+  const ay = Number(a?.lat) - Number(b?.lat)
+  const bx = Number(c?.lng) - Number(b?.lng)
+  const by = Number(c?.lat) - Number(b?.lat)
+  const ma = Math.hypot(ax, ay)
+  const mb = Math.hypot(bx, by)
+  if (!Number.isFinite(ma) || !Number.isFinite(mb) || ma === 0 || mb === 0) return 0
+  const dot = ax * bx + ay * by
+  const cos = Math.max(-1, Math.min(1, dot / (ma * mb)))
+  const angle = Math.acos(cos) * 180 / Math.PI
+  // 180 is straight line, so turning angle = 180-angle
+  return Math.max(0, 180 - angle)
+}
+
+function detectAutoMidPointCandidates(path) {
+  const pts = Array.isArray(path) ? path : []
+  if (pts.length < 3) return []
+  const out = []
+  for (let i = 1; i < pts.length - 1; i += 1) {
+    const prev = pts[i - 1]
+    const cur = pts[i]
+    const next = pts[i + 1]
+    const lat = Number(cur?.lat)
+    const lng = Number(cur?.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+
+    const turn = turnAngleDeg(prev, cur, next)
+    if (turn < MID_NODE_MIN_TURN_DEG) continue
+
+    const near = nearestPointForLatLng(lat, lng, SNAP_RADIUS_M)
+    if (near) continue
+
+    out.push({ lat: roundCoord(lat), lng: roundCoord(lng), turn_deg: Math.round(turn) })
+  }
+
+  // Avoid too many auto points in one save.
+  return out.slice(0, 24)
+}
+
 async function saveCable() {
   cableProcessing.value = true
   cableErrors.value = {}
+
+  const fromPointId = cableForm.value.from_point_id !== '' ? Number(cableForm.value.from_point_id) : null
+  const toPointId = cableForm.value.to_point_id !== '' ? Number(cableForm.value.to_point_id) : null
+  if (!fromPointId || !toPointId) {
+    cableProcessing.value = false
+    if (toast) toast.error('Dari Titik dan Ke Titik wajib diisi.')
+    return
+  }
+  if (Number(fromPointId) === Number(toPointId)) {
+    cableProcessing.value = false
+    if (toast) toast.error('Dari Titik dan Ke Titik tidak boleh sama.')
+    return
+  }
+
+  let path = Array.isArray(cableForm.value.path) && cableForm.value.path.length >= 2 ? cableForm.value.path.slice() : null
+  const fromPt = pointLatLngById(fromPointId)
+  const toPt = pointLatLngById(toPointId)
+  if (fromPt && toPt) {
+    if (!Array.isArray(path) || path.length < 2) {
+      path = [fromPt, toPt]
+    } else {
+      path[0] = { lat: fromPt.lat, lng: fromPt.lng }
+      path[path.length - 1] = { lat: toPt.lat, lng: toPt.lng }
+    }
+  }
+  if (Array.isArray(path)) cableForm.value.path = path
+
+  const midCandidates = detectAutoMidPointCandidates(path || [])
+  let autoMidPoints = []
+  if (midCandidates.length > 0) {
+    const okMid = confirm(`Ditemukan ${midCandidates.length} titik belok yang belum punya node. Buat titik FO otomatis (JOINT_CLOSURE)?`)
+    if (okMid) {
+      autoMidPoints = midCandidates.map((p) => ({ lat: p.lat, lng: p.lng }))
+    }
+  }
 
   const payload = {
     name: cableForm.value.name,
@@ -1298,10 +1442,13 @@ async function saveCable() {
     cable_type: cableForm.value.cable_type || null,
     core_count: cableForm.value.core_count !== '' ? Number(cableForm.value.core_count) : null,
     map_color: cableForm.value.map_color || null,
-    from_point_id: cableForm.value.from_point_id !== '' ? Number(cableForm.value.from_point_id) : null,
-    to_point_id: cableForm.value.to_point_id !== '' ? Number(cableForm.value.to_point_id) : null,
-    path: Array.isArray(cableForm.value.path) && cableForm.value.path.length >= 2 ? cableForm.value.path : null,
+    from_point_id: fromPointId,
+    to_point_id: toPointId,
+    path,
     length_m: cableForm.value.length_m !== '' && cableForm.value.length_m !== null && cableForm.value.length_m !== undefined ? Number(cableForm.value.length_m) : null,
+    auto_mid_points: autoMidPoints.length > 0 ? autoMidPoints : undefined,
+    auto_mid_point_type: autoMidPoints.length > 0 ? 'JOINT_CLOSURE' : undefined,
+    auto_mid_point_prefix: autoMidPoints.length > 0 ? 'NODE AUTO' : undefined,
     notes: cableForm.value.notes || null,
   }
 
@@ -1328,6 +1475,10 @@ async function saveCable() {
     stopMapMode()
     await loadAll()
     if (toast) toast.success('Kabel tersimpan.')
+    const createdMid = Array.isArray(res.data?.meta?.auto_mid_points_created) ? res.data.meta.auto_mid_points_created : []
+    if (createdMid.length > 0 && toast) {
+      toast.info(`Node otomatis dibuat: ${createdMid.length} titik.`)
+    }
   } catch (e) {
     console.error('Fiber: saveCable failed', e)
     if (toast) toast.error(e?.message || 'Gagal menyimpan kabel.')
@@ -1563,10 +1714,18 @@ const breakForm = ref({
   id: null,
   cable_id: '',
   point_id: '',
+  core_no: '',
   status: 'OPEN',
   severity: '',
   reported_at: '',
+  repair_started_at: '',
   fixed_at: '',
+  verified_at: '',
+  verified_by_name: '',
+  technician_name: '',
+  repair_photos_text: '',
+  repair_materials_text: '',
+  closure_point_id: '',
   latitude: null,
   longitude: null,
   description: '',
@@ -1577,10 +1736,18 @@ function resetBreakForm() {
     id: null,
     cable_id: '',
     point_id: '',
+    core_no: '',
     status: 'OPEN',
     severity: '',
     reported_at: '',
+    repair_started_at: '',
     fixed_at: '',
+    verified_at: '',
+    verified_by_name: '',
+    technician_name: '',
+    repair_photos_text: '',
+    repair_materials_text: '',
+    closure_point_id: '',
     latitude: null,
     longitude: null,
     description: '',
@@ -1605,10 +1772,18 @@ function openEditBreak(item) {
     id: item.id,
     cable_id: item.cable_id ?? '',
     point_id: item.point_id ?? '',
+    core_no: item.core_no ?? '',
     status: (item.status || 'OPEN').toString().toUpperCase(),
     severity: item.severity || '',
     reported_at: toDatetimeLocal(item.reported_at),
+    repair_started_at: toDatetimeLocal(item.repair_started_at),
     fixed_at: toDatetimeLocal(item.fixed_at),
+    verified_at: toDatetimeLocal(item.verified_at),
+    verified_by_name: item.verified_by_name || '',
+    technician_name: item.technician_name || '',
+    repair_photos_text: Array.isArray(item.repair_photos) ? item.repair_photos.join('\n') : '',
+    repair_materials_text: Array.isArray(item.repair_materials) ? item.repair_materials.join('\n') : '',
+    closure_point_id: item.closure_point_id ?? '',
     latitude: item.latitude ?? null,
     longitude: item.longitude ?? null,
     description: item.description || '',
@@ -1639,10 +1814,24 @@ async function saveBreak() {
   const payload = {
     cable_id: breakForm.value.cable_id !== '' ? Number(breakForm.value.cable_id) : null,
     point_id: breakForm.value.point_id !== '' ? Number(breakForm.value.point_id) : null,
+    core_no: breakForm.value.core_no !== '' ? Number(breakForm.value.core_no) : null,
     status: (breakForm.value.status || 'OPEN').toString().toUpperCase(),
     severity: breakForm.value.severity || null,
     reported_at: breakForm.value.reported_at || null,
+    repair_started_at: breakForm.value.repair_started_at || null,
     fixed_at: breakForm.value.fixed_at || null,
+    verified_at: breakForm.value.verified_at || null,
+    verified_by_name: breakForm.value.verified_by_name || null,
+    technician_name: breakForm.value.technician_name || null,
+    repair_photos: String(breakForm.value.repair_photos_text || '')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+    repair_materials: String(breakForm.value.repair_materials_text || '')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+    closure_point_id: breakForm.value.closure_point_id !== '' ? Number(breakForm.value.closure_point_id) : null,
     latitude: breakForm.value.latitude,
     longitude: breakForm.value.longitude,
     description: breakForm.value.description || null,
@@ -1698,10 +1887,81 @@ async function deleteBreak(item) {
 }
 
 const breakFixing = ref({})
+const breakStatusUpdating = ref({})
 
 function isFixingBreak(id) {
   const k = String(Number(id || 0))
   return !!breakFixing.value?.[k]
+}
+
+function isUpdatingBreakStatus(id) {
+  const k = String(Number(id || 0))
+  return !!breakStatusUpdating.value?.[k]
+}
+
+async function markBreakInProgress(item) {
+  if (!canEdit.value) return
+  const status = String(item?.status || 'OPEN').toUpperCase()
+  if (!['OPEN', 'IN_PROGRESS'].includes(status)) return
+
+  const k = String(Number(item?.id || 0))
+  breakStatusUpdating.value = { ...(breakStatusUpdating.value || {}), [k]: true }
+  try {
+    const res = await requestJson(`/api/v1/fiber/breaks/${item.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: 'IN_PROGRESS',
+        repair_started_at: item?.repair_started_at || null,
+      }),
+    })
+    if (!res.ok) throw new Error(res.data?.message || `Gagal update status (HTTP ${res.status}).`)
+    await loadAll()
+    if (toast) toast.success('Status putus menjadi IN_PROGRESS.')
+  } catch (e) {
+    console.error('Fiber: markBreakInProgress failed', e)
+    if (toast) toast.error(e?.message || 'Gagal update status putus.')
+  } finally {
+    const next = { ...(breakStatusUpdating.value || {}) }
+    delete next[k]
+    breakStatusUpdating.value = next
+  }
+}
+
+async function verifyBreak(item) {
+  if (!canEdit.value) return
+  const status = String(item?.status || '').toUpperCase()
+  if (!['FIXED', 'VERIFIED'].includes(status)) {
+    if (toast) toast.info('Verifikasi hanya untuk status FIXED.')
+    return
+  }
+
+  const ok = confirm('Verifikasi data putus ini? Status akan menjadi VERIFIED.')
+  if (!ok) return
+
+  const k = String(Number(item?.id || 0))
+  breakStatusUpdating.value = { ...(breakStatusUpdating.value || {}), [k]: true }
+
+  try {
+    const verifier = page.props.auth?.user?.name || page.props.auth?.user?.username || ''
+    const res = await requestJson(`/api/v1/fiber/breaks/${item.id}/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        verified_by_name: verifier || null,
+      }),
+    })
+    if (!res.ok) throw new Error(res.data?.message || `Gagal verifikasi (HTTP ${res.status}).`)
+    await loadAll()
+    if (toast) toast.success('Data putus terverifikasi.')
+  } catch (e) {
+    console.error('Fiber: verifyBreak failed', e)
+    if (toast) toast.error(e?.message || 'Gagal verifikasi data putus.')
+  } finally {
+    const next = { ...(breakStatusUpdating.value || {}) }
+    delete next[k]
+    breakStatusUpdating.value = next
+  }
 }
 
 async function fixBreakWithJoint(item) {
@@ -1948,6 +2208,7 @@ const searchPlaceholder = computed(() => {
   if (tab === 'points') return 'Cari titik (nama/tipe)...'
   if (tab === 'ports') return 'Cari port (label/tipe/kabel/titik)...'
   if (tab === 'links') return 'Cari sambungan (titik/kabel/core)...'
+  if (tab === 'cores') return 'Cari core...'
   if (tab === 'breaks') return 'Cari putus (kabel/titik/status)...'
   return 'Cari...'
 })
@@ -2056,6 +2317,110 @@ const filteredBreaks = computed(() => {
     )
   })
 })
+
+/* Core occupancy */
+const coreCableId = ref('')
+const coreLoading = ref(false)
+const coreSaving = ref(false)
+const coreError = ref('')
+const coreSummary = ref({ FREE: 0, USED: 0, RESERVED: 0, BROKEN: 0 })
+const coreRows = ref([])
+const coreReservedDraft = ref([])
+const selectedCoreNo = ref(null)
+
+const coreCable = computed(() => {
+  const id = Number(coreCableId.value || 0)
+  if (!id) return null
+  return cableById.value.get(id) || null
+})
+
+const selectedCoreRow = computed(() => {
+  const n = Number(selectedCoreNo.value || 0)
+  if (!n) return null
+  return (coreRows.value || []).find((r) => Number(r?.core_no) === n) || null
+})
+
+function coreStatusClass(status) {
+  const s = String(status || '').toUpperCase()
+  if (s === 'BROKEN') return 'border-red-300 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200'
+  if (s === 'USED') return 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-blue-200'
+  if (s === 'RESERVED') return 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200'
+  return 'border-gray-200 bg-white text-gray-700 dark:border-white/10 dark:bg-dark-800 dark:text-gray-200'
+}
+
+function isCoreReservedDraft(coreNo) {
+  return (coreReservedDraft.value || []).includes(Number(coreNo))
+}
+
+function toggleCoreReservedDraft(coreNo) {
+  const n = Number(coreNo || 0)
+  if (!n) return
+  const curr = new Set((coreReservedDraft.value || []).map((x) => Number(x)))
+  if (curr.has(n)) curr.delete(n)
+  else curr.add(n)
+  coreReservedDraft.value = Array.from(curr).filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => a - b)
+}
+
+async function loadCoreOccupancy(cableId) {
+  const id = Number(cableId || 0)
+  if (!id) return
+  coreCableId.value = String(id)
+  coreLoading.value = true
+  coreError.value = ''
+  selectedCoreNo.value = null
+  try {
+    const res = await requestJson(`/api/v1/fiber/cables/${id}/core-occupancy`)
+    if (!res.ok) throw new Error(res.data?.message || `Gagal memuat core occupancy (HTTP ${res.status}).`)
+
+    coreSummary.value = res.data?.data?.summary || { FREE: 0, USED: 0, RESERVED: 0, BROKEN: 0 }
+    coreRows.value = Array.isArray(res.data?.data?.cores) ? res.data.data.cores : []
+    coreReservedDraft.value = Array.isArray(res.data?.data?.cable?.reserved_cores) ? res.data.data.cable.reserved_cores.map((x) => Number(x)) : []
+
+    if (coreRows.value.length > 0) selectedCoreNo.value = Number(coreRows.value[0]?.core_no || 0)
+  } catch (e) {
+    console.error('Fiber: loadCoreOccupancy failed', e)
+    coreError.value = e?.message || 'Gagal memuat data core.'
+  } finally {
+    coreLoading.value = false
+  }
+}
+
+function openCoreTab(cableItem = null) {
+  const id = Number(cableItem?.id || selectedCableId.value || 0)
+  if (!id) {
+    if (toast) toast.info('Pilih kabel dulu untuk melihat core.')
+    return
+  }
+  selectedCableId.value = id
+  activeTab.value = 'cores'
+  loadCoreOccupancy(id)
+}
+
+async function saveCoreReservations() {
+  const id = Number(coreCableId.value || 0)
+  if (!id) return
+  coreSaving.value = true
+  coreError.value = ''
+  try {
+    const res = await requestJson(`/api/v1/fiber/cables/${id}/core-reservations`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reserved_cores: (coreReservedDraft.value || []).map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0),
+      }),
+    })
+    if (!res.ok) throw new Error(res.data?.message || `Gagal menyimpan reservasi core (HTTP ${res.status}).`)
+    await loadCoreOccupancy(id)
+    await loadAll()
+    if (toast) toast.success('Reservasi core tersimpan.')
+  } catch (e) {
+    console.error('Fiber: saveCoreReservations failed', e)
+    coreError.value = e?.message || 'Gagal menyimpan reservasi core.'
+    if (toast) toast.error(coreError.value)
+  } finally {
+    coreSaving.value = false
+  }
+}
 
 function resetLinkForm() {
   linkForm.value = {
@@ -2272,9 +2637,19 @@ watch([showCables, showPoints, showBreaks], () => {
   renderAllLayers()
 })
 
-watch(activeTab, () => {
+watch(selectedCableId, (id) => {
+  if (activeTab.value === 'cores' && Number(id || 0) > 0) {
+    loadCoreOccupancy(id)
+  }
+})
+
+watch(activeTab, (tab) => {
   // Avoid "stuck filters" when switching between modes.
   panelSearch.value = ''
+  if (tab === 'cores') {
+    const id = Number(coreCableId.value || selectedCableId.value || 0)
+    if (id > 0) loadCoreOccupancy(id)
+  }
 })
 
 watch(mapMode, (v) => {
@@ -2333,6 +2708,10 @@ watch(drawFollowRoad, () => {
   try { localStorage.setItem('fiber_follow_road', drawFollowRoad.value ? '1' : '0') } catch {}
 })
 
+watch(panelSnap, () => {
+  try { localStorage.setItem('fiber_panel_snap', panelSnap.value) } catch {}
+})
+
 watch(legendCollapsed, () => {
   try { localStorage.setItem('fiber_legend_collapsed', legendCollapsed.value ? '1' : '0') } catch {}
 })
@@ -2347,6 +2726,11 @@ onMounted(() => {
     const v = localStorage.getItem('fiber_follow_road')
     if (v === '0') drawFollowRoad.value = false
     if (v === '1') drawFollowRoad.value = true
+  } catch {}
+
+  try {
+    const v = localStorage.getItem('fiber_panel_snap')
+    if (['peek', 'half', 'full'].includes(String(v))) panelSnap.value = String(v)
   } catch {}
 
   try {
@@ -2422,6 +2806,20 @@ onUnmounted(() => {
 
       <div v-else class="relative">
         <div v-if="panelOpen" class="fixed inset-0 z-[9000] bg-black/35 backdrop-blur-sm lg:hidden" @click="panelOpen=false"></div>
+
+        <div
+          v-if="!panelOpen && !mapMode && !showCableModal && !showPointModal && !showBreakModal"
+          class="fixed left-3 right-3 bottom-3 z-[8900] lg:hidden"
+        >
+          <div class="rounded-2xl border border-white/20 bg-white/90 dark:bg-dark-900/90 backdrop-blur shadow-xl p-2">
+            <div class="grid grid-cols-4 gap-2">
+              <button class="btn btn-primary !py-2 !text-[11px]" @click="panelOpen=true">Data</button>
+              <button class="btn btn-secondary !py-2 !text-[11px]" :disabled="!canCreate" @click="openCreateCable">+ Kabel</button>
+              <button class="btn btn-secondary !py-2 !text-[11px]" :disabled="!canCreate" @click="openCreatePoint">+ Titik</button>
+              <button class="btn btn-secondary !py-2 !text-[11px]" :disabled="!canCreate" @click="openCreateBreak">+ Putus</button>
+            </div>
+          </div>
+        </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <!-- Map -->
@@ -2543,6 +2941,7 @@ onUnmounted(() => {
 
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <button class="btn btn-secondary !py-1.5 !text-xs" @click="focusSelectedItem">Zoom</button>
+                <button v-if="selectedDrawerItem.type === 'cable'" class="btn btn-secondary !py-1.5 !text-xs" @click="openCoreTab(selectedCable)">Core</button>
                 <button class="btn btn-secondary !py-1.5 !text-xs lg:hidden" @click="openSelectedInPanel">Panel</button>
                 <button v-if="canEdit" class="btn btn-primary !py-1.5 !text-xs" @click="editSelectedItem">Edit</button>
               </div>
@@ -2593,20 +2992,28 @@ onUnmounted(() => {
 
         <!-- Panel -->
         <div
-          class="bg-white dark:bg-dark-800 shadow-card border border-gray-100 dark:border-dark-700 overflow-hidden flex flex-col lg:h-[calc(100vh-13rem)] fixed inset-x-0 bottom-0 z-[9001] lg:static lg:z-auto rounded-t-2xl lg:rounded-xl max-h-[calc(100vh-5rem)] lg:max-h-none transform transition-transform duration-200 ease-out lg:transform-none"
+          class="bg-white dark:bg-dark-800 shadow-card border border-gray-100 dark:border-dark-700 overflow-hidden flex flex-col lg:h-[calc(100vh-13rem)] fixed inset-x-0 bottom-0 z-[9001] lg:static lg:z-auto rounded-t-2xl lg:rounded-xl lg:max-h-none transform transition-transform duration-200 ease-out lg:transform-none"
           :class="[
             panelCollapsed ? 'lg:hidden' : 'lg:col-span-4',
             panelOpen ? 'translate-y-0 pointer-events-auto' : 'translate-y-full pointer-events-none lg:pointer-events-auto lg:translate-y-0',
+            panelSnapClass,
           ]"
         >
           <div class="lg:hidden px-4 pt-2 pb-3 border-b border-gray-100 dark:border-dark-700">
             <div class="mx-auto h-1 w-10 rounded-full bg-gray-200 dark:bg-white/10"></div>
+            <div class="mt-2 flex items-center justify-between gap-2">
+              <div class="text-[11px] text-gray-500 dark:text-gray-400">
+                Panel: <span class="font-semibold text-gray-700 dark:text-gray-200 uppercase">{{ panelSnap === 'peek' ? 'Ringkas' : (panelSnap === 'half' ? 'Sedang' : 'Penuh') }}</span>
+              </div>
+              <button class="btn btn-secondary !py-1 !text-[11px]" @click="cyclePanelSnap">Ubah Mode</button>
+            </div>
             <div class="mt-2 flex items-center gap-2">
               <select v-model="activeTab" class="input !py-2 !text-xs flex-1">
                 <option value="cables">Kabel ({{ cables.length }})</option>
                 <option value="points">Titik ({{ points.length }})</option>
                 <option value="ports">Port ({{ ports.length }})</option>
                 <option value="links">Sambungan ({{ links.length }})</option>
+                <option value="cores">Core</option>
                 <option value="trace">Trace</option>
                 <option value="breaks">Putus ({{ breaks.length }})</option>
               </select>
@@ -2642,6 +3049,13 @@ onUnmounted(() => {
               :class="activeTab==='links' ? 'text-amber-700 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-900/10' : 'text-gray-600 dark:text-gray-300'"
             >
               Sambungan ({{ links.length }})
+            </button>
+            <button
+              @click="openCoreTab()"
+              class="px-3 py-3 text-xs font-semibold whitespace-nowrap"
+              :class="activeTab==='cores' ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50/60 dark:bg-emerald-900/10' : 'text-gray-600 dark:text-gray-300'"
+            >
+              Core
             </button>
             <button
               @click="activeTab='trace'"
@@ -2704,6 +3118,7 @@ onUnmounted(() => {
                     </div>
 
                     <div class="flex items-center gap-1 shrink-0">
+                      <button class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openCoreTab(c)">Core</button>
                       <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditCable(c)">Edit</button>
                       <button v-if="canDelete" class="btn btn-danger !py-1 !px-2 !text-xs" @click.stop="deleteCable(c)">Hapus</button>
                     </div>
@@ -2869,6 +3284,102 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- Cores tab -->
+            <div v-else-if="activeTab==='cores'" class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-semibold text-gray-900 dark:text-white">Core Occupancy</div>
+                <div class="flex items-center gap-2">
+                  <select v-model="coreCableId" class="input !py-2 !text-xs" @change="loadCoreOccupancy(coreCableId)">
+                    <option value="">(pilih kabel)</option>
+                    <option v-for="c in cables" :key="c.id" :value="String(c.id)">
+                      {{ c.name }} ({{ c.core_count || '-' }} core)
+                    </option>
+                  </select>
+                  <button class="btn btn-secondary !py-2 !text-xs" :disabled="coreLoading || !coreCableId" @click="loadCoreOccupancy(coreCableId)">Refresh</button>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2 text-[11px]">
+                <div class="px-2 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-dark-800 text-gray-700 dark:text-gray-200">FREE: <span class="font-semibold">{{ coreSummary.FREE || 0 }}</span></div>
+                <div class="px-2 py-1.5 rounded-lg border border-blue-200 dark:border-blue-900/40 bg-blue-50/70 dark:bg-blue-900/20 text-blue-700 dark:text-blue-200">USED: <span class="font-semibold">{{ coreSummary.USED || 0 }}</span></div>
+                <div class="px-2 py-1.5 rounded-lg border border-amber-200 dark:border-amber-900/40 bg-amber-50/70 dark:bg-amber-900/20 text-amber-700 dark:text-amber-200">RESERVED: <span class="font-semibold">{{ coreSummary.RESERVED || 0 }}</span></div>
+                <div class="px-2 py-1.5 rounded-lg border border-red-200 dark:border-red-900/40 bg-red-50/70 dark:bg-red-900/20 text-red-700 dark:text-red-200">BROKEN: <span class="font-semibold">{{ coreSummary.BROKEN || 0 }}</span></div>
+              </div>
+
+              <div v-if="coreLoading" class="text-sm text-gray-500 dark:text-gray-400">Memuat data core...</div>
+              <div v-else-if="coreError" class="text-sm text-red-600 dark:text-red-300">{{ coreError }}</div>
+              <div v-else-if="!coreCableId" class="text-sm text-gray-500 dark:text-gray-400">Pilih kabel untuk melihat okupansi core.</div>
+              <div v-else class="space-y-3">
+                <div class="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                  <button
+                    v-for="row in coreRows"
+                    :key="row.core_no"
+                    class="rounded-lg border px-2 py-2 text-[11px] text-center transition"
+                    :class="[coreStatusClass(row.status), Number(selectedCoreNo) === Number(row.core_no) ? '!ring-2 !ring-slate-900/20 dark:!ring-white/30' : '']"
+                    @click="selectedCoreNo = row.core_no"
+                  >
+                    <div class="font-semibold">Core {{ row.core_no }}</div>
+                    <div class="mt-0.5 uppercase tracking-wide">{{ row.status }}</div>
+                  </button>
+                </div>
+
+                <div v-if="selectedCoreRow" class="rounded-xl border border-gray-100 dark:border-dark-700 p-3 bg-gray-50/40 dark:bg-dark-900/30">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="text-xs font-semibold text-gray-900 dark:text-white">Detail Core {{ selectedCoreRow.core_no }}</div>
+                    <label class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                      <input
+                        type="checkbox"
+                        :checked="isCoreReservedDraft(selectedCoreRow.core_no)"
+                        @change="toggleCoreReservedDraft(selectedCoreRow.core_no)"
+                      />
+                      Reserve
+                    </label>
+                  </div>
+
+                  <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    Status saat ini: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ selectedCoreRow.status }}</span>
+                  </div>
+
+                  <div class="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                    <div class="rounded-lg border border-gray-200 dark:border-white/10 px-2 py-1.5">
+                      Port: <span class="font-semibold">{{ (selectedCoreRow.details?.ports || []).length }}</span>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 dark:border-white/10 px-2 py-1.5">
+                      Link: <span class="font-semibold">{{ (selectedCoreRow.details?.links_from || []).length + (selectedCoreRow.details?.links_to || []).length }}</span>
+                    </div>
+                  </div>
+
+                  <div v-if="(selectedCoreRow.details?.ports || []).length" class="mt-2">
+                    <div class="text-[11px] font-semibold text-gray-700 dark:text-gray-200">Ports</div>
+                    <div class="mt-1 space-y-1">
+                      <div v-for="p in (selectedCoreRow.details?.ports || [])" :key="'p'+p.id" class="text-[11px] text-gray-600 dark:text-gray-300">
+                        {{ p.point_name || ('#'+p.point_id) }} | {{ p.port_type }} | {{ p.port_label }}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-if="(selectedCoreRow.details?.links_from || []).length || (selectedCoreRow.details?.links_to || []).length" class="mt-2">
+                    <div class="text-[11px] font-semibold text-gray-700 dark:text-gray-200">Links</div>
+                    <div class="mt-1 space-y-1">
+                      <div v-for="ln in (selectedCoreRow.details?.links_from || [])" :key="'lf'+ln.id" class="text-[11px] text-gray-600 dark:text-gray-300">
+                        OUT {{ ln.link_type }} @ {{ ln.point_name || ('#'+ln.point_id) }} -> Kabel {{ cableNameById(ln.to_cable_id) || ('#'+ln.to_cable_id) }}:{{ ln.to_core_no }}
+                      </div>
+                      <div v-for="ln in (selectedCoreRow.details?.links_to || [])" :key="'lt'+ln.id" class="text-[11px] text-gray-600 dark:text-gray-300">
+                        IN {{ ln.link_type }} @ {{ ln.point_name || ('#'+ln.point_id) }} <- Kabel {{ cableNameById(ln.from_cable_id) || ('#'+ln.from_cable_id) }}:{{ ln.from_core_no }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="flex items-center justify-end gap-2">
+                  <button class="btn btn-secondary !py-2 !text-xs" :disabled="coreSaving || !coreCableId" @click="loadCoreOccupancy(coreCableId)">Undo Draft</button>
+                  <button class="btn btn-primary !py-2 !text-xs" :disabled="coreSaving || !coreCableId" @click="saveCoreReservations">
+                    {{ coreSaving ? 'Menyimpan...' : 'Simpan Reservasi' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <!-- Trace tab -->
             <div v-else-if="activeTab==='trace'" class="space-y-3">
               <div class="flex items-center justify-between">
@@ -2989,6 +3500,13 @@ onUnmounted(() => {
                 </button>
                 <button
                   class="px-3 py-1.5 rounded-full text-xs font-semibold border transition"
+                  :class="breakStatusFilter==='VERIFIED' ? 'bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-900/40 dark:text-emerald-100' : 'bg-white dark:bg-dark-800 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                  @click="breakStatusFilter='VERIFIED'"
+                >
+                  VERIFIED
+                </button>
+                <button
+                  class="px-3 py-1.5 rounded-full text-xs font-semibold border transition"
                   :class="breakStatusFilter==='CANCELLED' ? 'bg-slate-100 border-slate-200 text-slate-700 dark:bg-slate-700/30 dark:border-white/10 dark:text-slate-200' : 'bg-white dark:bg-dark-800 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
                   @click="breakStatusFilter='CANCELLED'"
                 >
@@ -3019,11 +3537,20 @@ onUnmounted(() => {
                       </div>
                       <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                         <span>Titik: {{ pointNameById(b.point_id) || '-' }}</span>
+                        <span v-if="b.core_no" class="ml-2">| core {{ b.core_no }}</span>
                         <span v-if="b.severity" class="ml-2">| {{ b.severity }}</span>
                       </div>
                       <div v-if="b.description" class="text-xs text-gray-600 dark:text-gray-300 mt-1 line-clamp-2">{{ b.description }}</div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
+                      <button
+                        v-if="canEdit && String(b.status || '').toUpperCase() === 'OPEN'"
+                        class="btn btn-secondary !py-1 !px-2 !text-xs"
+                        :disabled="isUpdatingBreakStatus(b.id)"
+                        @click.stop="markBreakInProgress(b)"
+                      >
+                        {{ isUpdatingBreakStatus(b.id) ? 'Memproses...' : 'Proses' }}
+                      </button>
                       <button
                         v-if="canCreate && canEdit && ['OPEN','IN_PROGRESS'].includes(String(b.status || 'OPEN').toUpperCase())"
                         class="btn btn-primary !py-1 !px-2 !text-xs"
@@ -3031,6 +3558,14 @@ onUnmounted(() => {
                         @click.stop="fixBreakWithJoint(b)"
                       >
                         {{ isFixingBreak(b.id) ? 'Memproses...' : 'Selesaikan' }}
+                      </button>
+                      <button
+                        v-if="canEdit && String(b.status || '').toUpperCase() === 'FIXED'"
+                        class="btn btn-secondary !py-1 !px-2 !text-xs"
+                        :disabled="isUpdatingBreakStatus(b.id)"
+                        @click.stop="verifyBreak(b)"
+                      >
+                        {{ isUpdatingBreakStatus(b.id) ? 'Memproses...' : 'Verifikasi' }}
                       </button>
                       <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditBreak(b)">Edit</button>
                       <button v-if="canDelete" class="btn btn-danger !py-1 !px-2 !text-xs" @click.stop="deleteBreak(b)">Hapus</button>
@@ -3102,16 +3637,16 @@ onUnmounted(() => {
               </div>
             </div>
             <div>
-              <label class="text-xs text-gray-600 dark:text-gray-300">Dari Titik</label>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Dari Titik *</label>
               <select v-model="cableForm.from_point_id" class="input w-full">
-                <option value="">(kosong)</option>
+                <option value="">(pilih titik)</option>
                 <option v-for="p in points" :key="p.id" :value="p.id">{{ p.name }}</option>
               </select>
             </div>
             <div>
-              <label class="text-xs text-gray-600 dark:text-gray-300">Ke Titik</label>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Ke Titik *</label>
               <select v-model="cableForm.to_point_id" class="input w-full">
-                <option value="">(kosong)</option>
+                <option value="">(pilih titik)</option>
                 <option v-for="p in points" :key="p.id" :value="p.id">{{ p.name }}</option>
               </select>
             </div>
@@ -3252,6 +3787,12 @@ onUnmounted(() => {
             </select>
           </div>
 
+          <div>
+            <label class="text-xs text-gray-600 dark:text-gray-300">Core (opsional)</label>
+            <input v-model="breakForm.core_no" type="number" min="1" class="input w-full" placeholder="contoh: 1" />
+            <div class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Isi core bila gangguan hanya pada core tertentu.</div>
+          </div>
+
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label class="text-xs text-gray-600 dark:text-gray-300">Status</label>
@@ -3259,6 +3800,7 @@ onUnmounted(() => {
                 <option value="OPEN">OPEN</option>
                 <option value="IN_PROGRESS">IN_PROGRESS</option>
                 <option value="FIXED">FIXED</option>
+                <option value="VERIFIED">VERIFIED</option>
                 <option value="CANCELLED">CANCELLED</option>
               </select>
             </div>
@@ -3275,13 +3817,43 @@ onUnmounted(() => {
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Teknisi</label>
+              <input v-model="breakForm.technician_name" class="input w-full" placeholder="Nama teknisi lapangan" />
+            </div>
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Verifier</label>
+              <input v-model="breakForm.verified_by_name" class="input w-full" placeholder="Nama verifier (opsional)" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
               <label class="text-xs text-gray-600 dark:text-gray-300">Dilaporkan</label>
               <input v-model="breakForm.reported_at" type="datetime-local" class="input w-full" />
             </div>
             <div>
-              <label class="text-xs text-gray-600 dark:text-gray-300">Fixed At</label>
-              <input v-model="breakForm.fixed_at" type="datetime-local" class="input w-full" :disabled="String(breakForm.status).toUpperCase() !== 'FIXED'" />
+              <label class="text-xs text-gray-600 dark:text-gray-300">Mulai Perbaikan</label>
+              <input v-model="breakForm.repair_started_at" type="datetime-local" class="input w-full" :disabled="!['IN_PROGRESS','FIXED','VERIFIED'].includes(String(breakForm.status).toUpperCase())" />
             </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Fixed At</label>
+              <input v-model="breakForm.fixed_at" type="datetime-local" class="input w-full" :disabled="!['FIXED','VERIFIED'].includes(String(breakForm.status).toUpperCase())" />
+            </div>
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Verified At</label>
+              <input v-model="breakForm.verified_at" type="datetime-local" class="input w-full" :disabled="String(breakForm.status).toUpperCase() !== 'VERIFIED'" />
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-600 dark:text-gray-300">Closure Point (opsional)</label>
+            <select v-model="breakForm.closure_point_id" class="input w-full">
+              <option value="">(kosong)</option>
+              <option v-for="p in points" :key="'cp-' + p.id" :value="p.id">{{ p.name }}</option>
+            </select>
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -3305,6 +3877,17 @@ onUnmounted(() => {
           <div>
             <label class="text-xs text-gray-600 dark:text-gray-300">Catatan</label>
             <textarea v-model="breakForm.description" class="input w-full min-h-[90px]" placeholder="Keterangan kejadian putus..."></textarea>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Foto Perbaikan (1 URL/baris)</label>
+              <textarea v-model="breakForm.repair_photos_text" class="input w-full min-h-[90px]" placeholder="https://..."></textarea>
+            </div>
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Material (1 item/baris)</label>
+              <textarea v-model="breakForm.repair_materials_text" class="input w-full min-h-[90px]" placeholder="Joint Closure 24 Core"></textarea>
+            </div>
           </div>
         </div>
 

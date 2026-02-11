@@ -18,7 +18,7 @@ use Illuminate\Validation\Rule;
 
 class FiberController extends Controller
 {
-    private const BREAK_STATUSES = ['OPEN', 'IN_PROGRESS', 'FIXED', 'CANCELLED'];
+    private const BREAK_STATUSES = ['OPEN', 'IN_PROGRESS', 'FIXED', 'VERIFIED', 'CANCELLED'];
     private const BREAK_SEVERITIES = ['MINOR', 'MAJOR', 'CRITICAL'];
 
     private const PORT_TYPES = ['OLT_PON', 'ODP_OUT'];
@@ -91,6 +91,189 @@ class FiberController extends Controller
         $cc = (int) ($cable->core_count ?? 0);
         if ($cc > 0) return $coreNo <= $cc;
         return true;
+    }
+
+    private function pointLatLng(int $tenantId, int $pointId): ?array
+    {
+        if ($pointId <= 0) return null;
+        $p = FoPoint::forTenant($tenantId)
+            ->where('id', $pointId)
+            ->first(['latitude', 'longitude']);
+        if (!$p) return null;
+
+        $lat = $p->latitude !== null ? round((float) $p->latitude, 7) : null;
+        $lng = $p->longitude !== null ? round((float) $p->longitude, 7) : null;
+        if ($lat === null || $lng === null) return null;
+
+        return ['lat' => $lat, 'lng' => $lng];
+    }
+
+    private function normalizePath(?array $path, int $minPoints = 2): ?array
+    {
+        if (!is_array($path)) return null;
+        $out = [];
+        foreach ($path as $node) {
+            $lat = isset($node['lat']) ? (float) $node['lat'] : null;
+            $lng = isset($node['lng']) ? (float) $node['lng'] : null;
+            if ($lat === null || $lng === null) continue;
+            if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) continue;
+            $out[] = [
+                'lat' => round($lat, 7),
+                'lng' => round($lng, 7),
+            ];
+        }
+        $min = $minPoints > 0 ? $minPoints : 1;
+        return count($out) >= $min ? $out : null;
+    }
+
+    private function snapPathToEndpoints(?array $path, ?array $fromPointLatLng, ?array $toPointLatLng): ?array
+    {
+        if ($fromPointLatLng === null || $toPointLatLng === null) {
+            return $path;
+        }
+
+        if (!is_array($path) || count($path) < 2) {
+            return [$fromPointLatLng, $toPointLatLng];
+        }
+
+        $last = count($path) - 1;
+        $path[0] = $fromPointLatLng;
+        $path[$last] = $toPointLatLng;
+        return $path;
+    }
+
+    private function normalizeCoreList($raw, ?int $maxCore = null): array
+    {
+        $vals = is_array($raw) ? $raw : [];
+        $set = [];
+        foreach ($vals as $v) {
+            $n = (int) $v;
+            if ($n <= 0) continue;
+            if ($maxCore !== null && $maxCore > 0 && $n > $maxCore) continue;
+            $set[$n] = true;
+        }
+        $arr = array_map('intval', array_keys($set));
+        sort($arr);
+        return $arr;
+    }
+
+    private function autoCreateMidPoints(
+        int $tenantId,
+        array $midPoints,
+        string $pointType,
+        string $namePrefix,
+        int $userId,
+        ?string $cableName = null
+    ): array {
+        $created = [];
+        $idx = 0;
+        foreach ($midPoints as $mp) {
+            $lat = isset($mp['lat']) ? (float) $mp['lat'] : null;
+            $lng = isset($mp['lng']) ? (float) $mp['lng'] : null;
+            if ($lat === null || $lng === null) continue;
+            if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) continue;
+
+            $idx++;
+            $name = trim($namePrefix) !== ''
+                ? trim($namePrefix) . ' ' . $idx
+                : 'NODE AUTO ' . $idx;
+
+            $note = $cableName
+                ? ('Auto node dari jalur kabel: ' . $cableName)
+                : 'Auto node dari jalur kabel';
+
+            $created[] = FoPoint::create([
+                'tenant_id' => $tenantId,
+                'name' => Str::limit($name, 160, ''),
+                'point_type' => Str::limit($pointType, 60, ''),
+                'latitude' => round($lat, 7),
+                'longitude' => round($lng, 7),
+                'address' => null,
+                'notes' => $note,
+                'created_by' => $userId ?: null,
+                'updated_by' => $userId ?: null,
+            ]);
+        }
+
+        return $created;
+    }
+
+    private function hasPortCoreConflict(
+        int $tenantId,
+        int $pointId,
+        int $cableId,
+        int $coreNo,
+        ?int $excludePortId = null
+    ): bool {
+        if ($pointId <= 0 || $cableId <= 0 || $coreNo <= 0) return false;
+
+        $q = FoPort::forTenant($tenantId)
+            ->where('point_id', $pointId)
+            ->where('cable_id', $cableId)
+            ->where('core_no', $coreNo);
+        if ($excludePortId !== null && $excludePortId > 0) {
+            $q->where('id', '!=', $excludePortId);
+        }
+        return $q->exists();
+    }
+
+    private function hasLinkCoreConflict(
+        int $tenantId,
+        int $pointId,
+        int $cableId,
+        int $coreNo,
+        ?int $excludeLinkId = null,
+        ?string $excludeSplitGroup = null
+    ): bool {
+        if ($pointId <= 0 || $cableId <= 0 || $coreNo <= 0) return false;
+
+        $q = FoLink::forTenant($tenantId)
+            ->where('point_id', $pointId)
+            ->where(function ($qb) use ($cableId, $coreNo) {
+                $qb->where(function ($q2) use ($cableId, $coreNo) {
+                    $q2->where('from_cable_id', $cableId)->where('from_core_no', $coreNo);
+                })->orWhere(function ($q2) use ($cableId, $coreNo) {
+                    $q2->where('to_cable_id', $cableId)->where('to_core_no', $coreNo);
+                });
+            });
+
+        if ($excludeLinkId !== null && $excludeLinkId > 0) {
+            $q->where('id', '!=', $excludeLinkId);
+        }
+        if ($excludeSplitGroup !== null && $excludeSplitGroup !== '') {
+            $q->where(function ($qb) use ($excludeSplitGroup) {
+                $qb->whereNull('split_group')
+                    ->orWhere('split_group', '!=', $excludeSplitGroup);
+            });
+        }
+
+        return $q->exists();
+    }
+
+    private function assertCoreAvailabilityForPoint(
+        int $tenantId,
+        int $pointId,
+        int $cableId,
+        int $coreNo,
+        ?int $excludePortId = null,
+        ?int $excludeLinkId = null,
+        ?string $excludeSplitGroup = null
+    ): ?JsonResponse {
+        if ($pointId <= 0 || $cableId <= 0 || $coreNo <= 0) return null;
+
+        if ($this->hasPortCoreConflict($tenantId, $pointId, $cableId, $coreNo, $excludePortId)) {
+            return response()->json([
+                'message' => 'Core sudah dipakai di port lain pada titik yang sama.',
+            ], 422);
+        }
+
+        if ($this->hasLinkCoreConflict($tenantId, $pointId, $cableId, $coreNo, $excludeLinkId, $excludeSplitGroup)) {
+            return response()->json([
+                'message' => 'Core sudah dipakai di sambungan/link lain pada titik yang sama.',
+            ], 422);
+        }
+
+        return null;
     }
 
     public function summary(Request $request): JsonResponse
@@ -193,29 +376,48 @@ class FiberController extends Controller
             if (Schema::hasColumn('noci_fo_cables', 'length_m')) {
                 $cableCols[] = 'length_m';
             }
+            if (Schema::hasColumn('noci_fo_cables', 'reserved_cores')) {
+                $cableCols[] = 'reserved_cores';
+            }
 
             $cables = FoCable::forTenant($tenantId)
                 ->orderBy('name')
                 ->get($cableCols);
 
+            $breakCols = [
+                'id',
+                'cable_id',
+                'point_id',
+                'status',
+                'severity',
+                'reported_at',
+                'fixed_at',
+                'latitude',
+                'longitude',
+                'description',
+                'created_at',
+                'updated_at',
+            ];
+            foreach ([
+                'core_no',
+                'technician_name',
+                'repair_started_at',
+                'verified_at',
+                'verified_by_name',
+                'repair_photos',
+                'repair_materials',
+                'closure_point_id',
+            ] as $breakExtraCol) {
+                if (Schema::hasColumn('noci_fo_breaks', $breakExtraCol)) {
+                    $breakCols[] = $breakExtraCol;
+                }
+            }
+
             $breaks = FoBreak::forTenant($tenantId)
                 ->orderByDesc('reported_at')
                 ->orderByDesc('id')
                 ->limit(2000)
-                ->get([
-                    'id',
-                    'cable_id',
-                    'point_id',
-                    'status',
-                    'severity',
-                    'reported_at',
-                    'fixed_at',
-                    'latitude',
-                    'longitude',
-                    'description',
-                    'created_at',
-                    'updated_at',
-                ]);
+                ->get($breakCols);
 
             $ports = [];
             $links = [];
@@ -332,17 +534,27 @@ class FiberController extends Controller
             'cable_type' => 'nullable|string|max:60',
             'core_count' => 'nullable|integer|min:1|max:9999',
             'map_color' => 'nullable|string|max:20',
-            'from_point_id' => 'nullable|integer|min:1',
-            'to_point_id' => 'nullable|integer|min:1',
+            'from_point_id' => 'required|integer|min:1',
+            'to_point_id' => 'required|integer|min:1',
             'path' => 'nullable|array|min:2',
             'path.*.lat' => 'required|numeric|between:-90,90',
             'path.*.lng' => 'required|numeric|between:-180,180',
             'length_m' => 'nullable|integer|min:0',
+            'reserved_cores' => 'nullable|array',
+            'reserved_cores.*' => 'integer|min:1|max:9999',
+            'auto_mid_points' => 'nullable|array|min:1',
+            'auto_mid_points.*.lat' => 'required|numeric|between:-90,90',
+            'auto_mid_points.*.lng' => 'required|numeric|between:-180,180',
+            'auto_mid_point_type' => 'nullable|string|max:60',
+            'auto_mid_point_prefix' => 'nullable|string|max:80',
             'notes' => 'nullable|string',
         ]);
 
         $fromPointId = (int) ($validated['from_point_id'] ?? 0);
         $toPointId = (int) ($validated['to_point_id'] ?? 0);
+        if ($fromPointId > 0 && $toPointId > 0 && $fromPointId === $toPointId) {
+            return response()->json(['message' => 'Dari Titik dan Ke Titik tidak boleh sama'], 422);
+        }
 
         if ($fromPointId > 0 && !FoPoint::forTenant($tenantId)->where('id', $fromPointId)->exists()) {
             return response()->json(['message' => 'From point not found'], 422);
@@ -351,7 +563,13 @@ class FiberController extends Controller
             return response()->json(['message' => 'To point not found'], 422);
         }
 
+        $fromPt = $this->pointLatLng($tenantId, $fromPointId);
+        $toPt = $this->pointLatLng($tenantId, $toPointId);
+        $path = $this->normalizePath($validated['path'] ?? null);
+        $path = $this->snapPathToEndpoints($path, $fromPt, $toPt);
+
         $userId = (int) ($request->user()?->id ?? 0);
+        $reservedCores = $this->normalizeCoreList($validated['reserved_cores'] ?? null, (int) ($validated['core_count'] ?? 0));
 
         $payload = [
             'tenant_id' => $tenantId,
@@ -362,7 +580,7 @@ class FiberController extends Controller
             'map_color' => $validated['map_color'] ?? null,
             'from_point_id' => $fromPointId > 0 ? $fromPointId : null,
             'to_point_id' => $toPointId > 0 ? $toPointId : null,
-            'path' => $validated['path'] ?? null,
+            'path' => $path,
             'notes' => $validated['notes'] ?? null,
             'created_by' => $userId ?: null,
             'updated_by' => $userId ?: null,
@@ -370,10 +588,41 @@ class FiberController extends Controller
         if (Schema::hasColumn('noci_fo_cables', 'length_m')) {
             $payload['length_m'] = array_key_exists('length_m', $validated) ? ($validated['length_m'] ?? null) : null;
         }
+        if (Schema::hasColumn('noci_fo_cables', 'reserved_cores')) {
+            $payload['reserved_cores'] = $reservedCores;
+        }
 
         try {
-            $cable = FoCable::create($payload);
-            return response()->json(['success' => true, 'data' => $cable], 201);
+            return DB::transaction(function () use ($payload, $validated, $tenantId, $userId) {
+                $cable = FoCable::create($payload);
+
+                $createdMidPoints = [];
+                $midPoints = $this->normalizePath($validated['auto_mid_points'] ?? null, 1) ?? [];
+                if (count($midPoints) > 0) {
+                    $midType = trim((string) ($validated['auto_mid_point_type'] ?? 'JOINT_CLOSURE'));
+                    if ($midType === '') $midType = 'JOINT_CLOSURE';
+                    $midPrefix = trim((string) ($validated['auto_mid_point_prefix'] ?? 'NODE AUTO'));
+                    $createdMidPoints = $this->autoCreateMidPoints(
+                        $tenantId,
+                        $midPoints,
+                        $midType,
+                        $midPrefix,
+                        $userId,
+                        (string) ($cable->name ?? '')
+                    );
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $cable->fresh(),
+                    'meta' => [
+                        'auto_mid_points_created' => array_map(
+                            static fn ($p) => ['id' => (int) $p->id, 'name' => (string) $p->name],
+                            $createdMidPoints
+                        ),
+                    ],
+                ], 201);
+            });
         } catch (QueryException) {
             return response()->json(['success' => false, 'message' => 'Failed to create cable'], 500);
         }
@@ -398,10 +647,20 @@ class FiberController extends Controller
             'path.*.lat' => 'required|numeric|between:-90,90',
             'path.*.lng' => 'required|numeric|between:-180,180',
             'length_m' => 'nullable|integer|min:0',
+            'reserved_cores' => 'nullable|array',
+            'reserved_cores.*' => 'integer|min:1|max:9999',
+            'auto_mid_points' => 'nullable|array|min:1',
+            'auto_mid_points.*.lat' => 'required|numeric|between:-90,90',
+            'auto_mid_points.*.lng' => 'required|numeric|between:-180,180',
+            'auto_mid_point_type' => 'nullable|string|max:60',
+            'auto_mid_point_prefix' => 'nullable|string|max:80',
             'notes' => 'nullable|string',
         ]);
         if (!Schema::hasColumn('noci_fo_cables', 'length_m')) {
             unset($validated['length_m']);
+        }
+        if (!Schema::hasColumn('noci_fo_cables', 'reserved_cores')) {
+            unset($validated['reserved_cores']);
         }
 
         $fromPointId = array_key_exists('from_point_id', $validated) ? (int) ($validated['from_point_id'] ?? 0) : null;
@@ -413,6 +672,9 @@ class FiberController extends Controller
         if ($toPointId !== null && $toPointId > 0 && !FoPoint::forTenant($tenantId)->where('id', $toPointId)->exists()) {
             return response()->json(['message' => 'To point not found'], 422);
         }
+        if ($fromPointId !== null && $toPointId !== null && $fromPointId > 0 && $toPointId > 0 && $fromPointId === $toPointId) {
+            return response()->json(['message' => 'Dari Titik dan Ke Titik tidak boleh sama'], 422);
+        }
 
         if ($fromPointId !== null) {
             $validated['from_point_id'] = $fromPointId > 0 ? $fromPointId : null;
@@ -421,12 +683,71 @@ class FiberController extends Controller
             $validated['to_point_id'] = $toPointId > 0 ? $toPointId : null;
         }
 
+        $finalFromId = array_key_exists('from_point_id', $validated)
+            ? (int) ($validated['from_point_id'] ?? 0)
+            : (int) ($cable->from_point_id ?? 0);
+        $finalToId = array_key_exists('to_point_id', $validated)
+            ? (int) ($validated['to_point_id'] ?? 0)
+            : (int) ($cable->to_point_id ?? 0);
+
+        if ($finalFromId <= 0 || $finalToId <= 0) {
+            return response()->json(['message' => 'Dari Titik dan Ke Titik wajib diisi untuk kabel.'], 422);
+        }
+        if ($finalFromId === $finalToId) {
+            return response()->json(['message' => 'Dari Titik dan Ke Titik tidak boleh sama'], 422);
+        }
+
+        $fromPt = $this->pointLatLng($tenantId, $finalFromId);
+        $toPt = $this->pointLatLng($tenantId, $finalToId);
+        if ($fromPt === null || $toPt === null) {
+            return response()->json(['message' => 'Koordinat Dari/Ke Titik belum lengkap.'], 422);
+        }
+
+        $existingPath = is_array($cable->path) ? $this->normalizePath($cable->path) : null;
+        $inputPath = array_key_exists('path', $validated) ? $this->normalizePath($validated['path'] ?? null) : $existingPath;
+        $validated['path'] = $this->snapPathToEndpoints($inputPath, $fromPt, $toPt);
+
+        if (array_key_exists('reserved_cores', $validated)) {
+            $targetCoreCount = array_key_exists('core_count', $validated)
+                ? (int) ($validated['core_count'] ?? 0)
+                : (int) ($cable->core_count ?? 0);
+            $validated['reserved_cores'] = $this->normalizeCoreList($validated['reserved_cores'], $targetCoreCount > 0 ? $targetCoreCount : null);
+        }
+
         $userId = (int) ($request->user()?->id ?? 0);
         $validated['updated_by'] = $userId ?: null;
 
         try {
-            $cable->update($validated);
-            return response()->json(['success' => true, 'data' => $cable->fresh()]);
+            return DB::transaction(function () use ($cable, $validated, $tenantId, $userId) {
+                $cable->update($validated);
+
+                $createdMidPoints = [];
+                $midPoints = $this->normalizePath($validated['auto_mid_points'] ?? null, 1) ?? [];
+                if (count($midPoints) > 0) {
+                    $midType = trim((string) ($validated['auto_mid_point_type'] ?? 'JOINT_CLOSURE'));
+                    if ($midType === '') $midType = 'JOINT_CLOSURE';
+                    $midPrefix = trim((string) ($validated['auto_mid_point_prefix'] ?? 'NODE AUTO'));
+                    $createdMidPoints = $this->autoCreateMidPoints(
+                        $tenantId,
+                        $midPoints,
+                        $midType,
+                        $midPrefix,
+                        $userId,
+                        (string) ($cable->name ?? '')
+                    );
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $cable->fresh(),
+                    'meta' => [
+                        'auto_mid_points_created' => array_map(
+                            static fn ($p) => ['id' => (int) $p->id, 'name' => (string) $p->name],
+                            $createdMidPoints
+                        ),
+                    ],
+                ]);
+            });
         } catch (QueryException) {
             return response()->json(['success' => false, 'message' => 'Failed to update cable'], 500);
         }
@@ -667,10 +988,20 @@ class FiberController extends Controller
         $validated = $request->validate([
             'cable_id' => 'nullable|integer|min:1',
             'point_id' => 'nullable|integer|min:1',
+            'core_no' => 'nullable|integer|min:1|max:9999',
             'status' => ['nullable', Rule::in(self::BREAK_STATUSES)],
             'severity' => ['nullable', Rule::in(self::BREAK_SEVERITIES)],
             'reported_at' => 'nullable|date',
+            'repair_started_at' => 'nullable|date',
             'fixed_at' => 'nullable|date',
+            'verified_at' => 'nullable|date',
+            'verified_by_name' => 'nullable|string|max:120',
+            'technician_name' => 'nullable|string|max:120',
+            'repair_photos' => 'nullable|array|max:20',
+            'repair_photos.*' => 'required|string|max:500',
+            'repair_materials' => 'nullable|array|max:50',
+            'repair_materials.*' => 'required|string|max:120',
+            'closure_point_id' => 'nullable|integer|min:1',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'description' => 'nullable|string',
@@ -678,12 +1009,24 @@ class FiberController extends Controller
 
         $cableId = (int) ($validated['cable_id'] ?? 0);
         $pointId = (int) ($validated['point_id'] ?? 0);
+        $coreNo = (int) ($validated['core_no'] ?? 0);
+        $closurePointId = (int) ($validated['closure_point_id'] ?? 0);
 
-        if ($cableId > 0 && !FoCable::forTenant($tenantId)->where('id', $cableId)->exists()) {
+        $cable = null;
+        if ($cableId > 0) {
+            $cable = FoCable::forTenant($tenantId)->where('id', $cableId)->first();
+        }
+        if ($cableId > 0 && !$cable) {
             return response()->json(['message' => 'Cable not found'], 422);
+        }
+        if ($coreNo > 0 && !$this->coreValidForCable($cable, $coreNo)) {
+            return response()->json(['message' => 'Core melebihi jumlah core kabel'], 422);
         }
         if ($pointId > 0 && !FoPoint::forTenant($tenantId)->where('id', $pointId)->exists()) {
             return response()->json(['message' => 'Point not found'], 422);
+        }
+        if ($closurePointId > 0 && !FoPoint::forTenant($tenantId)->where('id', $closurePointId)->exists()) {
+            return response()->json(['message' => 'Closure point not found'], 422);
         }
 
         $latProvided = array_key_exists('latitude', $validated) && $validated['latitude'] !== null;
@@ -712,13 +1055,24 @@ class FiberController extends Controller
         }
 
         $reportedAt = $validated['reported_at'] ?? now();
+        $repairStartedAt = $validated['repair_started_at'] ?? null;
         $fixedAt = $validated['fixed_at'] ?? null;
+        $verifiedAt = $validated['verified_at'] ?? null;
 
-        if ($status === 'FIXED' && !$fixedAt) {
+        if ($status === 'IN_PROGRESS' && !$repairStartedAt) {
+            $repairStartedAt = now();
+        }
+        if (in_array($status, ['FIXED', 'VERIFIED'], true) && !$fixedAt) {
             $fixedAt = now();
         }
-        if ($status !== 'FIXED') {
+        if (!in_array($status, ['FIXED', 'VERIFIED'], true)) {
             $fixedAt = null;
+        }
+        if ($status === 'VERIFIED' && !$verifiedAt) {
+            $verifiedAt = now();
+        }
+        if ($status !== 'VERIFIED') {
+            $verifiedAt = null;
         }
 
         $userId = (int) ($request->user()?->id ?? 0);
@@ -727,16 +1081,38 @@ class FiberController extends Controller
             'tenant_id' => $tenantId,
             'cable_id' => $cableId > 0 ? $cableId : null,
             'point_id' => $pointId > 0 ? $pointId : null,
+            'core_no' => $coreNo > 0 ? $coreNo : null,
             'status' => $status,
             'severity' => $validated['severity'] ?? null,
             'reported_at' => $reportedAt,
+            'repair_started_at' => $repairStartedAt,
             'fixed_at' => $fixedAt,
+            'verified_at' => $verifiedAt,
+            'verified_by_name' => $validated['verified_by_name'] ?? null,
+            'technician_name' => $validated['technician_name'] ?? null,
+            'repair_photos' => array_values($validated['repair_photos'] ?? []),
+            'repair_materials' => array_values($validated['repair_materials'] ?? []),
+            'closure_point_id' => $closurePointId > 0 ? $closurePointId : null,
             'latitude' => $validated['latitude'] ?? null,
             'longitude' => $validated['longitude'] ?? null,
             'description' => $validated['description'] ?? null,
             'created_by' => $userId ?: null,
             'updated_by' => $userId ?: null,
         ];
+        foreach ([
+            'core_no',
+            'repair_started_at',
+            'verified_at',
+            'verified_by_name',
+            'technician_name',
+            'repair_photos',
+            'repair_materials',
+            'closure_point_id',
+        ] as $extraCol) {
+            if (!Schema::hasColumn('noci_fo_breaks', $extraCol)) {
+                unset($payload[$extraCol]);
+            }
+        }
 
         try {
             $br = FoBreak::create($payload);
@@ -756,10 +1132,20 @@ class FiberController extends Controller
         $validated = $request->validate([
             'cable_id' => 'nullable|integer|min:1',
             'point_id' => 'nullable|integer|min:1',
+            'core_no' => 'nullable|integer|min:1|max:9999',
             'status' => ['nullable', Rule::in(self::BREAK_STATUSES)],
             'severity' => ['nullable', Rule::in(self::BREAK_SEVERITIES)],
             'reported_at' => 'nullable|date',
+            'repair_started_at' => 'nullable|date',
             'fixed_at' => 'nullable|date',
+            'verified_at' => 'nullable|date',
+            'verified_by_name' => 'nullable|string|max:120',
+            'technician_name' => 'nullable|string|max:120',
+            'repair_photos' => 'nullable|array|max:20',
+            'repair_photos.*' => 'required|string|max:500',
+            'repair_materials' => 'nullable|array|max:50',
+            'repair_materials.*' => 'required|string|max:120',
+            'closure_point_id' => 'nullable|integer|min:1',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'description' => 'nullable|string',
@@ -773,12 +1159,35 @@ class FiberController extends Controller
             $validated['cable_id'] = $cableId > 0 ? $cableId : null;
         }
 
+        $finalCableId = array_key_exists('cable_id', $validated)
+            ? (int) ($validated['cable_id'] ?? 0)
+            : (int) ($br->cable_id ?? 0);
+
+        if (array_key_exists('core_no', $validated)) {
+            $coreNo = (int) ($validated['core_no'] ?? 0);
+            $cableForCore = $finalCableId > 0
+                ? FoCable::forTenant($tenantId)->where('id', $finalCableId)->first()
+                : null;
+            if ($coreNo > 0 && !$this->coreValidForCable($cableForCore, $coreNo)) {
+                return response()->json(['message' => 'Core melebihi jumlah core kabel'], 422);
+            }
+            $validated['core_no'] = $coreNo > 0 ? $coreNo : null;
+        }
+
         if (array_key_exists('point_id', $validated)) {
             $pointId = (int) ($validated['point_id'] ?? 0);
             if ($pointId > 0 && !FoPoint::forTenant($tenantId)->where('id', $pointId)->exists()) {
                 return response()->json(['message' => 'Point not found'], 422);
             }
             $validated['point_id'] = $pointId > 0 ? $pointId : null;
+        }
+
+        if (array_key_exists('closure_point_id', $validated)) {
+            $cpId = (int) ($validated['closure_point_id'] ?? 0);
+            if ($cpId > 0 && !FoPoint::forTenant($tenantId)->where('id', $cpId)->exists()) {
+                return response()->json(['message' => 'Closure point not found'], 422);
+            }
+            $validated['closure_point_id'] = $cpId > 0 ? $cpId : null;
         }
 
         // Auto-fill coordinates from point if caller sets point_id but doesn't explicitly send lat/lng.
@@ -811,13 +1220,34 @@ class FiberController extends Controller
             }
             $validated['status'] = $status;
 
-            if ($status === 'FIXED') {
+            if ($status === 'IN_PROGRESS') {
+                if (!array_key_exists('repair_started_at', $validated) || !$validated['repair_started_at']) {
+                    $validated['repair_started_at'] = now();
+                }
+            }
+
+            if (in_array($status, ['FIXED', 'VERIFIED'], true)) {
                 if (!array_key_exists('fixed_at', $validated) || !$validated['fixed_at']) {
                     $validated['fixed_at'] = now();
                 }
             } else {
                 $validated['fixed_at'] = null;
             }
+
+            if ($status === 'VERIFIED') {
+                if (!array_key_exists('verified_at', $validated) || !$validated['verified_at']) {
+                    $validated['verified_at'] = now();
+                }
+            } else {
+                $validated['verified_at'] = null;
+            }
+        }
+
+        if (array_key_exists('repair_photos', $validated)) {
+            $validated['repair_photos'] = array_values($validated['repair_photos'] ?? []);
+        }
+        if (array_key_exists('repair_materials', $validated)) {
+            $validated['repair_materials'] = array_values($validated['repair_materials'] ?? []);
         }
 
         // Ensure there is still a usable location after update.
@@ -830,6 +1260,20 @@ class FiberController extends Controller
 
         $userId = (int) ($request->user()?->id ?? 0);
         $validated['updated_by'] = $userId ?: null;
+        foreach ([
+            'core_no',
+            'repair_started_at',
+            'verified_at',
+            'verified_by_name',
+            'technician_name',
+            'repair_photos',
+            'repair_materials',
+            'closure_point_id',
+        ] as $extraCol) {
+            if (!Schema::hasColumn('noci_fo_breaks', $extraCol)) {
+                unset($validated[$extraCol]);
+            }
+        }
 
         try {
             $br->update($validated);
@@ -859,7 +1303,7 @@ class FiberController extends Controller
         }
 
         // Idempotent: if already FIXED and has a point, just return it (avoid duplicating joint points).
-        if ($currentStatus === 'FIXED' && (int) ($br->point_id ?? 0) > 0) {
+        if (in_array($currentStatus, ['FIXED', 'VERIFIED'], true) && (int) ($br->point_id ?? 0) > 0) {
             $jp = null;
             try {
                 $jp = FoPoint::forTenant($tenantId)->where('id', (int) $br->point_id)->first();
@@ -884,6 +1328,12 @@ class FiberController extends Controller
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'fixed_at' => 'nullable|date',
+            'technician_name' => 'nullable|string|max:120',
+            'repair_started_at' => 'nullable|date',
+            'repair_photos' => 'nullable|array|max:20',
+            'repair_photos.*' => 'required|string|max:500',
+            'repair_materials' => 'nullable|array|max:50',
+            'repair_materials.*' => 'required|string|max:120',
         ]);
 
         $latProvided = array_key_exists('latitude', $validated) && $validated['latitude'] !== null;
@@ -967,14 +1417,32 @@ class FiberController extends Controller
 
                 $fixedAt = $validated['fixed_at'] ?? now();
 
-                $br->update([
+                $update = [
                     'status' => 'FIXED',
+                    'repair_started_at' => $validated['repair_started_at'] ?? ($br->repair_started_at ?? now()),
                     'fixed_at' => $fixedAt,
                     'point_id' => $joint?->id,
+                    'closure_point_id' => $joint?->id,
                     'latitude' => $lat,
                     'longitude' => $lng,
+                    'technician_name' => $validated['technician_name'] ?? ($br->technician_name ?? null),
+                    'repair_photos' => array_values($validated['repair_photos'] ?? (is_array($br->repair_photos) ? $br->repair_photos : [])),
+                    'repair_materials' => array_values($validated['repair_materials'] ?? (is_array($br->repair_materials) ? $br->repair_materials : [])),
                     'updated_by' => $userId ?: null,
-                ]);
+                ];
+                foreach ([
+                    'repair_started_at',
+                    'closure_point_id',
+                    'technician_name',
+                    'repair_photos',
+                    'repair_materials',
+                ] as $extraCol) {
+                    if (!Schema::hasColumn('noci_fo_breaks', $extraCol)) {
+                        unset($update[$extraCol]);
+                    }
+                }
+
+                $br->update($update);
 
                 return response()->json([
                     'success' => true,
@@ -988,6 +1456,263 @@ class FiberController extends Controller
             return response()->json(['success' => false, 'message' => 'Failed to fix break'], 500);
         } catch (\Throwable) {
             return response()->json(['success' => false, 'message' => 'Failed to fix break'], 500);
+        }
+    }
+
+    public function verifyBreak(Request $request, int $id): JsonResponse
+    {
+        if ($resp = $this->requirePermission($request, 'edit fiber')) return $resp;
+
+        if (!Schema::hasTable('noci_fo_breaks')) {
+            return response()->json(['success' => false, 'message' => 'Table noci_fo_breaks not found'], 500);
+        }
+
+        $tenantId = $this->tenantId($request);
+        $br = FoBreak::forTenant($tenantId)->findOrFail($id);
+
+        $status = strtoupper((string) ($br->status ?? 'OPEN'));
+        if (!in_array($status, ['FIXED', 'VERIFIED'], true)) {
+            return response()->json(['message' => 'Data putus hanya bisa diverifikasi dari status FIXED.'], 409);
+        }
+
+        $validated = $request->validate([
+            'verified_at' => 'nullable|date',
+            'verified_by_name' => 'nullable|string|max:120',
+        ]);
+
+        $userId = (int) ($request->user()?->id ?? 0);
+        $payload = [
+            'status' => 'VERIFIED',
+            'verified_at' => $validated['verified_at'] ?? now(),
+            'verified_by_name' => $validated['verified_by_name'] ?? null,
+            'updated_by' => $userId ?: null,
+        ];
+
+        if (!$br->fixed_at) {
+            $payload['fixed_at'] = $payload['verified_at'];
+        }
+
+        foreach (['verified_at', 'verified_by_name'] as $col) {
+            if (!Schema::hasColumn('noci_fo_breaks', $col)) {
+                unset($payload[$col]);
+            }
+        }
+
+        try {
+            $br->update($payload);
+            return response()->json(['success' => true, 'data' => $br->fresh()]);
+        } catch (QueryException) {
+            return response()->json(['success' => false, 'message' => 'Failed to verify break'], 500);
+        }
+    }
+
+    public function coreOccupancy(Request $request, int $id): JsonResponse
+    {
+        if ($resp = $this->requirePermission($request, 'view fiber')) return $resp;
+
+        if (!Schema::hasTable('noci_fo_cables')) {
+            return response()->json(['success' => false, 'message' => 'Table noci_fo_cables not found'], 500);
+        }
+
+        $tenantId = $this->tenantId($request);
+        $cable = FoCable::forTenant($tenantId)->findOrFail($id);
+        $coreCount = (int) ($cable->core_count ?? 0);
+        if ($coreCount <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Core count kabel belum diisi.',
+            ], 422);
+        }
+
+        $pointNames = FoPoint::forTenant($tenantId)->pluck('name', 'id');
+        $reserved = $this->normalizeCoreList($cable->reserved_cores ?? [], $coreCount);
+        $reservedSet = array_fill_keys($reserved, true);
+
+        $ports = Schema::hasTable('noci_fo_ports')
+            ? FoPort::forTenant($tenantId)
+                ->where('cable_id', (int) $cable->id)
+                ->get(['id', 'point_id', 'port_type', 'port_label', 'core_no'])
+            : collect();
+
+        $linksFrom = Schema::hasTable('noci_fo_links')
+            ? FoLink::forTenant($tenantId)
+                ->where('from_cable_id', (int) $cable->id)
+                ->get(['id', 'point_id', 'link_type', 'from_core_no', 'to_cable_id', 'to_core_no', 'split_group'])
+            : collect();
+
+        $linksTo = Schema::hasTable('noci_fo_links')
+            ? FoLink::forTenant($tenantId)
+                ->where('to_cable_id', (int) $cable->id)
+                ->get(['id', 'point_id', 'link_type', 'to_core_no', 'from_cable_id', 'from_core_no', 'split_group'])
+            : collect();
+
+        $breakCols = ['id', 'status', 'severity', 'reported_at', 'fixed_at'];
+        if (Schema::hasColumn('noci_fo_breaks', 'core_no')) $breakCols[] = 'core_no';
+        $activeBreaks = Schema::hasTable('noci_fo_breaks')
+            ? FoBreak::forTenant($tenantId)
+                ->where('cable_id', (int) $cable->id)
+                ->whereIn('status', ['OPEN', 'IN_PROGRESS'])
+                ->get($breakCols)
+            : collect();
+
+        $brokenSet = [];
+        $allBroken = false;
+        foreach ($activeBreaks as $br) {
+            $cn = (int) ($br->core_no ?? 0);
+            if ($cn > 0) $brokenSet[$cn] = true;
+            else $allBroken = true;
+        }
+
+        $portsByCore = [];
+        foreach ($ports as $p) {
+            $core = (int) ($p->core_no ?? 0);
+            if ($core <= 0 || $core > $coreCount) continue;
+            if (!isset($portsByCore[$core])) $portsByCore[$core] = [];
+            $portsByCore[$core][] = [
+                'id' => (int) $p->id,
+                'point_id' => (int) ($p->point_id ?? 0),
+                'point_name' => (string) ($pointNames[(int) ($p->point_id ?? 0)] ?? ''),
+                'port_type' => (string) ($p->port_type ?? ''),
+                'port_label' => (string) ($p->port_label ?? ''),
+            ];
+        }
+
+        $linksFromByCore = [];
+        foreach ($linksFrom as $ln) {
+            $core = (int) ($ln->from_core_no ?? 0);
+            if ($core <= 0 || $core > $coreCount) continue;
+            if (!isset($linksFromByCore[$core])) $linksFromByCore[$core] = [];
+            $linksFromByCore[$core][] = [
+                'id' => (int) $ln->id,
+                'point_id' => (int) ($ln->point_id ?? 0),
+                'point_name' => (string) ($pointNames[(int) ($ln->point_id ?? 0)] ?? ''),
+                'link_type' => (string) ($ln->link_type ?? ''),
+                'to_cable_id' => (int) ($ln->to_cable_id ?? 0),
+                'to_core_no' => (int) ($ln->to_core_no ?? 0),
+                'split_group' => (string) ($ln->split_group ?? ''),
+            ];
+        }
+
+        $linksToByCore = [];
+        foreach ($linksTo as $ln) {
+            $core = (int) ($ln->to_core_no ?? 0);
+            if ($core <= 0 || $core > $coreCount) continue;
+            if (!isset($linksToByCore[$core])) $linksToByCore[$core] = [];
+            $linksToByCore[$core][] = [
+                'id' => (int) $ln->id,
+                'point_id' => (int) ($ln->point_id ?? 0),
+                'point_name' => (string) ($pointNames[(int) ($ln->point_id ?? 0)] ?? ''),
+                'link_type' => (string) ($ln->link_type ?? ''),
+                'from_cable_id' => (int) ($ln->from_cable_id ?? 0),
+                'from_core_no' => (int) ($ln->from_core_no ?? 0),
+                'split_group' => (string) ($ln->split_group ?? ''),
+            ];
+        }
+
+        $breaksByCore = [];
+        foreach ($activeBreaks as $br) {
+            $core = (int) ($br->core_no ?? 0);
+            if ($core <= 0 || $core > $coreCount) continue;
+            if (!isset($breaksByCore[$core])) $breaksByCore[$core] = [];
+            $breaksByCore[$core][] = [
+                'id' => (int) $br->id,
+                'status' => (string) ($br->status ?? ''),
+                'severity' => (string) ($br->severity ?? ''),
+                'reported_at' => $br->reported_at,
+                'fixed_at' => $br->fixed_at,
+            ];
+        }
+
+        $cores = [];
+        $summary = ['FREE' => 0, 'USED' => 0, 'RESERVED' => 0, 'BROKEN' => 0];
+        for ($i = 1; $i <= $coreCount; $i++) {
+            $p = $portsByCore[$i] ?? [];
+            $lf = $linksFromByCore[$i] ?? [];
+            $lt = $linksToByCore[$i] ?? [];
+            $bs = $breaksByCore[$i] ?? [];
+
+            $isBroken = $allBroken || isset($brokenSet[$i]);
+            $isUsed = count($p) > 0 || count($lf) > 0 || count($lt) > 0;
+            $isReserved = isset($reservedSet[$i]);
+
+            $status = 'FREE';
+            if ($isBroken) $status = 'BROKEN';
+            elseif ($isUsed) $status = 'USED';
+            elseif ($isReserved) $status = 'RESERVED';
+            $summary[$status] = ($summary[$status] ?? 0) + 1;
+
+            $cores[] = [
+                'core_no' => $i,
+                'status' => $status,
+                'reserved' => $isReserved,
+                'used' => $isUsed,
+                'broken' => $isBroken,
+                'details' => [
+                    'ports' => $p,
+                    'links_from' => $lf,
+                    'links_to' => $lt,
+                    'breaks' => $bs,
+                ],
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'cable' => [
+                    'id' => (int) $cable->id,
+                    'name' => (string) ($cable->name ?? ''),
+                    'core_count' => $coreCount,
+                    'reserved_cores' => $reserved,
+                ],
+                'summary' => $summary,
+                'cores' => $cores,
+                'has_global_break' => $allBroken,
+            ],
+        ]);
+    }
+
+    public function updateCoreReservations(Request $request, int $id): JsonResponse
+    {
+        if ($resp = $this->requirePermission($request, 'edit fiber')) return $resp;
+
+        if (!Schema::hasTable('noci_fo_cables')) {
+            return response()->json(['success' => false, 'message' => 'Table noci_fo_cables not found'], 500);
+        }
+        if (!Schema::hasColumn('noci_fo_cables', 'reserved_cores')) {
+            return response()->json(['success' => false, 'message' => 'Kolom reserved_cores belum tersedia. Jalankan migrate.'], 422);
+        }
+
+        $tenantId = $this->tenantId($request);
+        $cable = FoCable::forTenant($tenantId)->findOrFail($id);
+        $maxCore = (int) ($cable->core_count ?? 0);
+        if ($maxCore <= 0) {
+            return response()->json(['success' => false, 'message' => 'Core count kabel belum diisi.'], 422);
+        }
+
+        $validated = $request->validate([
+            'reserved_cores' => 'nullable|array',
+            'reserved_cores.*' => 'integer|min:1|max:9999',
+        ]);
+
+        $reserved = $this->normalizeCoreList($validated['reserved_cores'] ?? [], $maxCore);
+
+        $userId = (int) ($request->user()?->id ?? 0);
+        try {
+            $cable->update([
+                'reserved_cores' => $reserved,
+                'updated_by' => $userId ?: null,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'id' => (int) $cable->id,
+                    'reserved_cores' => $reserved,
+                ],
+            ]);
+        } catch (QueryException) {
+            return response()->json(['success' => false, 'message' => 'Failed to update reserved cores'], 500);
         }
     }
 
@@ -1086,6 +1811,11 @@ class FiberController extends Controller
             if ($coreNo > 0 && !$this->coreValidForCable($cable, $coreNo)) {
                 return response()->json(['message' => 'Core melebihi jumlah core kabel'], 422);
             }
+            if ($coreNo > 0) {
+                if ($resp = $this->assertCoreAvailabilityForPoint($tenantId, $pointId, $cableId, $coreNo)) {
+                    return $resp;
+                }
+            }
         }
 
         $userId = (int) ($request->user()?->id ?? 0);
@@ -1157,6 +1887,11 @@ class FiberController extends Controller
             }
             if ($finalCoreNo > 0 && !$this->coreValidForCable($cable, $finalCoreNo)) {
                 return response()->json(['message' => 'Core melebihi jumlah core kabel'], 422);
+            }
+            if ($finalCoreNo > 0) {
+                if ($resp = $this->assertCoreAvailabilityForPoint($tenantId, $finalPointId, $finalCableId, $finalCoreNo, (int) $port->id, null)) {
+                    return $resp;
+                }
             }
         }
 
@@ -1295,6 +2030,41 @@ class FiberController extends Controller
                 $group = 'split_' . Str::uuid()->toString();
             }
 
+            if ($resp = $this->assertCoreAvailabilityForPoint($tenantId, $pointId, $fromCableId, $fromCoreNo, null, null, $group)) {
+                return $resp;
+            }
+
+            $seenOutputs = [];
+            foreach ($outputs as $out) {
+                $toCableId = (int) ($out['to_cable_id'] ?? 0);
+                $toCoreNo = (int) ($out['to_core_no'] ?? 0);
+                if ($toCableId <= 0 || $toCoreNo <= 0) {
+                    return response()->json(['message' => 'Output splitter tidak valid.'], 422);
+                }
+
+                if ($toCableId === $fromCableId && $toCoreNo === $fromCoreNo) {
+                    return response()->json(['message' => 'Output splitter tidak boleh sama dengan input core.'], 422);
+                }
+
+                $k = $toCableId . ':' . $toCoreNo;
+                if (isset($seenOutputs[$k])) {
+                    return response()->json(['message' => 'Output splitter duplikat pada core yang sama.'], 422);
+                }
+                $seenOutputs[$k] = true;
+
+                $toCable = $this->loadCable($tenantId, $toCableId);
+                if (!$toCable) return response()->json(['message' => 'To cable not found'], 422);
+                if (!$this->cableAttachedToPoint($toCable, $pointId)) {
+                    return response()->json(['message' => 'To cable tidak terhubung ke titik ini (set from/to titik di kabel)'], 422);
+                }
+                if (!$this->coreValidForCable($toCable, $toCoreNo)) {
+                    return response()->json(['message' => 'To core melebihi jumlah core kabel'], 422);
+                }
+                if ($resp = $this->assertCoreAvailabilityForPoint($tenantId, $pointId, $toCableId, $toCoreNo, null, null, $group)) {
+                    return $resp;
+                }
+            }
+
             try {
                 $created = DB::transaction(function () use ($tenantId, $pointId, $linkType, $fromCableId, $fromCoreNo, $outputs, $group, $lossDb, $notes, $userId) {
                     $rows = [];
@@ -1302,11 +2072,6 @@ class FiberController extends Controller
                         $toCableId = (int) ($out['to_cable_id'] ?? 0);
                         $toCoreNo = (int) ($out['to_core_no'] ?? 0);
                         if ($toCableId <= 0 || $toCoreNo <= 0) continue;
-
-                        $toCable = $this->loadCable($tenantId, $toCableId);
-                        if (!$toCable) continue;
-                        if (!$this->cableAttachedToPoint($toCable, $pointId)) continue;
-                        if (!$this->coreValidForCable($toCable, $toCoreNo)) continue;
 
                         $rows[] = FoLink::create([
                             'tenant_id' => $tenantId,
@@ -1356,6 +2121,15 @@ class FiberController extends Controller
         }
         if (!$this->coreValidForCable($toCable, $toCoreNo)) {
             return response()->json(['message' => 'To core melebihi jumlah core kabel'], 422);
+        }
+        if ($fromCableId === $toCableId && $fromCoreNo === $toCoreNo) {
+            return response()->json(['message' => 'From dan To core tidak boleh sama untuk SPLICE/PATCH'], 422);
+        }
+        if ($resp = $this->assertCoreAvailabilityForPoint($tenantId, $pointId, $fromCableId, $fromCoreNo)) {
+            return $resp;
+        }
+        if ($resp = $this->assertCoreAvailabilityForPoint($tenantId, $pointId, $toCableId, $toCoreNo)) {
+            return $resp;
         }
 
         $payload = [
@@ -1442,6 +2216,56 @@ class FiberController extends Controller
             $oldPointId = (int) $link->point_id;
             $oldGroup = (string) ($link->split_group ?? '');
 
+            if ($resp = $this->assertCoreAvailabilityForPoint(
+                $tenantId,
+                $finalPointId,
+                $finalFromCableId,
+                $finalFromCoreNo,
+                null,
+                (int) $link->id,
+                $oldGroup
+            )) {
+                return $resp;
+            }
+
+            $seenOutputs = [];
+            foreach ($outputs as $out) {
+                $toCableId = (int) ($out['to_cable_id'] ?? 0);
+                $toCoreNo = (int) ($out['to_core_no'] ?? 0);
+                if ($toCableId <= 0 || $toCoreNo <= 0) {
+                    return response()->json(['message' => 'Output splitter tidak valid.'], 422);
+                }
+                if ($toCableId === $finalFromCableId && $toCoreNo === $finalFromCoreNo) {
+                    return response()->json(['message' => 'Output splitter tidak boleh sama dengan input core.'], 422);
+                }
+
+                $k = $toCableId . ':' . $toCoreNo;
+                if (isset($seenOutputs[$k])) {
+                    return response()->json(['message' => 'Output splitter duplikat pada core yang sama.'], 422);
+                }
+                $seenOutputs[$k] = true;
+
+                $toCable = $this->loadCable($tenantId, $toCableId);
+                if (!$toCable) return response()->json(['message' => 'To cable not found'], 422);
+                if (!$this->cableAttachedToPoint($toCable, $finalPointId)) {
+                    return response()->json(['message' => 'To cable tidak terhubung ke titik ini (set from/to titik di kabel)'], 422);
+                }
+                if (!$this->coreValidForCable($toCable, $toCoreNo)) {
+                    return response()->json(['message' => 'To core melebihi jumlah core kabel'], 422);
+                }
+                if ($resp = $this->assertCoreAvailabilityForPoint(
+                    $tenantId,
+                    $finalPointId,
+                    $toCableId,
+                    $toCoreNo,
+                    null,
+                    (int) $link->id,
+                    $oldGroup
+                )) {
+                    return $resp;
+                }
+            }
+
             try {
                 $created = DB::transaction(function () use ($tenantId, $finalPointId, $finalLinkType, $finalFromCableId, $finalFromCoreNo, $outputs, $group, $validated, $userId, $oldPointId, $oldGroup, $id) {
                     if ($oldGroup !== '') {
@@ -1462,11 +2286,6 @@ class FiberController extends Controller
                         $toCableId = (int) ($out['to_cable_id'] ?? 0);
                         $toCoreNo = (int) ($out['to_core_no'] ?? 0);
                         if ($toCableId <= 0 || $toCoreNo <= 0) continue;
-
-                        $toCable = $this->loadCable($tenantId, $toCableId);
-                        if (!$toCable) continue;
-                        if (!$this->cableAttachedToPoint($toCable, $finalPointId)) continue;
-                        if (!$this->coreValidForCable($toCable, $toCoreNo)) continue;
 
                         $rows[] = FoLink::create([
                             'tenant_id' => $tenantId,
@@ -1524,6 +2343,18 @@ class FiberController extends Controller
             }
             if ($finalToCoreNo > 0 && !$this->coreValidForCable($toCable, $finalToCoreNo)) {
                 return response()->json(['message' => 'To core melebihi jumlah core kabel'], 422);
+            }
+        }
+
+        if ($finalLinkType !== 'SPLIT' && $finalFromCableId === $finalToCableId && $finalFromCoreNo === $finalToCoreNo) {
+            return response()->json(['message' => 'From dan To core tidak boleh sama untuk SPLICE/PATCH'], 422);
+        }
+        if ($resp = $this->assertCoreAvailabilityForPoint($tenantId, $finalPointId, $finalFromCableId, $finalFromCoreNo, null, (int) $link->id)) {
+            return $resp;
+        }
+        if ($finalToCableId > 0 && $finalToCoreNo > 0) {
+            if ($resp = $this->assertCoreAvailabilityForPoint($tenantId, $finalPointId, $finalToCableId, $finalToCoreNo, null, (int) $link->id)) {
+                return $resp;
             }
         }
 

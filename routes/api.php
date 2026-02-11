@@ -109,6 +109,8 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::post('/fiber/cables', [FiberController::class, 'storeCable']);
     Route::put('/fiber/cables/{id}', [FiberController::class, 'updateCable']);
     Route::delete('/fiber/cables/{id}', [FiberController::class, 'deleteCable']);
+    Route::get('/fiber/cables/{id}/core-occupancy', [FiberController::class, 'coreOccupancy']);
+    Route::put('/fiber/cables/{id}/core-reservations', [FiberController::class, 'updateCoreReservations']);
 
     Route::get('/fiber/points', [FiberController::class, 'listPoints']);
     Route::post('/fiber/points', [FiberController::class, 'storePoint']);
@@ -119,6 +121,7 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
     Route::post('/fiber/breaks', [FiberController::class, 'storeBreak']);
     Route::put('/fiber/breaks/{id}', [FiberController::class, 'updateBreak']);
     Route::post('/fiber/breaks/{id}/fix', [FiberController::class, 'fixBreak']);
+    Route::post('/fiber/breaks/{id}/verify', [FiberController::class, 'verifyBreak']);
     Route::delete('/fiber/breaks/{id}', [FiberController::class, 'deleteBreak']);
 
     Route::get('/fiber/ports', [FiberController::class, 'listPorts']);
