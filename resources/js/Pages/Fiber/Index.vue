@@ -59,6 +59,10 @@ const selectedBreakId = ref(null)
 const panelCollapsed = ref(false)
 const panelOpen = ref(false)
 
+// Panel search/filter (client-side).
+const panelSearch = ref('')
+const breakStatusFilter = ref('ALL') // ALL|OPEN|IN_PROGRESS|FIXED|CANCELLED
+
 const traceResult = ref(null)
 const traceUsedCableIds = ref([])
 const traceUsedCableSet = computed(() => {
@@ -431,17 +435,35 @@ function showInfoAt(latLng, lines, anchor = null) {
   } catch {}
 }
 
+const pointById = computed(() => {
+  const m = new Map()
+  ;(points.value || []).forEach((p) => {
+    const id = Number(p?.id || 0)
+    if (id > 0) m.set(id, p)
+  })
+  return m
+})
+
+const cableById = computed(() => {
+  const m = new Map()
+  ;(cables.value || []).forEach((c) => {
+    const id = Number(c?.id || 0)
+    if (id > 0) m.set(id, c)
+  })
+  return m
+})
+
 function pointNameById(id) {
   const n = Number(id || 0)
   if (!n) return null
-  const p = (points.value || []).find((x) => Number(x?.id) === n)
+  const p = pointById.value.get(n)
   return p ? String(p.name || '') : null
 }
 
 function pointLatLngById(id) {
   const n = Number(id || 0)
   if (!n) return null
-  const p = (points.value || []).find((x) => Number(x?.id) === n)
+  const p = pointById.value.get(n)
   if (!p) return null
   const lat = roundCoord(Number(p?.latitude))
   const lng = roundCoord(Number(p?.longitude))
@@ -452,7 +474,7 @@ function pointLatLngById(id) {
 function cableNameById(id) {
   const n = Number(id || 0)
   if (!n) return null
-  const c = (cables.value || []).find((x) => Number(x?.id) === n)
+  const c = cableById.value.get(n)
   return c ? String(c.name || '') : null
 }
 
@@ -510,11 +532,7 @@ function renderCablesLayer() {
     const fromName = pointNameById(c?.from_point_id) || '-'
     const toName = pointNameById(c?.to_point_id) || '-'
     poly.addListener('click', (ev) => {
-      selectedCableId.value = c.id
-      selectedPointId.value = null
-      selectedBreakId.value = null
-      activeTab.value = 'cables'
-      renderCablesLayer()
+      selectCable(c, { zoom: false, panel: 'open' })
 
       showInfoAt(ev?.latLng || null, [
         `Kabel: ${c?.name || '-'}`,
@@ -556,11 +574,7 @@ function renderPointsLayer() {
     layerPoints.set(Number(p?.id) || 0, marker)
 
     marker.addListener('click', () => {
-      selectedPointId.value = p.id
-      selectedCableId.value = null
-      selectedBreakId.value = null
-      activeTab.value = 'points'
-      renderPointsLayer()
+      selectPoint(p, { zoom: false, panel: 'open' })
 
       showInfoAt(marker.getPosition(), [
         `Titik: ${p?.name || '-'}`,
@@ -601,11 +615,7 @@ function renderBreaksLayer() {
     layerBreaks.set(Number(b?.id) || 0, marker)
 
     marker.addListener('click', () => {
-      selectedBreakId.value = b.id
-      selectedCableId.value = null
-      selectedPointId.value = null
-      activeTab.value = 'breaks'
-      renderBreaksLayer()
+      selectBreak(b, { zoom: false, panel: 'open' })
 
       const cableName = cableNameById(b?.cable_id) || (b?.cable_id ? `#${b.cable_id}` : '-')
       const pName = pointNameById(b?.point_id) || (b?.point_id ? `#${b.point_id}` : '-')
@@ -802,6 +812,84 @@ function focusOnLatLng(lat, lng, zoom = 17) {
   if (Number.isFinite(Number(zoom))) {
     try { map.setZoom(Number(zoom)) } catch {}
   }
+}
+
+function isMobileViewport() {
+  try { return window.innerWidth < 1024 } catch { return false }
+}
+
+function revealPanelOnMobile(action) {
+  if (!isMobileViewport()) return
+  if (action === 'open') panelOpen.value = true
+  if (action === 'close') panelOpen.value = false
+}
+
+function zoomToCable(itemOrId) {
+  if (!map || !window.google?.maps) return
+
+  const c = (typeof itemOrId === 'object' && itemOrId)
+    ? itemOrId
+    : cableById.value.get(Number(itemOrId || 0))
+
+  const path = Array.isArray(c?.path) ? c.path : null
+  if (!path || path.length < 1) return
+
+  const b = new window.google.maps.LatLngBounds()
+  let has = false
+  path.forEach((p) => {
+    const lat = Number(p?.lat)
+    const lng = Number(p?.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+    b.extend({ lat, lng })
+    has = true
+  })
+
+  if (!has) return
+
+  try {
+    map.fitBounds(b, 60)
+  } catch {
+    try { map.fitBounds(b) } catch {}
+  }
+}
+
+function selectCable(item, opts = {}) {
+  selectedCableId.value = item?.id ?? null
+  selectedPointId.value = null
+  selectedBreakId.value = null
+  activeTab.value = 'cables'
+  renderCablesLayer()
+
+  const doZoom = opts.zoom !== false
+  if (doZoom) zoomToCable(item)
+
+  if (opts.panel) revealPanelOnMobile(opts.panel)
+}
+
+function selectPoint(item, opts = {}) {
+  selectedPointId.value = item?.id ?? null
+  selectedCableId.value = null
+  selectedBreakId.value = null
+  activeTab.value = 'points'
+  renderPointsLayer()
+
+  const doZoom = opts.zoom !== false
+  if (doZoom) focusOnLatLng(Number(item?.latitude), Number(item?.longitude), 17)
+
+  if (opts.panel) revealPanelOnMobile(opts.panel)
+}
+
+function selectBreak(item, opts = {}) {
+  selectedBreakId.value = item?.id ?? null
+  selectedCableId.value = null
+  selectedPointId.value = null
+  activeTab.value = 'breaks'
+  renderBreaksLayer()
+
+  const doZoom = opts.zoom !== false
+  if (doZoom) focusOnLatLng(Number(item?.latitude), Number(item?.longitude), 17)
+
+  if (opts.panel) revealPanelOnMobile(opts.panel)
 }
 
 function haversineMeters(a, b) {
@@ -1663,6 +1751,124 @@ const linkItems = computed(() => {
   return out
 })
 
+/* Panel: client-side filter/search */
+const panelSearchNorm = computed(() => (panelSearch.value || '').toString().toLowerCase().trim())
+
+const searchPlaceholder = computed(() => {
+  const tab = String(activeTab.value || 'cables')
+  if (tab === 'cables') return 'Cari kabel (nama/kode/tipe/titik)...'
+  if (tab === 'points') return 'Cari titik (nama/tipe)...'
+  if (tab === 'ports') return 'Cari port (label/tipe/kabel/titik)...'
+  if (tab === 'links') return 'Cari sambungan (titik/kabel/core)...'
+  if (tab === 'breaks') return 'Cari putus (kabel/titik/status)...'
+  return 'Cari...'
+})
+
+function includesQ(hay, q) {
+  const s = (hay || '').toString().toLowerCase()
+  return s.includes(q)
+}
+
+const filteredCables = computed(() => {
+  const rows = Array.isArray(cables.value) ? cables.value : []
+  const q = panelSearchNorm.value
+  if (!q) return rows
+  return rows.filter((c) => {
+    const fromName = pointNameById(c?.from_point_id) || ''
+    const toName = pointNameById(c?.to_point_id) || ''
+    return (
+      includesQ(c?.name, q)
+      || includesQ(c?.code, q)
+      || includesQ(c?.cable_type, q)
+      || includesQ(fromName, q)
+      || includesQ(toName, q)
+    )
+  })
+})
+
+const filteredPoints = computed(() => {
+  const rows = Array.isArray(points.value) ? points.value : []
+  const q = panelSearchNorm.value
+  if (!q) return rows
+  return rows.filter((p) => {
+    return (
+      includesQ(p?.name, q)
+      || includesQ(p?.point_type, q)
+      || includesQ(p?.address, q)
+      || includesQ(p?.notes, q)
+    )
+  })
+})
+
+const filteredPorts = computed(() => {
+  const rows = Array.isArray(ports.value) ? ports.value : []
+  const q = panelSearchNorm.value
+  if (!q) return rows
+  return rows.filter((p) => {
+    const ptName = pointNameById(p?.point_id) || ''
+    const cbName = cableNameById(p?.cable_id) || ''
+    return (
+      includesQ(p?.port_label, q)
+      || includesQ(p?.port_type, q)
+      || includesQ(ptName, q)
+      || includesQ(cbName, q)
+      || includesQ(String(p?.core_no ?? ''), q)
+    )
+  })
+})
+
+const filteredLinkItems = computed(() => {
+  const rows = Array.isArray(linkItems.value) ? linkItems.value : []
+  const q = panelSearchNorm.value
+  if (!q) return rows
+  return rows.filter((ln) => {
+    const ptName = pointNameById(ln?.point_id) || ''
+    const fromCable = cableNameById(ln?.from_cable_id) || ''
+    const toCable = cableNameById(ln?.to_cable_id) || ''
+    const lt = (ln?.link_type || '').toString().toUpperCase()
+
+    let outText = ''
+    if (ln?.kind === 'SPLIT_GROUP') {
+      outText = (ln?.outputs || [])
+        .map((o) => `${cableNameById(o?.to_cable_id) || ''}:${o?.to_core_no ?? ''}`)
+        .join(' ')
+    }
+
+    return (
+      includesQ(lt, q)
+      || includesQ(ptName, q)
+      || includesQ(fromCable, q)
+      || includesQ(toCable, q)
+      || includesQ(ln?.split_group, q)
+      || includesQ(String(ln?.from_core_no ?? ''), q)
+      || includesQ(String(ln?.to_core_no ?? ''), q)
+      || includesQ(outText, q)
+    )
+  })
+})
+
+const filteredBreaks = computed(() => {
+  const rows = Array.isArray(breaks.value) ? breaks.value : []
+  const q = panelSearchNorm.value
+  const st = String(breakStatusFilter.value || 'ALL').toUpperCase()
+
+  return rows.filter((b) => {
+    const status = String(b?.status || 'OPEN').toUpperCase()
+    if (st !== 'ALL' && status !== st) return false
+    if (!q) return true
+
+    const cableName = cableNameById(b?.cable_id) || ''
+    const ptName = pointNameById(b?.point_id) || ''
+    return (
+      includesQ(status, q)
+      || includesQ(b?.severity, q)
+      || includesQ(cableName, q)
+      || includesQ(ptName, q)
+      || includesQ(b?.description, q)
+    )
+  })
+})
+
 function resetLinkForm() {
   linkForm.value = {
     id: null,
@@ -1876,6 +2082,11 @@ async function runTrace() {
 
 watch([showCables, showPoints, showBreaks], () => {
   renderAllLayers()
+})
+
+watch(activeTab, () => {
+  // Avoid "stuck filters" when switching between modes.
+  panelSearch.value = ''
 })
 
 watch(mapMode, (v) => {
@@ -2115,13 +2326,20 @@ onUnmounted(() => {
         >
           <div class="lg:hidden px-4 pt-2 pb-3 border-b border-gray-100 dark:border-dark-700">
             <div class="mx-auto h-1 w-10 rounded-full bg-gray-200 dark:bg-white/10"></div>
-            <div class="mt-2 flex items-center justify-between">
-              <div class="text-sm font-semibold text-gray-900 dark:text-white">Data Fiber</div>
+            <div class="mt-2 flex items-center gap-2">
+              <select v-model="activeTab" class="input !py-2 !text-xs flex-1">
+                <option value="cables">Kabel ({{ cables.length }})</option>
+                <option value="points">Titik ({{ points.length }})</option>
+                <option value="ports">Port ({{ ports.length }})</option>
+                <option value="links">Sambungan ({{ links.length }})</option>
+                <option value="trace">Trace</option>
+                <option value="breaks">Putus ({{ breaks.length }})</option>
+              </select>
               <button class="btn btn-secondary !py-1.5 !text-xs" @click="panelOpen=false">Tutup</button>
             </div>
           </div>
 
-          <div class="flex items-center gap-1 border-b border-gray-100 dark:border-dark-700 overflow-x-auto">
+          <div class="hidden lg:flex items-center gap-1 border-b border-gray-100 dark:border-dark-700 overflow-x-auto">
             <button
               @click="activeTab='cables'"
               class="px-3 py-3 text-xs font-semibold whitespace-nowrap"
@@ -2177,14 +2395,24 @@ onUnmounted(() => {
                 <button v-if="canCreate" class="btn btn-primary !py-2 !text-xs" @click="openCreateCable">Tambah</button>
               </div>
 
-              <div v-if="cables.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data kabel.</div>
+              <div class="flex items-center gap-2">
+                <input v-model="panelSearch" class="input w-full !py-2 !text-xs" :placeholder="searchPlaceholder" />
+                <button v-if="panelSearch" class="btn btn-secondary !py-2 !text-xs" @click="panelSearch=''">Clear</button>
+              </div>
+              <div v-if="panelSearch" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredCables.length }}</span> / {{ cables.length }}
+              </div>
+
+              <div v-if="filteredCables.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+                {{ cables.length === 0 ? 'Belum ada data kabel.' : 'Tidak ada hasil.' }}
+              </div>
               <div v-else class="space-y-2 pr-1">
                 <div
-                  v-for="c in cables"
+                  v-for="c in filteredCables"
                   :key="c.id"
                   class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-blue-200 dark:hover:border-blue-900/40 cursor-pointer"
                   :class="Number(selectedCableId) === Number(c.id) ? 'bg-blue-50/60 dark:bg-blue-900/10' : 'bg-white dark:bg-dark-800'"
-                  @click="selectedCableId=c.id; selectedPointId=null; selectedBreakId=null; renderCablesLayer()"
+                  @click="selectCable(c, { panel: 'close' })"
                 >
                   <div class="flex items-start justify-between gap-2">
                     <div>
@@ -2216,14 +2444,24 @@ onUnmounted(() => {
                 <button v-if="canCreate" class="btn btn-primary !py-2 !text-xs" @click="openCreatePoint">Tambah</button>
               </div>
 
-              <div v-if="points.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data titik.</div>
+              <div class="flex items-center gap-2">
+                <input v-model="panelSearch" class="input w-full !py-2 !text-xs" :placeholder="searchPlaceholder" />
+                <button v-if="panelSearch" class="btn btn-secondary !py-2 !text-xs" @click="panelSearch=''">Clear</button>
+              </div>
+              <div v-if="panelSearch" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredPoints.length }}</span> / {{ points.length }}
+              </div>
+
+              <div v-if="filteredPoints.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+                {{ points.length === 0 ? 'Belum ada data titik.' : 'Tidak ada hasil.' }}
+              </div>
               <div v-else class="space-y-2 pr-1">
                 <div
-                  v-for="p in points"
+                  v-for="p in filteredPoints"
                   :key="p.id"
                   class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-teal-200 dark:hover:border-teal-900/40 cursor-pointer"
                   :class="Number(selectedPointId) === Number(p.id) ? 'bg-teal-50/60 dark:bg-teal-900/10' : 'bg-white dark:bg-dark-800'"
-                  @click="selectedPointId=p.id; selectedCableId=null; selectedBreakId=null; renderPointsLayer(); focusOnLatLng(Number(p.latitude), Number(p.longitude), 17)"
+                  @click="selectPoint(p, { panel: 'close' })"
                 >
                   <div class="flex items-start justify-between gap-2">
                     <div>
@@ -2249,10 +2487,20 @@ onUnmounted(() => {
                 <button v-if="canCreate" class="btn btn-primary !py-2 !text-xs" @click="openCreatePort">Tambah</button>
               </div>
 
-              <div v-if="ports.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data port.</div>
+              <div class="flex items-center gap-2">
+                <input v-model="panelSearch" class="input w-full !py-2 !text-xs" :placeholder="searchPlaceholder" />
+                <button v-if="panelSearch" class="btn btn-secondary !py-2 !text-xs" @click="panelSearch=''">Clear</button>
+              </div>
+              <div v-if="panelSearch" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredPorts.length }}</span> / {{ ports.length }}
+              </div>
+
+              <div v-if="filteredPorts.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+                {{ ports.length === 0 ? 'Belum ada data port.' : 'Tidak ada hasil.' }}
+              </div>
               <div v-else class="space-y-2 pr-1">
                 <div
-                  v-for="p in ports"
+                  v-for="p in filteredPorts"
                   :key="p.id"
                   class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-indigo-200 dark:hover:border-indigo-900/40 bg-white dark:bg-dark-800"
                 >
@@ -2288,10 +2536,20 @@ onUnmounted(() => {
                 <button v-if="canCreate" class="btn btn-primary !py-2 !text-xs" @click="openCreateLink">Tambah</button>
               </div>
 
-              <div v-if="linkItems.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data sambungan.</div>
+              <div class="flex items-center gap-2">
+                <input v-model="panelSearch" class="input w-full !py-2 !text-xs" :placeholder="searchPlaceholder" />
+                <button v-if="panelSearch" class="btn btn-secondary !py-2 !text-xs" @click="panelSearch=''">Clear</button>
+              </div>
+              <div v-if="panelSearch" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredLinkItems.length }}</span> / {{ linkItems.length }}
+              </div>
+
+              <div v-if="filteredLinkItems.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+                {{ linkItems.length === 0 ? 'Belum ada data sambungan.' : 'Tidak ada hasil.' }}
+              </div>
               <div v-else class="space-y-2 pr-1">
                 <div
-                  v-for="ln in linkItems"
+                  v-for="ln in filteredLinkItems"
                   :key="(ln.kind === 'SPLIT_GROUP' ? ('g:' + ln.split_group + ':' + ln.point_id) : ('l:' + ln.id))"
                   class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-amber-200 dark:hover:border-amber-900/40 bg-white dark:bg-dark-800"
                 >
@@ -2420,14 +2678,63 @@ onUnmounted(() => {
                 <button v-if="canCreate" class="btn btn-primary !py-2 !text-xs" @click="openCreateBreak">Tambah</button>
               </div>
 
-              <div v-if="breaks.length === 0" class="text-sm text-gray-500 dark:text-gray-400">Belum ada data putus.</div>
+              <div class="flex items-center gap-2">
+                <input v-model="panelSearch" class="input w-full !py-2 !text-xs" :placeholder="searchPlaceholder" />
+                <button v-if="panelSearch" class="btn btn-secondary !py-2 !text-xs" @click="panelSearch=''">Clear</button>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  class="px-3 py-1.5 rounded-full text-xs font-semibold border transition"
+                  :class="breakStatusFilter==='ALL' ? 'bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-slate-900 dark:border-white' : 'bg-white dark:bg-dark-800 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                  @click="breakStatusFilter='ALL'"
+                >
+                  Semua
+                </button>
+                <button
+                  class="px-3 py-1.5 rounded-full text-xs font-semibold border transition"
+                  :class="breakStatusFilter==='OPEN' ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/10 dark:border-red-900/30 dark:text-red-300' : 'bg-white dark:bg-dark-800 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                  @click="breakStatusFilter='OPEN'"
+                >
+                  OPEN
+                </button>
+                <button
+                  class="px-3 py-1.5 rounded-full text-xs font-semibold border transition"
+                  :class="breakStatusFilter==='IN_PROGRESS' ? 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/10 dark:border-amber-900/30 dark:text-amber-200' : 'bg-white dark:bg-dark-800 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                  @click="breakStatusFilter='IN_PROGRESS'"
+                >
+                  IN PROGRESS
+                </button>
+                <button
+                  class="px-3 py-1.5 rounded-full text-xs font-semibold border transition"
+                  :class="breakStatusFilter==='FIXED' ? 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/10 dark:border-emerald-900/30 dark:text-emerald-200' : 'bg-white dark:bg-dark-800 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                  @click="breakStatusFilter='FIXED'"
+                >
+                  FIXED
+                </button>
+                <button
+                  class="px-3 py-1.5 rounded-full text-xs font-semibold border transition"
+                  :class="breakStatusFilter==='CANCELLED' ? 'bg-slate-100 border-slate-200 text-slate-700 dark:bg-slate-700/30 dark:border-white/10 dark:text-slate-200' : 'bg-white dark:bg-dark-800 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                  @click="breakStatusFilter='CANCELLED'"
+                >
+                  CANCELLED
+                </button>
+              </div>
+
+              <div v-if="panelSearch || breakStatusFilter !== 'ALL'" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredBreaks.length }}</span> / {{ breaks.length }}
+              </div>
+
+              <div v-if="filteredBreaks.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+                {{ breaks.length === 0 ? 'Belum ada data putus.' : 'Tidak ada hasil.' }}
+              </div>
               <div v-else class="space-y-2 pr-1">
                 <div
-                  v-for="b in breaks"
+                  v-for="b in filteredBreaks"
                   :key="b.id"
                   class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-red-200 dark:hover:border-red-900/40 cursor-pointer"
                   :class="Number(selectedBreakId) === Number(b.id) ? 'bg-red-50/60 dark:bg-red-900/10' : 'bg-white dark:bg-dark-800'"
-                  @click="selectedBreakId=b.id; selectedCableId=null; selectedPointId=null; renderBreaksLayer(); focusOnLatLng(Number(b.latitude), Number(b.longitude), 17)"
+                  @click="selectBreak(b, { panel: 'close' })"
                 >
                   <div class="flex items-start justify-between gap-2">
                     <div>
