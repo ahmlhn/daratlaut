@@ -158,6 +158,7 @@ const MAP_STYLES = {
   hybrid: { label: 'Hybrid', mapTypeId: 'hybrid' },
 }
 const legendCollapsed = ref(false)
+const mapCleanMode = ref(true)
 
 function loadGoogleMaps(apiKey) {
   const key = (apiKey || '').toString().trim()
@@ -187,6 +188,11 @@ function applyMapStyle() {
   if (!map || !window.google?.maps) return
   const cfg = MAP_STYLES[mapStyle.value] || MAP_STYLES.roadmap
   try { map.setMapTypeId(cfg.mapTypeId) } catch {}
+}
+
+function toggleMapCleanMode() {
+  mapCleanMode.value = !mapCleanMode.value
+  if (mapCleanMode.value) legendCollapsed.value = true
 }
 
 function requestMapResize() {
@@ -2716,6 +2722,10 @@ watch(legendCollapsed, () => {
   try { localStorage.setItem('fiber_legend_collapsed', legendCollapsed.value ? '1' : '0') } catch {}
 })
 
+watch(mapCleanMode, () => {
+  try { localStorage.setItem('fiber_map_clean', mapCleanMode.value ? '1' : '0') } catch {}
+})
+
 onMounted(() => {
   try {
     const saved = localStorage.getItem('fiber_map_style')
@@ -2734,10 +2744,18 @@ onMounted(() => {
   } catch {}
 
   try {
+    const v = localStorage.getItem('fiber_map_clean')
+    if (v === '0') mapCleanMode.value = false
+    if (v === '1') mapCleanMode.value = true
+  } catch {}
+
+  try {
     const v = localStorage.getItem('fiber_legend_collapsed')
     if (v === '1') legendCollapsed.value = true
     if (v === '0') legendCollapsed.value = false
   } catch {}
+
+  if (mapCleanMode.value) legendCollapsed.value = true
 
   mapLoadError.value = ''
 
@@ -2830,31 +2848,54 @@ onUnmounted(() => {
           <div class="relative flex-1 min-h-[420px] lg:min-h-0">
             <div ref="mapContainer" class="absolute inset-0 w-full h-full bg-slate-100 dark:bg-slate-900"></div>
 
-            <div class="absolute top-3 left-3 z-20 flex flex-wrap items-center gap-2 bg-white/90 dark:bg-dark-900/80 backdrop-blur border border-gray-200 dark:border-white/10 rounded-xl p-2 shadow-lg">
+            <div
+              class="absolute top-3 left-3 z-20 flex items-center rounded-xl border shadow-lg backdrop-blur transition-all"
+              :class="mapCleanMode
+                ? 'gap-1.5 bg-white/80 dark:bg-dark-900/75 border-gray-200/90 dark:border-white/10 p-1.5'
+                : 'flex-wrap gap-2 bg-white/92 dark:bg-dark-900/82 border-gray-200 dark:border-white/10 p-2'"
+            >
               <button
-                class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition"
-                :class="showCables ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/20 dark:border-blue-900/30 dark:text-blue-200' : 'bg-white/70 dark:bg-dark-800/70 border-gray-200/70 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                class="rounded-lg font-semibold border transition"
+                :class="[
+                  mapCleanMode ? 'px-2 py-1 text-[11px]' : 'px-3 py-1.5 text-xs',
+                  showCables
+                    ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/20 dark:border-blue-900/30 dark:text-blue-200'
+                    : 'bg-white/70 dark:bg-dark-800/70 border-gray-200/70 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'
+                ]"
                 @click="showCables=!showCables"
               >
-                Kabel ({{ summary.cables }})
+                {{ mapCleanMode ? `K:${summary.cables}` : `Kabel (${summary.cables})` }}
               </button>
               <button
-                class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition"
-                :class="showPoints ? 'bg-teal-50 border-teal-200 text-teal-700 dark:bg-teal-900/20 dark:border-teal-900/30 dark:text-teal-200' : 'bg-white/70 dark:bg-dark-800/70 border-gray-200/70 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                class="rounded-lg font-semibold border transition"
+                :class="[
+                  mapCleanMode ? 'px-2 py-1 text-[11px]' : 'px-3 py-1.5 text-xs',
+                  showPoints
+                    ? 'bg-teal-50 border-teal-200 text-teal-700 dark:bg-teal-900/20 dark:border-teal-900/30 dark:text-teal-200'
+                    : 'bg-white/70 dark:bg-dark-800/70 border-gray-200/70 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'
+                ]"
                 @click="showPoints=!showPoints"
               >
-                Titik ({{ summary.points }})
+                {{ mapCleanMode ? `T:${summary.points}` : `Titik (${summary.points})` }}
               </button>
               <button
-                class="px-3 py-1.5 rounded-lg text-xs font-semibold border transition"
-                :class="showBreaks ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/10 dark:border-red-900/30 dark:text-red-300' : 'bg-white/70 dark:bg-dark-800/70 border-gray-200/70 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'"
+                class="rounded-lg font-semibold border transition"
+                :class="[
+                  mapCleanMode ? 'px-2 py-1 text-[11px]' : 'px-3 py-1.5 text-xs',
+                  showBreaks
+                    ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/10 dark:border-red-900/30 dark:text-red-300'
+                    : 'bg-white/70 dark:bg-dark-800/70 border-gray-200/70 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'
+                ]"
                 @click="showBreaks=!showBreaks"
               >
-                Putus ({{ summary.breaks_open }})
+                {{ mapCleanMode ? `P:${summary.breaks_open}` : `Putus (${summary.breaks_open})` }}
               </button>
             </div>
 
-            <div class="absolute top-16 left-3 z-20 w-64 max-w-[calc(100%-1.5rem)] bg-white/90 dark:bg-dark-900/80 backdrop-blur border border-gray-200 dark:border-white/10 rounded-xl shadow-lg overflow-hidden">
+            <div
+              v-if="!mapCleanMode"
+              class="absolute top-16 left-3 z-20 w-64 max-w-[calc(100%-1.5rem)] bg-white/90 dark:bg-dark-900/80 backdrop-blur border border-gray-200 dark:border-white/10 rounded-xl shadow-lg overflow-hidden"
+            >
               <div class="flex items-center justify-between px-3 py-2 border-b border-gray-200/70 dark:border-white/10">
                 <div class="text-[11px] font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wide">Legend Peta</div>
                 <button class="text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white" @click="legendCollapsed=!legendCollapsed">
@@ -2894,12 +2935,20 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div class="absolute top-3 right-3 z-20 flex items-center gap-2 bg-white/90 dark:bg-dark-900/80 backdrop-blur border border-gray-200 dark:border-white/10 rounded-xl p-2 shadow-lg">
-              <select v-model="mapStyle" class="input !py-1.5 !text-xs">
+            <div
+              class="absolute top-3 right-3 z-20 flex items-center gap-2 rounded-xl border shadow-lg backdrop-blur transition-all"
+              :class="mapCleanMode
+                ? 'bg-white/80 dark:bg-dark-900/75 border-gray-200/90 dark:border-white/10 p-1.5'
+                : 'bg-white/90 dark:bg-dark-900/80 border-gray-200 dark:border-white/10 p-2'"
+            >
+              <select v-model="mapStyle" class="input !text-xs !py-1.5 min-w-[104px]">
                 <option value="roadmap">Roadmap</option>
                 <option value="hybrid">Hybrid</option>
                 <option value="satellite">Satelit</option>
               </select>
+              <button class="btn btn-secondary !py-1.5 !text-xs" @click="toggleMapCleanMode">
+                {{ mapCleanMode ? 'Detail' : 'Bersih' }}
+              </button>
               <button @click="fitToVisible" class="btn btn-secondary !py-1.5 !text-xs">Fit</button>
               <button @click="loadAll" class="btn btn-secondary !py-1.5 !text-xs" :disabled="loading">Refresh</button>
               <button class="btn btn-primary !py-1.5 !text-xs lg:hidden" @click="panelOpen=!panelOpen">
