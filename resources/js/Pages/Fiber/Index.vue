@@ -2501,6 +2501,329 @@ async function fixBreakWithJoint(item) {
   }
 }
 
+const CABLE_SPLIT_POINT_MAX_OFFSET_M = 80
+const showCableSplitModal = ref(false)
+const cableSplitProcessing = ref(false)
+const cableSplitError = ref('')
+const cableSplitForm = ref({
+  point_id: '',
+  source_cable_id: '',
+  open_target: 'PORT',
+})
+
+const cableSplitPoint = computed(() => {
+  const id = Number(cableSplitForm.value.point_id || 0)
+  if (!id) return null
+  return pointById.value.get(id) || null
+})
+
+const cableSplitOpenTargetLabel = computed(() => {
+  const t = String(cableSplitForm.value.open_target || 'PORT').toUpperCase()
+  return t === 'LINK' ? 'Sambungan' : 'Port ODP'
+})
+
+const cableSplitCandidateCables = computed(() => {
+  const point = cableSplitPoint.value
+  const pointId = Number(point?.id || 0)
+  const pointLat = Number(point?.latitude)
+  const pointLng = Number(point?.longitude)
+  if (!pointId || !Number.isFinite(pointLat) || !Number.isFinite(pointLng)) return []
+
+  const out = []
+  ;(cables.value || []).forEach((c) => {
+    const cableId = Number(c?.id || 0)
+    if (!cableId) return
+
+    const path = cablePathForBreakAssist(c)
+    if (!Array.isArray(path) || path.length < 2) return
+
+    const projection = projectPointToPathWithChainage(path, { lat: pointLat, lng: pointLng })
+    if (!projection) return
+
+    const isFromEndpoint = Number(c?.from_point_id || 0) === pointId
+    const isToEndpoint = Number(c?.to_point_id || 0) === pointId
+    const isEndpoint = isFromEndpoint || isToEndpoint
+    const offsetM = Number(projection.offset_m || 0)
+    if (!isEndpoint && offsetM > CABLE_SPLIT_POINT_MAX_OFFSET_M) return
+
+    const endpointSide = isFromEndpoint ? 'from' : (isToEndpoint ? 'to' : '')
+    const chainM = Math.round(Number(projection.chainage_m || 0))
+    const endpointTag = isEndpoint ? ` | endpoint-${endpointSide}` : ''
+    const label = `${c?.name || ('Kabel #' + cableId)} | chain ${chainM}m | off ${Math.round(offsetM)}m${endpointTag}`
+
+    out.push({
+      id: cableId,
+      cable: c,
+      projection,
+      is_endpoint: isEndpoint,
+      endpoint_side: endpointSide,
+      label,
+    })
+  })
+
+  out.sort((a, b) => {
+    const ae = a?.is_endpoint ? 0 : 1
+    const be = b?.is_endpoint ? 0 : 1
+    if (ae !== be) return ae - be
+    const ad = Number(a?.projection?.offset_m || 0)
+    const bd = Number(b?.projection?.offset_m || 0)
+    if (ad !== bd) return ad - bd
+    return Number(a?.id || 0) - Number(b?.id || 0)
+  })
+
+  return out
+})
+
+const cableSplitSelectedCandidate = computed(() => {
+  const id = Number(cableSplitForm.value.source_cable_id || 0)
+  if (!id) return null
+  return cableSplitCandidateCables.value.find((x) => Number(x?.id || 0) === id) || null
+})
+
+function resetCableSplitForm() {
+  cableSplitForm.value = {
+    point_id: '',
+    source_cable_id: '',
+    open_target: 'PORT',
+  }
+  cableSplitError.value = ''
+}
+
+function openCableSplitFlow(pointItem, target = 'PORT') {
+  if (!canCreate.value || !canEdit.value) return
+  const pointId = Number(pointItem?.id || 0)
+  if (!pointId) return
+
+  resetCableSplitForm()
+  cableSplitForm.value.point_id = String(pointId)
+  cableSplitForm.value.open_target = String(target || 'PORT').toUpperCase() === 'LINK' ? 'LINK' : 'PORT'
+
+  const selected = Number(selectedCableId.value || 0)
+  const candidates = cableSplitCandidateCables.value || []
+  if (selected > 0 && candidates.some((x) => Number(x?.id || 0) === selected)) {
+    cableSplitForm.value.source_cable_id = String(selected)
+  } else if (candidates.length > 0) {
+    cableSplitForm.value.source_cable_id = String(candidates[0].id)
+  }
+
+  showCableSplitModal.value = true
+}
+
+function isSamePathPoint(a, b, epsMeters = 0.35) {
+  const aLat = Number(a?.lat)
+  const aLng = Number(a?.lng)
+  const bLat = Number(b?.lat)
+  const bLng = Number(b?.lng)
+  if (!Number.isFinite(aLat) || !Number.isFinite(aLng) || !Number.isFinite(bLat) || !Number.isFinite(bLng)) return false
+  return haversineMeters({ lat: aLat, lng: aLng }, { lat: bLat, lng: bLng }) <= Number(epsMeters || 0.35)
+}
+
+function splitPathAtProjection(path, projection) {
+  const pts = (Array.isArray(path) ? path : [])
+    .map((p) => ({ lat: Number(p?.lat), lng: Number(p?.lng) }))
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+  if (pts.length < 2) return null
+
+  const segmentIndex = Number(projection?.segment_index)
+  const segmentRatio = Number(projection?.segment_ratio)
+  if (!Number.isFinite(segmentIndex) || !Number.isFinite(segmentRatio)) return null
+  if (segmentIndex < 0 || segmentIndex >= (pts.length - 1)) return null
+
+  const splitPoint = {
+    lat: roundCoord(Number(projection?.lat)),
+    lng: roundCoord(Number(projection?.lng)),
+  }
+  if (!Number.isFinite(splitPoint.lat) || !Number.isFinite(splitPoint.lng)) return null
+
+  const eps = 1e-6
+  let first = []
+  let second = []
+
+  if (segmentRatio <= eps) {
+    first = pts.slice(0, segmentIndex + 1)
+    second = pts.slice(segmentIndex)
+  } else if (segmentRatio >= (1 - eps)) {
+    first = pts.slice(0, segmentIndex + 2)
+    second = pts.slice(segmentIndex + 1)
+  } else {
+    first = pts.slice(0, segmentIndex + 1)
+    if (!isSamePathPoint(first[first.length - 1], splitPoint)) first.push(splitPoint)
+    second = pts.slice(segmentIndex + 1)
+    if (!isSamePathPoint(second[0], splitPoint)) second.unshift(splitPoint)
+  }
+
+  if (first.length < 2 || second.length < 2) return null
+  return { first, second, split_point: splitPoint }
+}
+
+function splitSecondCableName(baseName, pointName) {
+  const src = (baseName || '').toString().trim() || 'Kabel'
+  const p = (pointName || '').toString().trim()
+  const raw = p ? `${src} - ${p} (Seg2)` : `${src} (Seg2)`
+  return raw.slice(0, 160)
+}
+
+function splitSecondCableCode(baseCode) {
+  const src = (baseCode || '').toString().trim()
+  if (!src) return null
+  return `${src}-S2`.slice(0, 64)
+}
+
+function openPortAfterCableSplit(pointId, cableId) {
+  resetPortForm()
+  portModalMode.value = 'create'
+  portForm.value.point_id = String(pointId)
+  portForm.value.port_type = 'ODP_OUT'
+  portForm.value.port_label = 'OUT 1'
+  if (Number(cableId || 0) > 0) {
+    portForm.value.cable_id = String(cableId)
+  }
+  showPortModal.value = true
+  activeTab.value = 'ports'
+}
+
+function openLinkAfterCableSplit(pointId, fromCableId, toCableId = null) {
+  resetLinkForm()
+  linkModalMode.value = 'create'
+  linkForm.value.point_id = String(pointId)
+  linkForm.value.link_type = 'SPLICE'
+  if (Number(fromCableId || 0) > 0) linkForm.value.from_cable_id = String(fromCableId)
+  if (Number(toCableId || 0) > 0) linkForm.value.to_cable_id = String(toCableId)
+  showLinkModal.value = true
+  activeTab.value = 'links'
+}
+
+async function splitCableAtPointAndOpenTarget() {
+  if (cableSplitProcessing.value) return
+  cableSplitError.value = ''
+
+  const point = cableSplitPoint.value
+  const pointId = Number(point?.id || 0)
+  const candidate = cableSplitSelectedCandidate.value
+  const target = String(cableSplitForm.value.open_target || 'PORT').toUpperCase() === 'LINK' ? 'LINK' : 'PORT'
+  if (!pointId) {
+    cableSplitError.value = 'Titik tidak valid.'
+    return
+  }
+  if (!candidate?.cable) {
+    cableSplitError.value = 'Pilih kabel sumber terlebih dahulu.'
+    return
+  }
+
+  const sourceCable = candidate.cable
+  const sourceCableId = Number(sourceCable?.id || 0)
+  const fromPointId = Number(sourceCable?.from_point_id || 0)
+  const toPointId = Number(sourceCable?.to_point_id || 0)
+  if (!sourceCableId || !fromPointId || !toPointId) {
+    cableSplitError.value = 'Data kabel tidak lengkap.'
+    return
+  }
+
+  if (candidate.is_endpoint) {
+    showCableSplitModal.value = false
+    if (toast) toast.info('Titik sudah menjadi endpoint kabel. Split tidak diperlukan.')
+    if (target === 'LINK') {
+      openLinkAfterCableSplit(pointId, sourceCableId, null)
+    } else {
+      openPortAfterCableSplit(pointId, sourceCableId)
+    }
+    return
+  }
+
+  const projection = candidate.projection
+  const offsetM = Number(projection?.offset_m || 0)
+  if (!Number.isFinite(offsetM) || offsetM > CABLE_SPLIT_POINT_MAX_OFFSET_M) {
+    cableSplitError.value = `Titik terlalu jauh dari jalur kabel (>${CABLE_SPLIT_POINT_MAX_OFFSET_M}m).`
+    return
+  }
+
+  const path = cablePathForBreakAssist(sourceCable)
+  const splitPath = splitPathAtProjection(path, projection)
+  if (!splitPath) {
+    cableSplitError.value = 'Gagal memotong path kabel di titik terpilih.'
+    return
+  }
+
+  const firstLen = Math.round(calcPathLengthMeters(splitPath.first))
+  const secondLen = Math.round(calcPathLengthMeters(splitPath.second))
+  if (firstLen < 1 || secondLen < 1) {
+    cableSplitError.value = 'Titik terlalu dekat ujung kabel, split dibatalkan.'
+    return
+  }
+
+  const ok = confirm(`Split kabel "${sourceCable?.name || ('#' + sourceCableId)}" di titik "${point?.name || ('#' + pointId)}" lalu buka form ${target === 'LINK' ? 'Sambungan' : 'Port ODP'}?`)
+  if (!ok) return
+
+  cableSplitProcessing.value = true
+  let createdCableId = 0
+
+  try {
+    const basePayload = {
+      name: sourceCable?.name || `Kabel #${sourceCableId}`,
+      code: sourceCable?.code || null,
+      cable_type: sourceCable?.cable_type || null,
+      core_count: sourceCable?.core_count !== '' && sourceCable?.core_count !== null && sourceCable?.core_count !== undefined ? Number(sourceCable.core_count) : null,
+      map_color: sourceCable?.map_color || null,
+      notes: sourceCable?.notes || null,
+    }
+
+    const createPayload = {
+      ...basePayload,
+      name: splitSecondCableName(sourceCable?.name, point?.name),
+      code: splitSecondCableCode(sourceCable?.code),
+      from_point_id: pointId,
+      to_point_id: toPointId,
+      path: splitPath.second,
+      length_m: secondLen,
+    }
+
+    const createRes = await requestJson('/api/v1/fiber/cables', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(createPayload),
+    })
+    if (!createRes.ok) throw new Error(createRes.data?.message || `Gagal membuat segmen kabel baru (HTTP ${createRes.status}).`)
+    createdCableId = Number(createRes.data?.data?.id || 0)
+    if (!createdCableId) throw new Error('Gagal membaca ID kabel hasil split.')
+
+    const updatePayload = {
+      ...basePayload,
+      from_point_id: fromPointId,
+      to_point_id: pointId,
+      path: splitPath.first,
+      length_m: firstLen,
+    }
+
+    const updateRes = await requestJson(`/api/v1/fiber/cables/${sourceCableId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatePayload),
+    })
+    if (!updateRes.ok) {
+      try {
+        await requestJson(`/api/v1/fiber/cables/${createdCableId}`, { method: 'DELETE' })
+      } catch {}
+      throw new Error(updateRes.data?.message || `Gagal update kabel sumber saat split (HTTP ${updateRes.status}).`)
+    }
+
+    await loadAll()
+    showCableSplitModal.value = false
+
+    if (target === 'LINK') {
+      openLinkAfterCableSplit(pointId, sourceCableId, createdCableId)
+    } else {
+      openPortAfterCableSplit(pointId, createdCableId)
+    }
+    if (toast) toast.success('Split kabel berhasil. Form lanjutan dibuka.')
+  } catch (e) {
+    console.error('Fiber: splitCableAtPointAndOpenTarget failed', e)
+    cableSplitError.value = e?.message || 'Gagal split kabel.'
+    if (toast) toast.error(cableSplitError.value)
+  } finally {
+    cableSplitProcessing.value = false
+  }
+}
+
 /* Ports (OLT PON / ODP OUT) */
 const showPortModal = ref(false)
 const portModalMode = ref('create') // create|edit
@@ -3384,6 +3707,14 @@ watch(breakOtdrReferencePointOptions, (rows) => {
   if (!exists) breakOtdrForm.value.reference_point_id = ''
 })
 
+watch(cableSplitCandidateCables, (rows) => {
+  if (!showCableSplitModal.value) return
+  const current = Number(cableSplitForm.value.source_cable_id || 0)
+  const exists = (rows || []).some((x) => Number(x?.id || 0) === current)
+  if (exists) return
+  cableSplitForm.value.source_cable_id = rows && rows.length > 0 ? String(rows[0].id) : ''
+})
+
 watch(selectedCableId, (id) => {
   if (activeTab.value === 'cores' && Number(id || 0) > 0) {
     loadCoreOccupancy(id)
@@ -4028,6 +4359,8 @@ onUnmounted(() => {
                     </div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
+                      <button v-if="canCreate && canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openCableSplitFlow(p, 'PORT')">Split+ODP</button>
+                      <button v-if="canCreate && canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openCableSplitFlow(p, 'LINK')">Split+Link</button>
                       <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditPoint(p)">Edit</button>
                       <button v-if="canDelete" class="btn btn-danger !py-1 !px-2 !text-xs" @click.stop="deletePoint(p)">Hapus</button>
                     </div>
@@ -4963,6 +5296,73 @@ onUnmounted(() => {
         <div class="p-4 border-t border-gray-100 dark:border-dark-700 flex items-center justify-end gap-2">
           <button class="btn btn-secondary" @click="showBreakModal=false; stopMapMode()">Batal</button>
           <button class="btn btn-primary" :disabled="breakProcessing" @click="saveBreak">{{ breakProcessing ? 'Menyimpan...' : 'Simpan' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Split Cable Modal -->
+    <div v-if="showCableSplitModal" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+      <div class="absolute inset-0 bg-black/40" @click="showCableSplitModal=false"></div>
+      <div class="relative w-full max-w-xl bg-white dark:bg-dark-800 rounded-2xl shadow-xl border border-gray-100 dark:border-dark-700 overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
+        <div class="p-4 border-b border-gray-100 dark:border-dark-700 flex items-center justify-between">
+          <div class="font-semibold text-gray-900 dark:text-white">Split Kabel Otomatis</div>
+          <button class="text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white" @click="showCableSplitModal=false">Tutup</button>
+        </div>
+
+        <div class="p-4 space-y-3 overflow-y-auto flex-1 min-h-0">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Titik Split</label>
+              <div class="input w-full !py-2 !text-xs bg-gray-50 dark:bg-dark-900/40">
+                {{ cableSplitPoint?.name || ('Titik #' + (cableSplitForm.point_id || '-')) }}
+              </div>
+            </div>
+            <div>
+              <label class="text-xs text-gray-600 dark:text-gray-300">Lanjut Ke Form</label>
+              <div class="input w-full !py-2 !text-xs bg-gray-50 dark:bg-dark-900/40">
+                {{ cableSplitOpenTargetLabel }}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-600 dark:text-gray-300">Kabel Sumber</label>
+            <select v-model="cableSplitForm.source_cable_id" class="input w-full">
+              <option value="">(pilih kabel)</option>
+              <option v-for="row in cableSplitCandidateCables" :key="'sc-' + row.id" :value="String(row.id)">
+                {{ row.label }}
+              </option>
+            </select>
+            <div class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+              Kandidat muncul jika titik berada di jalur kabel (offset maks {{ CABLE_SPLIT_POINT_MAX_OFFSET_M }}m) atau sudah endpoint kabel.
+            </div>
+          </div>
+
+          <div v-if="cableSplitSelectedCandidate" class="rounded-xl border border-gray-100 dark:border-dark-700 p-3 bg-gray-50/40 dark:bg-dark-900/30 text-xs text-gray-600 dark:text-gray-300 space-y-1">
+            <div>
+              Cable: <span class="font-semibold text-gray-800 dark:text-gray-100">{{ cableSplitSelectedCandidate.cable?.name || ('#' + cableSplitSelectedCandidate.id) }}</span>
+            </div>
+            <div>
+              Chain: <span class="font-semibold text-gray-800 dark:text-gray-100">{{ Math.round(cableSplitSelectedCandidate.projection?.chainage_m || 0) }}m</span>
+              <span class="mx-2">|</span>
+              Offset: <span class="font-semibold text-gray-800 dark:text-gray-100">{{ Math.round(cableSplitSelectedCandidate.projection?.offset_m || 0) }}m</span>
+            </div>
+            <div v-if="cableSplitSelectedCandidate.is_endpoint" class="text-amber-700 dark:text-amber-300">
+              Titik sudah endpoint kabel, sistem akan langsung buka form tanpa split.
+            </div>
+          </div>
+
+          <div v-if="cableSplitCandidateCables.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+            Tidak ada kabel yang bisa di-split di titik ini.
+          </div>
+          <div v-if="cableSplitError" class="text-sm text-red-600 dark:text-red-300">{{ cableSplitError }}</div>
+        </div>
+
+        <div class="p-4 border-t border-gray-100 dark:border-dark-700 flex items-center justify-end gap-2">
+          <button class="btn btn-secondary" @click="showCableSplitModal=false">Batal</button>
+          <button class="btn btn-primary" :disabled="cableSplitProcessing || !cableSplitForm.source_cable_id" @click="splitCableAtPointAndOpenTarget">
+            {{ cableSplitProcessing ? 'Memproses...' : `Split & Buka ${cableSplitOpenTargetLabel}` }}
+          </button>
         </div>
       </div>
     </div>
