@@ -3398,6 +3398,42 @@ const coreRows = ref([])
 const coreReservedDraft = ref([])
 const selectedCoreNo = ref(null)
 
+const CORE_COLOR_SEQUENCE = [
+  { name: 'Biru', hex: '#2563eb' },
+  { name: 'Oranye', hex: '#f97316' },
+  { name: 'Hijau', hex: '#16a34a' },
+  { name: 'Coklat', hex: '#92400e' },
+  { name: 'Abu', hex: '#6b7280' },
+  { name: 'Putih', hex: '#f8fafc' },
+  { name: 'Merah', hex: '#dc2626' },
+  { name: 'Hitam', hex: '#111827' },
+  { name: 'Kuning', hex: '#facc15' },
+  { name: 'Ungu', hex: '#7c3aed' },
+  { name: 'Pink', hex: '#ec4899' },
+  { name: 'Aqua', hex: '#06b6d4' },
+]
+
+function coreColorMeta(coreNo) {
+  const n = Number(coreNo || 0)
+  if (!Number.isFinite(n) || n <= 0) return { name: '-', hex: '#9ca3af', cycle: 0, label: '-' }
+  const idx = (n - 1) % CORE_COLOR_SEQUENCE.length
+  const cycle = Math.floor((n - 1) / CORE_COLOR_SEQUENCE.length) + 1
+  const base = CORE_COLOR_SEQUENCE[idx] || { name: '-', hex: '#9ca3af' }
+  return {
+    ...base,
+    cycle,
+    label: cycle > 1 ? `${base.name}-${cycle}` : base.name,
+  }
+}
+
+function coreColorName(coreNo) {
+  return coreColorMeta(coreNo).label
+}
+
+function coreColorHex(coreNo) {
+  return coreColorMeta(coreNo).hex
+}
+
 const coreCable = computed(() => {
   const id = Number(coreCableId.value || 0)
   if (!id) return null
@@ -4714,6 +4750,9 @@ onUnmounted(() => {
                 <div class="px-2 py-1.5 rounded-lg border border-amber-200 dark:border-amber-900/40 bg-amber-50/70 dark:bg-amber-900/20 text-amber-700 dark:text-amber-200">RESERVED: <span class="font-semibold">{{ coreSummary.RESERVED || 0 }}</span></div>
                 <div class="px-2 py-1.5 rounded-lg border border-red-200 dark:border-red-900/40 bg-red-50/70 dark:bg-red-900/20 text-red-700 dark:text-red-200">BROKEN: <span class="font-semibold">{{ coreSummary.BROKEN || 0 }}</span></div>
               </div>
+              <div class="text-[11px] text-gray-500 dark:text-gray-400">
+                Urutan warna core: Biru, Oranye, Hijau, Coklat, Abu, Putih, Merah, Hitam, Kuning, Ungu, Pink, Aqua (berulang per 12 core).
+              </div>
 
               <div v-if="coreLoading" class="text-sm text-gray-500 dark:text-gray-400">Memuat data core...</div>
               <div v-else-if="coreError" class="text-sm text-red-600 dark:text-red-300">{{ coreError }}</div>
@@ -4728,6 +4767,10 @@ onUnmounted(() => {
                     @click="selectedCoreNo = row.core_no"
                   >
                     <div class="font-semibold">Core {{ row.core_no }}</div>
+                    <div class="mt-1 flex items-center justify-center gap-1.5">
+                      <span class="inline-block h-2.5 w-2.5 rounded-full border border-black/15 dark:border-white/20" :style="{ backgroundColor: coreColorHex(row.core_no) }"></span>
+                      <span class="text-[10px] text-gray-600 dark:text-gray-300">{{ coreColorName(row.core_no) }}</span>
+                    </div>
                     <div class="mt-0.5 uppercase tracking-wide">{{ row.status }}</div>
                   </button>
                 </div>
@@ -4747,6 +4790,13 @@ onUnmounted(() => {
 
                   <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                     Status saat ini: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ selectedCoreRow.status }}</span>
+                  </div>
+                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                    Warna core:
+                    <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border border-gray-200 dark:border-white/15 bg-white/70 dark:bg-dark-800/70 text-gray-700 dark:text-gray-200">
+                      <span class="inline-block h-2.5 w-2.5 rounded-full border border-black/15 dark:border-white/20" :style="{ backgroundColor: coreColorHex(selectedCoreRow.core_no) }"></span>
+                      <span class="font-semibold">{{ coreColorName(selectedCoreRow.core_no) }}</span>
+                    </span>
                   </div>
 
                   <div class="mt-2 grid grid-cols-2 gap-2 text-[11px]">
