@@ -2978,6 +2978,44 @@ const linkSelectableCables = computed(() => {
   return filtered
 })
 
+const LINK_CORE_OPTION_FALLBACK_COUNT = 144
+
+function linkCoreSelectableCountForCable(cableId) {
+  const cid = Number(cableId || 0)
+  if (!cid) return 0
+  const cable = cableById.value.get(cid)
+  const cc = Math.round(Number(cable?.core_count || 0))
+  if (Number.isFinite(cc) && cc > 0) return Math.min(9999, cc)
+  return LINK_CORE_OPTION_FALLBACK_COUNT
+}
+
+function linkCoreColorOptionsForCable(cableId) {
+  const count = linkCoreSelectableCountForCable(cableId)
+  if (count < 1) return []
+  const out = []
+  for (let coreNo = 1; coreNo <= count; coreNo += 1) {
+    const meta = coreColorMeta(coreNo)
+    out.push({
+      value: String(coreNo),
+      label: meta?.label || '-',
+    })
+  }
+  return out
+}
+
+function linkCoreOptionExists(cableId, coreNo) {
+  const core = (coreNo || '').toString().trim()
+  if (!core) return false
+  return linkCoreColorOptionsForCable(cableId).some((x) => x.value === core)
+}
+
+function linkOutputCoreOptions(cableId) {
+  return linkCoreColorOptionsForCable(cableId)
+}
+
+const linkFromCoreOptions = computed(() => linkCoreColorOptionsForCable(linkForm.value.from_cable_id))
+const linkToCoreOptions = computed(() => linkCoreColorOptionsForCable(linkForm.value.to_cable_id))
+
 const linkItems = computed(() => {
   const rows = Array.isArray(links.value) ? links.value : []
   const out = []
@@ -3859,19 +3897,67 @@ watch(() => linkForm.value.point_id, (pointIdRaw) => {
 
   if (linkForm.value.from_cable_id && !cableAttachedToPointId(linkForm.value.from_cable_id, pointId)) {
     linkForm.value.from_cable_id = ''
+    linkForm.value.from_core_no = ''
   }
   if (linkForm.value.to_cable_id && !cableAttachedToPointId(linkForm.value.to_cable_id, pointId)) {
     linkForm.value.to_cable_id = ''
+    linkForm.value.to_core_no = ''
   }
 
   if (Array.isArray(linkForm.value.outputs) && linkForm.value.outputs.length > 0) {
     linkForm.value.outputs = linkForm.value.outputs.map((o) => {
       const outCableId = o?.to_cable_id
       if (!outCableId || cableAttachedToPointId(outCableId, pointId)) return o
-      return { ...(o || {}), to_cable_id: '' }
+      return { ...(o || {}), to_cable_id: '', to_core_no: '' }
     })
   }
 })
+
+watch(() => linkForm.value.from_cable_id, (cableIdRaw) => {
+  if (!showLinkModal.value) return
+  const cableId = Number(cableIdRaw || 0)
+  if (!cableId) {
+    linkForm.value.from_core_no = ''
+    return
+  }
+  if (!linkCoreOptionExists(cableId, linkForm.value.from_core_no)) {
+    linkForm.value.from_core_no = ''
+  }
+})
+
+watch(() => linkForm.value.to_cable_id, (cableIdRaw) => {
+  if (!showLinkModal.value) return
+  const cableId = Number(cableIdRaw || 0)
+  if (!cableId) {
+    linkForm.value.to_core_no = ''
+    return
+  }
+  if (!linkCoreOptionExists(cableId, linkForm.value.to_core_no)) {
+    linkForm.value.to_core_no = ''
+  }
+})
+
+watch(() => linkForm.value.outputs, (rows) => {
+  if (!showLinkModal.value) return
+  if (!Array.isArray(rows) || rows.length < 1) return
+
+  let changed = false
+  const next = rows.map((row) => {
+    const outCableId = Number(row?.to_cable_id || 0)
+    const coreRaw = (row?.to_core_no || '').toString()
+    if (!outCableId && coreRaw) {
+      changed = true
+      return { ...(row || {}), to_core_no: '' }
+    }
+    if (outCableId > 0 && coreRaw && !linkCoreOptionExists(outCableId, coreRaw)) {
+      changed = true
+      return { ...(row || {}), to_core_no: '' }
+    }
+    return row
+  })
+
+  if (changed) linkForm.value.outputs = next
+}, { deep: true })
 
 watch(() => linkForm.value.link_type, (typeRaw) => {
   if (!showLinkModal.value) return
@@ -5657,10 +5743,16 @@ onUnmounted(() => {
               <div v-if="linkErrors.from_cable_id" class="text-xs text-red-600 mt-1">{{ linkErrors.from_cable_id?.[0] }}</div>
             </div>
             <div>
-              <label class="text-xs text-gray-600 dark:text-gray-300">From Core</label>
-              <input v-model="linkForm.from_core_no" type="number" min="1" class="input w-full" placeholder="1" />
+              <label class="text-xs text-gray-600 dark:text-gray-300">From Warna Core</label>
+              <select v-model="linkForm.from_core_no" class="input w-full">
+                <option value="">(pilih warna core)</option>
+                <option v-for="o in linkFromCoreOptions" :key="'fc-' + o.value" :value="o.value">{{ o.label }}</option>
+              </select>
               <div v-if="linkErrors.from_core_no" class="text-xs text-red-600 mt-1">{{ linkErrors.from_core_no?.[0] }}</div>
             </div>
+          </div>
+          <div class="text-[11px] text-gray-500 dark:text-gray-400">
+            Pilihan warna mengikuti urutan warna core standar 12 warna (berulang).
           </div>
 
           <div v-if="String(linkForm.link_type).toUpperCase() !== 'SPLIT'" class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -5673,8 +5765,11 @@ onUnmounted(() => {
               <div v-if="linkErrors.to_cable_id" class="text-xs text-red-600 mt-1">{{ linkErrors.to_cable_id?.[0] }}</div>
             </div>
             <div>
-              <label class="text-xs text-gray-600 dark:text-gray-300">To Core</label>
-              <input v-model="linkForm.to_core_no" type="number" min="1" class="input w-full" placeholder="1" />
+              <label class="text-xs text-gray-600 dark:text-gray-300">To Warna Core</label>
+              <select v-model="linkForm.to_core_no" class="input w-full">
+                <option value="">(pilih warna core)</option>
+                <option v-for="o in linkToCoreOptions" :key="'tc-' + o.value" :value="o.value">{{ o.label }}</option>
+              </select>
               <div v-if="linkErrors.to_core_no" class="text-xs text-red-600 mt-1">{{ linkErrors.to_core_no?.[0] }}</div>
             </div>
           </div>
@@ -5708,7 +5803,12 @@ onUnmounted(() => {
                   </select>
                 </div>
                 <div class="col-span-3">
-                  <input v-model="o.to_core_no" type="number" min="1" class="input w-full" placeholder="core" />
+                  <select v-model="o.to_core_no" class="input w-full">
+                    <option value="">(warna)</option>
+                    <option v-for="opt in linkOutputCoreOptions(o.to_cable_id)" :key="'oc-' + idx + '-' + opt.value" :value="opt.value">
+                      {{ opt.label }}
+                    </option>
+                  </select>
                 </div>
                 <div class="col-span-2 flex items-center justify-end">
                   <button class="btn btn-danger !py-1 !px-2 !text-xs" @click="removeSplitOutputRow(idx)">Hapus</button>
