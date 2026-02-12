@@ -1754,9 +1754,14 @@ const breakForm = ref({
 })
 
 const breakOtdrForm = ref({
+  reference_mode: 'endpoint', // endpoint|point
   reference_side: 'from', // from|to
+  reference_point_id: '',
+  reference_direction: 'auto', // auto|toward_to|toward_from
   distance_m: '',
 })
+
+const BREAK_OTDR_REF_MAX_OFFSET_M = 80
 
 const breakSelectedCable = computed(() => {
   const id = Number(breakForm.value.cable_id || 0)
@@ -1781,6 +1786,224 @@ const breakOtdrCableLengthM = computed(() => {
   return Math.round(calcPathLengthMeters(path))
 })
 
+function clampNumber(v, min, max) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return Number(min)
+  return Math.max(Number(min), Math.min(Number(max), n))
+}
+
+function projectPointToPathWithChainage(path, pointLatLng) {
+  const pts = Array.isArray(path) ? path : []
+  if (pts.length < 1) return null
+
+  const pLat = Number(pointLatLng?.lat)
+  const pLng = Number(pointLatLng?.lng)
+  if (!Number.isFinite(pLat) || !Number.isFinite(pLng)) return null
+
+  if (pts.length < 2) {
+    const only = pts[0]
+    const lat = Number(only?.lat)
+    const lng = Number(only?.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+    return {
+      lat: roundCoord(lat),
+      lng: roundCoord(lng),
+      chainage_m: 0,
+      offset_m: haversineMeters({ lat: pLat, lng: pLng }, { lat, lng }),
+      segment_index: 0,
+      segment_ratio: 0,
+    }
+  }
+
+  let best = null
+  let bestOffset = Number.POSITIVE_INFINITY
+  let chainageAcc = 0
+
+  for (let i = 1; i < pts.length; i += 1) {
+    const a = pts[i - 1]
+    const b = pts[i]
+    const aLat = Number(a?.lat)
+    const aLng = Number(a?.lng)
+    const bLat = Number(b?.lat)
+    const bLng = Number(b?.lng)
+    if (!Number.isFinite(aLat) || !Number.isFinite(aLng) || !Number.isFinite(bLat) || !Number.isFinite(bLng)) continue
+
+    const latRefRad = (Math.PI / 180) * ((aLat + bLat + pLat) / 3)
+    const mPerLat = 111320
+    const mPerLng = 111320 * Math.cos(latRefRad)
+
+    const vx = (bLng - aLng) * mPerLng
+    const vy = (bLat - aLat) * mPerLat
+    const wx = (pLng - aLng) * mPerLng
+    const wy = (pLat - aLat) * mPerLat
+    const segSq = vx * vx + vy * vy
+    const segLen = Math.sqrt(segSq)
+    if (!Number.isFinite(segLen) || segLen <= 0) {
+      chainageAcc += haversineMeters({ lat: aLat, lng: aLng }, { lat: bLat, lng: bLng })
+      continue
+    }
+
+    const ratio = clampNumber(segSq > 0 ? (wx * vx + wy * vy) / segSq : 0, 0, 1)
+    const projLat = aLat + (bLat - aLat) * ratio
+    const projLng = aLng + (bLng - aLng) * ratio
+    const px = wx - vx * ratio
+    const py = wy - vy * ratio
+    const offset = Math.sqrt(px * px + py * py)
+
+    if (offset < bestOffset) {
+      bestOffset = offset
+      best = {
+        lat: roundCoord(projLat),
+        lng: roundCoord(projLng),
+        chainage_m: chainageAcc + segLen * ratio,
+        offset_m: offset,
+        segment_index: i - 1,
+        segment_ratio: ratio,
+      }
+    }
+
+    chainageAcc += segLen
+  }
+
+  return best
+}
+
+const breakOtdrReferencePointOptions = computed(() => {
+  const cable = breakSelectedCable.value
+  const path = cablePathForBreakAssist(cable)
+  if (!cable || !Array.isArray(path) || path.length < 2) return []
+
+  const endpointIds = new Set([
+    Number(cable?.from_point_id || 0),
+    Number(cable?.to_point_id || 0),
+  ])
+
+  const out = []
+  ;(points.value || []).forEach((p) => {
+    const pointId = Number(p?.id || 0)
+    if (!pointId) return
+    const lat = Number(p?.latitude)
+    const lng = Number(p?.longitude)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+
+    const proj = projectPointToPathWithChainage(path, { lat, lng })
+    if (!proj) return
+
+    const isEndpoint = endpointIds.has(pointId)
+    if (!isEndpoint && Number(proj.offset_m || 0) > BREAK_OTDR_REF_MAX_OFFSET_M) return
+
+    const pointType = (p?.point_type || '').toString().toUpperCase()
+    const offsetM = Math.round(Number(proj.offset_m || 0))
+    const chainM = Math.round(Number(proj.chainage_m || 0))
+    const label = `${p?.name || ('Titik #' + pointId)}${pointType ? ' | ' + pointType : ''} | chain ${chainM}m | off ${offsetM}m`
+
+    out.push({
+      id: pointId,
+      name: p?.name || ('Titik #' + pointId),
+      point_type: pointType,
+      lat,
+      lng,
+      chainage_m: Number(proj.chainage_m || 0),
+      offset_m: Number(proj.offset_m || 0),
+      label,
+    })
+  })
+
+  out.sort((a, b) => Number(a.chainage_m || 0) - Number(b.chainage_m || 0))
+  return out
+})
+
+const breakOtdrSelectedReferencePoint = computed(() => {
+  const id = Number(breakOtdrForm.value.reference_point_id || 0)
+  if (!id) return null
+  return breakOtdrReferencePointOptions.value.find((p) => Number(p?.id || 0) === id) || null
+})
+
+const breakOtdrSelectedReferenceHint = computed(() => {
+  const ref = breakOtdrSelectedReferencePoint.value
+  if (!ref) return ''
+  return `Chain ${Math.round(ref.chainage_m || 0)}m dari awal kabel, offset ${Math.round(ref.offset_m || 0)}m ke jalur.`
+})
+
+function nearestBreakOtdrReferenceByChainage(chainageM, excludePointId = null) {
+  const rows = breakOtdrReferencePointOptions.value || []
+  if (rows.length === 0) return null
+
+  const target = Number(chainageM || 0)
+  let best = null
+  let bestDelta = Number.POSITIVE_INFINITY
+  rows.forEach((row) => {
+    const id = Number(row?.id || 0)
+    if (excludePointId && id === Number(excludePointId)) return
+    const d = Math.abs(Number(row?.chainage_m || 0) - target)
+    if (d < bestDelta) {
+      bestDelta = d
+      best = row
+    }
+  })
+
+  if (!best) return null
+  return {
+    point: best,
+    along_distance_m: Math.round(bestDelta),
+  }
+}
+
+function autoPickBreakOtdrReferencePoint(config = {}) {
+  const silent = config?.silent === true
+  const refs = breakOtdrReferencePointOptions.value || []
+  if (refs.length === 0) {
+    if (!silent && toast) toast.error('Belum ada titik/JB yang dekat dengan jalur kabel ini.')
+    return
+  }
+
+  const pointIdFromForm = Number(breakForm.value.point_id || 0)
+  if (pointIdFromForm > 0) {
+    const byPoint = refs.find((x) => Number(x?.id || 0) === pointIdFromForm)
+    if (byPoint) {
+      breakOtdrForm.value.reference_point_id = String(byPoint.id)
+      breakOtdrForm.value.reference_mode = 'point'
+      if (!silent && toast) toast.success(`Referensi OTDR di-set ke ${byPoint.name}.`)
+      return
+    }
+  }
+
+  const lat = Number(breakForm.value.latitude)
+  const lng = Number(breakForm.value.longitude)
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    let nearest = null
+    let best = Number.POSITIVE_INFINITY
+    refs.forEach((x) => {
+      const d = haversineMeters({ lat, lng }, { lat: Number(x?.lat), lng: Number(x?.lng) })
+      if (d < best) {
+        best = d
+        nearest = x
+      }
+    })
+    if (nearest) {
+      breakOtdrForm.value.reference_point_id = String(nearest.id)
+      breakOtdrForm.value.reference_mode = 'point'
+      if (!silent && toast) toast.success(`Referensi OTDR dipilih otomatis: ${nearest.name}.`)
+      return
+    }
+  }
+
+  const half = Number(breakOtdrCableLengthM.value || 0) / 2
+  let mid = refs[0]
+  let bestDelta = Number.POSITIVE_INFINITY
+  refs.forEach((x) => {
+    const d = Math.abs(Number(x?.chainage_m || 0) - half)
+    if (d < bestDelta) {
+      bestDelta = d
+      mid = x
+    }
+  })
+
+  breakOtdrForm.value.reference_point_id = String(mid.id)
+  breakOtdrForm.value.reference_mode = 'point'
+  if (!silent && toast) toast.success(`Referensi OTDR dipilih: ${mid.name}.`)
+}
+
 function resetBreakForm() {
   breakForm.value = {
     id: null,
@@ -1803,7 +2026,10 @@ function resetBreakForm() {
     description: '',
   }
   breakOtdrForm.value = {
+    reference_mode: 'endpoint',
     reference_side: 'from',
+    reference_point_id: '',
+    reference_direction: 'auto',
     distance_m: '',
   }
   breakErrors.value = {}
@@ -1841,6 +2067,14 @@ function openEditBreak(item) {
     latitude: item.latitude ?? null,
     longitude: item.longitude ?? null,
     description: item.description || '',
+  }
+  const pointId = Number(breakForm.value.point_id || 0)
+  if (pointId > 0) {
+    const refPoint = breakOtdrReferencePointOptions.value.find((x) => Number(x?.id || 0) === pointId)
+    if (refPoint) {
+      breakOtdrForm.value.reference_mode = 'point'
+      breakOtdrForm.value.reference_point_id = String(refPoint.id)
+    }
   }
   showBreakModal.value = true
   resumeModal.value = null
@@ -1947,10 +2181,86 @@ function applyBreakLocationFromOtdr() {
     return
   }
 
-  const refSide = String(breakOtdrForm.value.reference_side || 'from').toLowerCase() === 'to' ? 'to' : 'from'
-  const measurePath = refSide === 'to' ? path.slice().reverse() : path
-  const targetMeters = Math.min(Math.max(0, rawDistance), totalMeters)
-  const targetPoint = pointAlongPathByDistance(measurePath, targetMeters)
+  const mode = String(breakOtdrForm.value.reference_mode || 'endpoint').toLowerCase() === 'point' ? 'point' : 'endpoint'
+  let targetChainage = 0
+  let referenceText = ''
+  let autoAnalysisText = ''
+  let clampedByBoundary = false
+
+  if (mode === 'endpoint') {
+    const refSide = String(breakOtdrForm.value.reference_side || 'from').toLowerCase() === 'to' ? 'to' : 'from'
+    const rawChainage = refSide === 'to'
+      ? totalMeters - rawDistance
+      : rawDistance
+    targetChainage = clampNumber(rawChainage, 0, totalMeters)
+    clampedByBoundary = rawChainage !== targetChainage
+    referenceText = refSide === 'to' ? breakOtdrToLabel.value : breakOtdrFromLabel.value
+  } else {
+    const refPoint = breakOtdrSelectedReferencePoint.value
+    if (!refPoint) {
+      if (toast) toast.error('Pilih titik/JB referensi terlebih dahulu.')
+      return
+    }
+
+    const direction = (breakOtdrForm.value.reference_direction || 'auto').toString()
+    const refChainage = Number(refPoint.chainage_m || 0)
+
+    const candidates = []
+    const pushCandidate = (rawChain, dirKey, dirLabel) => {
+      const chain = clampNumber(rawChain, 0, totalMeters)
+      const nearest = nearestBreakOtdrReferenceByChainage(chain, Number(refPoint.id || 0))
+      candidates.push({
+        dirKey,
+        dirLabel,
+        raw_chainage: rawChain,
+        chainage: chain,
+        clamped: rawChain !== chain,
+        nearest,
+      })
+    }
+
+    if (direction === 'toward_to') {
+      pushCandidate(refChainage + rawDistance, 'toward_to', `ke arah ${breakOtdrToLabel.value}`)
+    } else if (direction === 'toward_from') {
+      pushCandidate(refChainage - rawDistance, 'toward_from', `ke arah ${breakOtdrFromLabel.value}`)
+    } else {
+      pushCandidate(refChainage + rawDistance, 'toward_to', `ke arah ${breakOtdrToLabel.value}`)
+      pushCandidate(refChainage - rawDistance, 'toward_from', `ke arah ${breakOtdrFromLabel.value}`)
+    }
+
+    if (candidates.length === 0) {
+      if (toast) toast.error('Arah OTDR tidak valid.')
+      return
+    }
+
+    let chosen = candidates[0]
+    if (direction === 'auto' && candidates.length > 1) {
+      const scoreOf = (c) => {
+        const near = Number(c?.nearest?.along_distance_m)
+        const nearScore = Number.isFinite(near) ? near : 1e9
+        const clampPenalty = c?.clamped ? 1000 : 0
+        return nearScore + clampPenalty
+      }
+      const a = candidates[0]
+      const b = candidates[1]
+      chosen = scoreOf(b) < scoreOf(a) ? b : a
+      if (chosen?.nearest?.point) {
+        autoAnalysisText = `Auto pilih ${chosen.dirLabel}, karena lebih dekat ke titik ${chosen.nearest.point.name} (±${chosen.nearest.along_distance_m}m).`
+      } else {
+        autoAnalysisText = `Auto pilih ${chosen.dirLabel}.`
+      }
+    }
+
+    targetChainage = Number(chosen.chainage || 0)
+    clampedByBoundary = !!chosen.clamped
+    referenceText = `${refPoint.name} (${chosen.dirLabel})`
+    if (!autoAnalysisText && chosen?.nearest?.point) {
+      autoAnalysisText = `Titik terdekat dari hasil ukur: ${chosen.nearest.point.name} (±${chosen.nearest.along_distance_m}m).`
+    }
+  }
+
+  const targetMeters = Math.round(targetChainage)
+  const targetPoint = pointAlongPathByDistance(path, targetChainage)
   if (!targetPoint) {
     if (toast) toast.error('Gagal menghitung lokasi titik putus.')
     return
@@ -1973,13 +2283,15 @@ function applyBreakLocationFromOtdr() {
 
   renderDraft()
 
-  if (rawDistance > totalMeters && toast) {
-    toast.info(`Jarak melebihi panjang jalur (${Math.round(totalMeters)}m). Titik dipasang di ujung jalur.`)
+  if (clampedByBoundary && toast) {
+    toast.info(`Hasil ukur melewati batas jalur (${Math.round(totalMeters)}m). Titik dipasang di batas terdekat.`)
   }
   if (toast) {
-    const refLabel = refSide === 'to' ? breakOtdrToLabel.value : breakOtdrFromLabel.value
     const snapLabel = snap?.snapped ? ` (snap: ${snap?.point?.name || 'titik'})` : ''
-    toast.success(`Lokasi putus di-set ${Math.round(targetMeters)}m dari ${refLabel}.${snapLabel}`)
+    toast.success(`Lokasi putus di-set pada chain ${targetMeters}m dari awal kabel | referensi: ${referenceText}.${snapLabel}`)
+  }
+  if (autoAnalysisText && toast) {
+    toast.info(autoAnalysisText)
   }
 }
 
@@ -3052,6 +3364,24 @@ watch([showCables, showPoints, showBreaks], () => {
 
 watch([cables, points, ports, links, breaks], () => {
   BULK_DELETE_TABS.forEach((tab) => pruneBulkSelection(tab))
+})
+
+watch(() => breakForm.value.cable_id, () => {
+  const currentRefId = Number(breakOtdrForm.value.reference_point_id || 0)
+  if (currentRefId > 0) {
+    const exists = breakOtdrReferencePointOptions.value.some((x) => Number(x?.id || 0) === currentRefId)
+    if (!exists) breakOtdrForm.value.reference_point_id = ''
+  }
+  if (breakOtdrForm.value.reference_mode === 'point' && !breakOtdrForm.value.reference_point_id) {
+    autoPickBreakOtdrReferencePoint({ silent: true })
+  }
+})
+
+watch(breakOtdrReferencePointOptions, (rows) => {
+  const currentRefId = Number(breakOtdrForm.value.reference_point_id || 0)
+  if (!currentRefId) return
+  const exists = (rows || []).some((x) => Number(x?.id || 0) === currentRefId)
+  if (!exists) breakOtdrForm.value.reference_point_id = ''
 })
 
 watch(selectedCableId, (id) => {
@@ -4440,10 +4770,10 @@ onUnmounted(() => {
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
               <div>
-                <label class="text-[11px] text-amber-800 dark:text-amber-200">Referensi Titik</label>
-                <select v-model="breakOtdrForm.reference_side" class="input w-full !py-2 !text-xs" :disabled="!breakForm.cable_id">
-                  <option value="from">Dari: {{ breakOtdrFromLabel }}</option>
-                  <option value="to">Dari: {{ breakOtdrToLabel }}</option>
+                <label class="text-[11px] text-amber-800 dark:text-amber-200">Mode Referensi</label>
+                <select v-model="breakOtdrForm.reference_mode" class="input w-full !py-2 !text-xs">
+                  <option value="endpoint">Ujung Kabel (From/To)</option>
+                  <option value="point">Titik/JB Tengah</option>
                 </select>
               </div>
               <div>
@@ -4468,8 +4798,53 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <div v-if="breakOtdrForm.reference_mode === 'endpoint'" class="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div>
+                <label class="text-[11px] text-amber-800 dark:text-amber-200">Referensi Ujung</label>
+                <select v-model="breakOtdrForm.reference_side" class="input w-full !py-2 !text-xs">
+                  <option value="from">Dari: {{ breakOtdrFromLabel }}</option>
+                  <option value="to">Dari: {{ breakOtdrToLabel }}</option>
+                </select>
+              </div>
+            </div>
+
+            <div v-else class="space-y-2">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div>
+                  <label class="text-[11px] text-amber-800 dark:text-amber-200">Titik/JB Referensi</label>
+                  <select v-model="breakOtdrForm.reference_point_id" class="input w-full !py-2 !text-xs" :disabled="!breakForm.cable_id">
+                    <option value="">(pilih titik di jalur kabel)</option>
+                    <option v-for="rp in breakOtdrReferencePointOptions" :key="'otdr-rp-' + rp.id" :value="String(rp.id)">
+                      {{ rp.label }}
+                    </option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-[11px] text-amber-800 dark:text-amber-200">Arah Pengukuran</label>
+                  <select v-model="breakOtdrForm.reference_direction" class="input w-full !py-2 !text-xs">
+                    <option value="auto">Auto (analisa titik terdekat)</option>
+                    <option value="toward_to">Ke arah {{ breakOtdrToLabel }}</option>
+                    <option value="toward_from">Ke arah {{ breakOtdrFromLabel }}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  class="btn btn-secondary !py-1.5 !text-xs"
+                  :disabled="!breakForm.cable_id || breakOtdrReferencePointOptions.length === 0"
+                  @click="autoPickBreakOtdrReferencePoint"
+                >
+                  Analisa Titik Terdekat
+                </button>
+                <div class="text-[11px] text-amber-700/90 dark:text-amber-300/90">
+                  {{ breakOtdrSelectedReferenceHint || 'Pilih titik/JB di sepanjang jalur kabel untuk referensi OTDR dari titik tengah.' }}
+                </div>
+              </div>
+            </div>
+
             <div class="text-[11px] text-amber-700/90 dark:text-amber-300/90">
-              Pilih kabel dan referensi titik, isi jarak hasil OTDR, lalu klik tombol untuk mengisi latitude/longitude otomatis.
+              Mode titik tengah mendukung OTDR dari JB/point tengah, dengan analisa arah otomatis berdasarkan kedekatan ke titik/JB terdekat di jalur.
             </div>
           </div>
 
