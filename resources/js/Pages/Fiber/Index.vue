@@ -733,6 +733,15 @@ function cableNameById(id) {
   return c ? String(c.name || '') : null
 }
 
+function cableAttachedToPointId(cableId, pointId) {
+  const cid = Number(cableId || 0)
+  const pid = Number(pointId || 0)
+  if (!cid || !pid) return false
+  const cable = cableById.value.get(cid)
+  if (!cable) return false
+  return Number(cable?.from_point_id || 0) === pid || Number(cable?.to_point_id || 0) === pid
+}
+
 function statusColor(status) {
   const s = String(status || '').toUpperCase()
   if (s === 'OPEN') return { stroke: '#dc2626', fill: '#ef4444' }
@@ -2689,6 +2698,8 @@ function openLinkAfterCableSplit(pointId, fromCableId, toCableId = null) {
   linkForm.value.link_type = 'SPLICE'
   if (Number(fromCableId || 0) > 0) linkForm.value.from_cable_id = String(fromCableId)
   if (Number(toCableId || 0) > 0) linkForm.value.to_cable_id = String(toCableId)
+  if (Number(fromCableId || 0) > 0) linkForm.value.from_core_no = '1'
+  if (Number(toCableId || 0) > 0) linkForm.value.to_core_no = '1'
   showLinkModal.value = true
   activeTab.value = 'links'
 }
@@ -2955,6 +2966,16 @@ const linkForm = ref({
   outputs: [],
   loss_db: '',
   notes: '',
+})
+
+const linkPointId = computed(() => Number(linkForm.value.point_id || 0))
+
+const linkSelectableCables = computed(() => {
+  const rows = Array.isArray(cables.value) ? cables.value : []
+  const pointId = linkPointId.value
+  if (!pointId) return rows
+  const filtered = rows.filter((c) => cableAttachedToPointId(c?.id, pointId))
+  return filtered
 })
 
 const linkItems = computed(() => {
@@ -3523,14 +3544,17 @@ function openEditLink(item) {
   if (item?.kind === 'SPLIT_GROUP') {
     linkForm.value = {
       id: item.id,
-      point_id: item.point_id ?? '',
+      point_id: item.point_id !== null && item.point_id !== undefined ? String(item.point_id) : '',
       link_type: 'SPLIT',
-      from_cable_id: item.from_cable_id ?? '',
-      from_core_no: item.from_core_no ?? '',
+      from_cable_id: item.from_cable_id !== null && item.from_cable_id !== undefined ? String(item.from_cable_id) : '',
+      from_core_no: item.from_core_no !== null && item.from_core_no !== undefined ? String(item.from_core_no) : '',
       to_cable_id: '',
       to_core_no: '',
       split_group: item.split_group || '',
-      outputs: (item.outputs || []).map((o) => ({ to_cable_id: o.to_cable_id ?? '', to_core_no: o.to_core_no ?? '' })),
+      outputs: (item.outputs || []).map((o) => ({
+        to_cable_id: o?.to_cable_id !== null && o?.to_cable_id !== undefined ? String(o.to_cable_id) : '',
+        to_core_no: o?.to_core_no !== null && o?.to_core_no !== undefined ? String(o.to_core_no) : '',
+      })),
       loss_db: item.loss_db ?? '',
       notes: item.notes || '',
     }
@@ -3541,12 +3565,12 @@ function openEditLink(item) {
 
   linkForm.value = {
     id: item.id,
-    point_id: item.point_id ?? '',
+    point_id: item.point_id !== null && item.point_id !== undefined ? String(item.point_id) : '',
     link_type: (item.link_type || 'SPLICE').toString().toUpperCase(),
-    from_cable_id: item.from_cable_id ?? '',
-    from_core_no: item.from_core_no ?? '',
-    to_cable_id: item.to_cable_id ?? '',
-    to_core_no: item.to_core_no ?? '',
+    from_cable_id: item.from_cable_id !== null && item.from_cable_id !== undefined ? String(item.from_cable_id) : '',
+    from_core_no: item.from_core_no !== null && item.from_core_no !== undefined ? String(item.from_core_no) : '',
+    to_cable_id: item.to_cable_id !== null && item.to_cable_id !== undefined ? String(item.to_cable_id) : '',
+    to_core_no: item.to_core_no !== null && item.to_core_no !== undefined ? String(item.to_core_no) : '',
     split_group: item.split_group || '',
     outputs: [],
     loss_db: item.loss_db ?? '',
@@ -3556,32 +3580,109 @@ function openEditLink(item) {
 }
 
 async function saveLink() {
+  if (linkProcessing.value) return
   linkProcessing.value = true
   linkErrors.value = {}
 
   const linkType = (linkForm.value.link_type || 'SPLICE').toString().toUpperCase()
+  const pointId = linkForm.value.point_id !== '' ? Number(linkForm.value.point_id) : 0
+  const fromCableId = linkForm.value.from_cable_id !== '' ? Number(linkForm.value.from_cable_id) : 0
+  const fromCoreNo = linkForm.value.from_core_no !== '' ? Number(linkForm.value.from_core_no) : 0
+  const toCableId = linkForm.value.to_cable_id !== '' ? Number(linkForm.value.to_cable_id) : 0
+  const toCoreNo = linkForm.value.to_core_no !== '' ? Number(linkForm.value.to_core_no) : 0
+  const splitGroupRaw = (linkForm.value.split_group || '').toString().trim()
+  const lossDb = linkForm.value.loss_db !== '' ? Number(linkForm.value.loss_db) : null
+  const notes = (linkForm.value.notes || '').toString().trim()
+
+  const localErrors = {}
+  if (pointId <= 0) localErrors.point_id = ['Titik wajib dipilih.']
+  if (fromCableId <= 0) localErrors.from_cable_id = ['From cable wajib dipilih.']
+  if (!Number.isFinite(fromCoreNo) || fromCoreNo <= 0) localErrors.from_core_no = ['From core wajib diisi (>= 1).']
+
+  if (pointId > 0 && fromCableId > 0 && !cableAttachedToPointId(fromCableId, pointId)) {
+    localErrors.from_cable_id = ['From cable tidak terhubung ke titik terpilih.']
+  }
+  if (linkForm.value.loss_db !== '' && (!Number.isFinite(lossDb) || lossDb < 0 || lossDb > 99)) {
+    localErrors.loss_db = ['Loss harus angka 0 - 99 dB.']
+  }
 
   const payload = {
-    point_id: linkForm.value.point_id !== '' ? Number(linkForm.value.point_id) : null,
+    point_id: pointId > 0 ? pointId : null,
     link_type: linkType,
-    from_cable_id: linkForm.value.from_cable_id !== '' ? Number(linkForm.value.from_cable_id) : null,
-    from_core_no: linkForm.value.from_core_no !== '' ? Number(linkForm.value.from_core_no) : null,
-    split_group: linkForm.value.split_group || null,
-    loss_db: linkForm.value.loss_db !== '' ? Number(linkForm.value.loss_db) : null,
-    notes: linkForm.value.notes || null,
+    from_cable_id: fromCableId > 0 ? fromCableId : null,
+    from_core_no: Number.isFinite(fromCoreNo) && fromCoreNo > 0 ? fromCoreNo : null,
+    split_group: splitGroupRaw || null,
+    loss_db: linkForm.value.loss_db === '' ? null : lossDb,
+    notes: notes || null,
   }
 
   if (linkType === 'SPLIT') {
     const outs = Array.isArray(linkForm.value.outputs) ? linkForm.value.outputs : []
-    payload.outputs = outs
-      .map((o) => ({
-        to_cable_id: o.to_cable_id !== '' ? Number(o.to_cable_id) : null,
-        to_core_no: o.to_core_no !== '' ? Number(o.to_core_no) : null,
-      }))
-      .filter((o) => o.to_cable_id && o.to_core_no)
+    const normalizedOutputs = []
+    const seenOutputs = new Set()
+
+    for (let i = 0; i < outs.length; i += 1) {
+      const row = outs[i] || {}
+      const outCableId = row.to_cable_id !== '' ? Number(row.to_cable_id) : 0
+      const outCoreNo = row.to_core_no !== '' ? Number(row.to_core_no) : 0
+      const hasAny = outCableId > 0 || outCoreNo > 0
+      if (!hasAny) continue
+
+      if (outCableId <= 0 || !Number.isFinite(outCoreNo) || outCoreNo <= 0) {
+        localErrors.outputs = [`Output baris ${i + 1} belum lengkap.`]
+        continue
+      }
+      if (pointId > 0 && !cableAttachedToPointId(outCableId, pointId)) {
+        localErrors.outputs = [`Output baris ${i + 1}: kabel tidak terhubung ke titik terpilih.`]
+        continue
+      }
+      if (fromCableId > 0 && Number.isFinite(fromCoreNo) && fromCoreNo > 0 && outCableId === fromCableId && outCoreNo === fromCoreNo) {
+        localErrors.outputs = [`Output baris ${i + 1}: tidak boleh sama dengan input core.`]
+        continue
+      }
+
+      const key = `${outCableId}:${outCoreNo}`
+      if (seenOutputs.has(key)) {
+        localErrors.outputs = [`Output baris ${i + 1}: duplikat core output.`]
+        continue
+      }
+      seenOutputs.add(key)
+      normalizedOutputs.push({
+        to_cable_id: outCableId,
+        to_core_no: outCoreNo,
+      })
+    }
+
+    if (normalizedOutputs.length < 1) {
+      localErrors.outputs = localErrors.outputs || ['Isi minimal 1 output splitter.']
+    }
+
+    payload.outputs = normalizedOutputs
   } else {
-    payload.to_cable_id = linkForm.value.to_cable_id !== '' ? Number(linkForm.value.to_cable_id) : null
-    payload.to_core_no = linkForm.value.to_core_no !== '' ? Number(linkForm.value.to_core_no) : null
+    if (toCableId <= 0) localErrors.to_cable_id = ['To cable wajib dipilih.']
+    if (!Number.isFinite(toCoreNo) || toCoreNo <= 0) localErrors.to_core_no = ['To core wajib diisi (>= 1).']
+    if (pointId > 0 && toCableId > 0 && !cableAttachedToPointId(toCableId, pointId)) {
+      localErrors.to_cable_id = ['To cable tidak terhubung ke titik terpilih.']
+    }
+    if (
+      fromCableId > 0 && toCableId > 0
+      && Number.isFinite(fromCoreNo) && fromCoreNo > 0
+      && Number.isFinite(toCoreNo) && toCoreNo > 0
+      && fromCableId === toCableId && fromCoreNo === toCoreNo
+    ) {
+      localErrors.to_core_no = ['From dan To core tidak boleh sama.']
+    }
+
+    payload.to_cable_id = toCableId > 0 ? toCableId : null
+    payload.to_core_no = Number.isFinite(toCoreNo) && toCoreNo > 0 ? toCoreNo : null
+    payload.split_group = null
+  }
+
+  if (Object.keys(localErrors).length > 0) {
+    linkErrors.value = localErrors
+    if (toast) toast.error('Periksa field sambungan terlebih dahulu.')
+    linkProcessing.value = false
+    return
   }
 
   const isEdit = linkModalMode.value === 'edit' && linkForm.value.id
@@ -3713,6 +3814,39 @@ watch(cableSplitCandidateCables, (rows) => {
   const exists = (rows || []).some((x) => Number(x?.id || 0) === current)
   if (exists) return
   cableSplitForm.value.source_cable_id = rows && rows.length > 0 ? String(rows[0].id) : ''
+})
+
+watch(() => linkForm.value.point_id, (pointIdRaw) => {
+  if (!showLinkModal.value) return
+  const pointId = Number(pointIdRaw || 0)
+  if (!pointId) return
+
+  if (linkForm.value.from_cable_id && !cableAttachedToPointId(linkForm.value.from_cable_id, pointId)) {
+    linkForm.value.from_cable_id = ''
+  }
+  if (linkForm.value.to_cable_id && !cableAttachedToPointId(linkForm.value.to_cable_id, pointId)) {
+    linkForm.value.to_cable_id = ''
+  }
+
+  if (Array.isArray(linkForm.value.outputs) && linkForm.value.outputs.length > 0) {
+    linkForm.value.outputs = linkForm.value.outputs.map((o) => {
+      const outCableId = o?.to_cable_id
+      if (!outCableId || cableAttachedToPointId(outCableId, pointId)) return o
+      return { ...(o || {}), to_cable_id: '' }
+    })
+  }
+})
+
+watch(() => linkForm.value.link_type, (typeRaw) => {
+  if (!showLinkModal.value) return
+  const type = (typeRaw || 'SPLICE').toString().toUpperCase()
+  if (type === 'SPLIT') {
+    if (!Array.isArray(linkForm.value.outputs) || linkForm.value.outputs.length === 0) {
+      ensureSplitOutputs(splitOutputCount.value || 8)
+    }
+    return
+  }
+  linkForm.value.split_group = ''
 })
 
 watch(selectedCableId, (id) => {
@@ -5442,7 +5576,7 @@ onUnmounted(() => {
             <label class="text-xs text-gray-600 dark:text-gray-300">Titik</label>
             <select v-model="linkForm.point_id" class="input w-full">
               <option value="">(pilih titik)</option>
-              <option v-for="p in points" :key="p.id" :value="p.id">{{ p.name }}</option>
+              <option v-for="p in points" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
             </select>
             <div v-if="linkErrors.point_id" class="text-xs text-red-600 mt-1">{{ linkErrors.point_id?.[0] }}</div>
           </div>
@@ -5459,6 +5593,7 @@ onUnmounted(() => {
             <div>
               <label class="text-xs text-gray-600 dark:text-gray-300">Loss (dB)</label>
               <input v-model="linkForm.loss_db" class="input w-full" placeholder="0.20" />
+              <div v-if="linkErrors.loss_db" class="text-xs text-red-600 mt-1">{{ linkErrors.loss_db?.[0] }}</div>
             </div>
           </div>
 
@@ -5467,7 +5602,7 @@ onUnmounted(() => {
               <label class="text-xs text-gray-600 dark:text-gray-300">From Cable</label>
               <select v-model="linkForm.from_cable_id" class="input w-full">
                 <option value="">(pilih kabel)</option>
-                <option v-for="c in cables" :key="c.id" :value="c.id">{{ c.name }}</option>
+                <option v-for="c in linkSelectableCables" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
               </select>
               <div v-if="linkErrors.from_cable_id" class="text-xs text-red-600 mt-1">{{ linkErrors.from_cable_id?.[0] }}</div>
             </div>
@@ -5483,12 +5618,14 @@ onUnmounted(() => {
               <label class="text-xs text-gray-600 dark:text-gray-300">To Cable</label>
               <select v-model="linkForm.to_cable_id" class="input w-full">
                 <option value="">(pilih kabel)</option>
-                <option v-for="c in cables" :key="c.id" :value="c.id">{{ c.name }}</option>
+                <option v-for="c in linkSelectableCables" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
               </select>
+              <div v-if="linkErrors.to_cable_id" class="text-xs text-red-600 mt-1">{{ linkErrors.to_cable_id?.[0] }}</div>
             </div>
             <div>
               <label class="text-xs text-gray-600 dark:text-gray-300">To Core</label>
               <input v-model="linkForm.to_core_no" type="number" min="1" class="input w-full" placeholder="1" />
+              <div v-if="linkErrors.to_core_no" class="text-xs text-red-600 mt-1">{{ linkErrors.to_core_no?.[0] }}</div>
             </div>
           </div>
 
@@ -5517,7 +5654,7 @@ onUnmounted(() => {
                 <div class="col-span-7">
                   <select v-model="o.to_cable_id" class="input w-full">
                     <option value="">(kabel output)</option>
-                    <option v-for="c in cables" :key="c.id" :value="c.id">{{ c.name }}</option>
+                    <option v-for="c in linkSelectableCables" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
                   </select>
                 </div>
                 <div class="col-span-3">
@@ -5528,6 +5665,7 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
+            <div v-if="linkErrors.outputs" class="text-xs text-red-600">{{ linkErrors.outputs?.[0] }}</div>
           </div>
 
           <div>
