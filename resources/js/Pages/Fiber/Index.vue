@@ -1753,6 +1753,34 @@ const breakForm = ref({
   description: '',
 })
 
+const breakOtdrForm = ref({
+  reference_side: 'from', // from|to
+  distance_m: '',
+})
+
+const breakSelectedCable = computed(() => {
+  const id = Number(breakForm.value.cable_id || 0)
+  if (!id) return null
+  return cableById.value.get(id) || null
+})
+
+const breakOtdrFromLabel = computed(() => {
+  const cable = breakSelectedCable.value
+  if (!cable) return 'Dari Titik'
+  return pointNameById(cable?.from_point_id) || 'Dari Titik'
+})
+
+const breakOtdrToLabel = computed(() => {
+  const cable = breakSelectedCable.value
+  if (!cable) return 'Ke Titik'
+  return pointNameById(cable?.to_point_id) || 'Ke Titik'
+})
+
+const breakOtdrCableLengthM = computed(() => {
+  const path = cablePathForBreakAssist(breakSelectedCable.value)
+  return Math.round(calcPathLengthMeters(path))
+})
+
 function resetBreakForm() {
   breakForm.value = {
     id: null,
@@ -1773,6 +1801,10 @@ function resetBreakForm() {
     latitude: null,
     longitude: null,
     description: '',
+  }
+  breakOtdrForm.value = {
+    reference_side: 'from',
+    distance_m: '',
   }
   breakErrors.value = {}
 }
@@ -1827,6 +1859,128 @@ function pickBreakOnMap() {
   mapMode.value = 'pickBreak'
   renderDraft()
   if (toast) toast.info('Klik peta untuk memilih lokasi putus.')
+}
+
+function cablePathForBreakAssist(cableItem) {
+  if (!cableItem) return []
+
+  let path = Array.isArray(cableItem?.path)
+    ? cableItem.path
+      .map((p) => ({ lat: Number(p?.lat), lng: Number(p?.lng) }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+    : []
+
+  const fromPt = pointLatLngById(cableItem?.from_point_id)
+  const toPt = pointLatLngById(cableItem?.to_point_id)
+  if (fromPt && toPt) {
+    if (path.length < 2) {
+      path = [fromPt, toPt]
+    } else {
+      path = path.slice()
+      path[0] = { lat: fromPt.lat, lng: fromPt.lng }
+      path[path.length - 1] = { lat: toPt.lat, lng: toPt.lng }
+    }
+  }
+
+  return path
+    .map((p) => ({ lat: roundCoord(Number(p?.lat)), lng: roundCoord(Number(p?.lng)) }))
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+}
+
+function pointAlongPathByDistance(path, distanceMeters) {
+  const pts = Array.isArray(path) ? path : []
+  if (pts.length < 1) return null
+
+  const target = Math.max(0, Number(distanceMeters || 0))
+  if (pts.length < 2) {
+    const only = pts[0]
+    return { lat: roundCoord(Number(only?.lat)), lng: roundCoord(Number(only?.lng)) }
+  }
+
+  let remain = target
+  for (let i = 1; i < pts.length; i += 1) {
+    const a = pts[i - 1]
+    const b = pts[i]
+    const seg = haversineMeters(a, b)
+    if (!Number.isFinite(seg) || seg <= 0) continue
+
+    if (remain <= seg) {
+      const ratio = Math.max(0, Math.min(1, remain / seg))
+      const lat = roundCoord(Number(a?.lat) + (Number(b?.lat) - Number(a?.lat)) * ratio)
+      const lng = roundCoord(Number(a?.lng) + (Number(b?.lng) - Number(a?.lng)) * ratio)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+      return { lat, lng }
+    }
+
+    remain -= seg
+  }
+
+  const last = pts[pts.length - 1]
+  const lastLat = roundCoord(Number(last?.lat))
+  const lastLng = roundCoord(Number(last?.lng))
+  if (!Number.isFinite(lastLat) || !Number.isFinite(lastLng)) return null
+  return { lat: lastLat, lng: lastLng }
+}
+
+function applyBreakLocationFromOtdr() {
+  const cable = breakSelectedCable.value
+  if (!cable) {
+    if (toast) toast.error('Pilih kabel terlebih dahulu.')
+    return
+  }
+
+  const rawDistance = Number(breakOtdrForm.value.distance_m)
+  if (!Number.isFinite(rawDistance) || rawDistance < 0) {
+    if (toast) toast.error('Jarak OTDR harus angka >= 0.')
+    return
+  }
+
+  const path = cablePathForBreakAssist(cable)
+  if (!Array.isArray(path) || path.length < 2) {
+    if (toast) toast.error('Jalur kabel belum valid. Atur path kabel terlebih dulu.')
+    return
+  }
+
+  const totalMeters = calcPathLengthMeters(path)
+  if (!Number.isFinite(totalMeters) || totalMeters <= 0) {
+    if (toast) toast.error('Panjang jalur kabel tidak valid.')
+    return
+  }
+
+  const refSide = String(breakOtdrForm.value.reference_side || 'from').toLowerCase() === 'to' ? 'to' : 'from'
+  const measurePath = refSide === 'to' ? path.slice().reverse() : path
+  const targetMeters = Math.min(Math.max(0, rawDistance), totalMeters)
+  const targetPoint = pointAlongPathByDistance(measurePath, targetMeters)
+  if (!targetPoint) {
+    if (toast) toast.error('Gagal menghitung lokasi titik putus.')
+    return
+  }
+
+  const snap = snapLatLngToKnownPoint(Number(targetPoint.lat), Number(targetPoint.lng), SNAP_RADIUS_M)
+  const finalLat = Number(snap?.lat)
+  const finalLng = Number(snap?.lng)
+  if (!Number.isFinite(finalLat) || !Number.isFinite(finalLng)) {
+    if (toast) toast.error('Koordinat hasil OTDR tidak valid.')
+    return
+  }
+
+  breakForm.value.latitude = finalLat
+  breakForm.value.longitude = finalLng
+  if (snap?.snapped && !breakForm.value.point_id) {
+    const snapPointId = Number(snap?.point?.id || 0)
+    if (snapPointId > 0) breakForm.value.point_id = snapPointId
+  }
+
+  renderDraft()
+
+  if (rawDistance > totalMeters && toast) {
+    toast.info(`Jarak melebihi panjang jalur (${Math.round(totalMeters)}m). Titik dipasang di ujung jalur.`)
+  }
+  if (toast) {
+    const refLabel = refSide === 'to' ? breakOtdrToLabel.value : breakOtdrFromLabel.value
+    const snapLabel = snap?.snapped ? ` (snap: ${snap?.point?.name || 'titik'})` : ''
+    toast.success(`Lokasi putus di-set ${Math.round(targetMeters)}m dari ${refLabel}.${snapLabel}`)
+  }
 }
 
 async function saveBreak() {
@@ -4275,6 +4429,50 @@ onUnmounted(() => {
               <option v-for="c in cables" :key="c.id" :value="c.id">{{ c.name }}</option>
             </select>
           </div>
+
+          <div class="rounded-xl border border-amber-200/70 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-900/10 p-3 space-y-2">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-semibold text-amber-800 dark:text-amber-200">Estimasi Titik Putus (OTDR)</div>
+              <div class="text-[11px] text-amber-700/90 dark:text-amber-300/90">
+                Panjang jalur: <span class="font-semibold">{{ breakOtdrCableLengthM > 0 ? formatLength(breakOtdrCableLengthM) : '-' }}</span>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div>
+                <label class="text-[11px] text-amber-800 dark:text-amber-200">Referensi Titik</label>
+                <select v-model="breakOtdrForm.reference_side" class="input w-full !py-2 !text-xs" :disabled="!breakForm.cable_id">
+                  <option value="from">Dari: {{ breakOtdrFromLabel }}</option>
+                  <option value="to">Dari: {{ breakOtdrToLabel }}</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-[11px] text-amber-800 dark:text-amber-200">Jarak OTDR (meter)</label>
+                <input
+                  v-model="breakOtdrForm.distance_m"
+                  type="number"
+                  min="0"
+                  step="1"
+                  class="input w-full !py-2 !text-xs"
+                  placeholder="contoh: 1240"
+                />
+              </div>
+              <div class="flex items-end">
+                <button
+                  class="btn btn-secondary !py-2 !text-xs w-full"
+                  :disabled="!breakForm.cable_id"
+                  @click="applyBreakLocationFromOtdr"
+                >
+                  Set Lokasi Dari OTDR
+                </button>
+              </div>
+            </div>
+
+            <div class="text-[11px] text-amber-700/90 dark:text-amber-300/90">
+              Pilih kabel dan referensi titik, isi jarak hasil OTDR, lalu klik tombol untuk mengisi latitude/longitude otomatis.
+            </div>
+          </div>
+
           <div>
             <label class="text-xs text-gray-600 dark:text-gray-300">Titik (opsional)</label>
             <select v-model="breakForm.point_id" class="input w-full">
