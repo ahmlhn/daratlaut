@@ -63,6 +63,16 @@ const panelOpen = ref(false)
 const panelSearch = ref('')
 const breakStatusFilter = ref('ALL') // ALL|OPEN|IN_PROGRESS|FIXED|VERIFIED|CANCELLED
 
+const BULK_DELETE_TABS = ['cables', 'points', 'ports', 'links', 'breaks']
+const bulkSelected = ref({
+  cables: [],
+  points: [],
+  ports: [],
+  links: [],
+  breaks: [],
+})
+const bulkDeleting = ref(false)
+
 // Mobile panel snap: ringkas/sedang/penuh.
 const panelSnap = ref('half') // peek|half|full
 
@@ -1439,6 +1449,14 @@ async function saveCable() {
     const okMid = confirm(`Ditemukan ${midCandidates.length} titik belok yang belum punya node. Buat titik FO otomatis (JOINT_CLOSURE)?`)
     if (okMid) {
       autoMidPoints = midCandidates.map((p) => ({ lat: p.lat, lng: p.lng }))
+    } else {
+      const continueWithoutAuto = confirm('Titik FO otomatis tidak dibuat. Lanjut simpan kabel tanpa auto node?')
+      if (!continueWithoutAuto) {
+        cableProcessing.value = false
+        if (toast) toast.info('Penyimpanan kabel dibatalkan.')
+        return
+      }
+      if (toast) toast.info('Kabel akan disimpan tanpa pembuatan auto node.')
     }
   }
 
@@ -1499,11 +1517,10 @@ async function deleteCable(item) {
   if (!ok) return
 
   try {
-    const res = await requestJson(`/api/v1/fiber/cables/${item.id}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(res.data?.message || `Gagal hapus kabel (HTTP ${res.status}).`)
-
+    await deleteFiberItemByTab('cables', item)
     if (toast) toast.success('Kabel dihapus.')
-    if (Number(selectedCableId.value) === Number(item.id)) selectedCableId.value = null
+    clearMapSelectionAfterDelete('cables', item)
+    removeBulkItemSelection('cables', item)
     await loadAll()
   } catch (e) {
     console.error('Fiber: deleteCable failed', e)
@@ -1698,11 +1715,10 @@ async function deletePoint(item) {
   if (!ok) return
 
   try {
-    const res = await requestJson(`/api/v1/fiber/points/${item.id}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(res.data?.message || `Gagal hapus titik (HTTP ${res.status}).`)
-
+    await deleteFiberItemByTab('points', item)
     if (toast) toast.success('Titik dihapus.')
-    if (Number(selectedPointId.value) === Number(item.id)) selectedPointId.value = null
+    clearMapSelectionAfterDelete('points', item)
+    removeBulkItemSelection('points', item)
     await loadAll()
   } catch (e) {
     console.error('Fiber: deletePoint failed', e)
@@ -1880,11 +1896,10 @@ async function deleteBreak(item) {
   if (!ok) return
 
   try {
-    const res = await requestJson(`/api/v1/fiber/breaks/${item.id}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(res.data?.message || `Gagal hapus data putus (HTTP ${res.status}).`)
-
+    await deleteFiberItemByTab('breaks', item)
     if (toast) toast.success('Data putus dihapus.')
-    if (Number(selectedBreakId.value) === Number(item.id)) selectedBreakId.value = null
+    clearMapSelectionAfterDelete('breaks', item)
+    removeBulkItemSelection('breaks', item)
     await loadAll()
   } catch (e) {
     console.error('Fiber: deleteBreak failed', e)
@@ -2122,10 +2137,9 @@ async function deletePortItem(item) {
   if (!ok) return
 
   try {
-    const res = await requestJson(`/api/v1/fiber/ports/${item.id}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(res.data?.message || `Gagal hapus port (HTTP ${res.status}).`)
-
+    await deleteFiberItemByTab('ports', item)
     if (toast) toast.success('Port dihapus.')
+    removeBulkItemSelection('ports', item)
     await loadAll()
   } catch (e) {
     console.error('Fiber: deletePort failed', e)
@@ -2323,6 +2337,246 @@ const filteredBreaks = computed(() => {
     )
   })
 })
+
+function isBulkDeleteTab(tab) {
+  return BULK_DELETE_TABS.includes(String(tab || ''))
+}
+
+function bulkRowsForTab(tab, { filtered = false } = {}) {
+  const t = String(tab || '')
+  if (t === 'cables') return filtered ? filteredCables.value : cables.value
+  if (t === 'points') return filtered ? filteredPoints.value : points.value
+  if (t === 'ports') return filtered ? filteredPorts.value : ports.value
+  if (t === 'links') return filtered ? filteredLinkItems.value : linkItems.value
+  if (t === 'breaks') return filtered ? filteredBreaks.value : breaks.value
+  return []
+}
+
+function bulkKeyForItem(tab, item) {
+  const t = String(tab || '')
+  if (t === 'links') {
+    if (item?.kind === 'SPLIT_GROUP') {
+      const pointId = Number(item?.point_id || 0)
+      const splitGroup = (item?.split_group || '').toString().trim()
+      if (!splitGroup) return ''
+      return `g:${pointId}:${splitGroup}`
+    }
+    const linkId = Number(item?.id || 0)
+    return linkId > 0 ? `l:${linkId}` : ''
+  }
+
+  const id = Number(item?.id || 0)
+  return id > 0 ? String(id) : ''
+}
+
+function bulkLabelForTab(tab) {
+  const t = String(tab || '')
+  if (t === 'cables') return 'kabel'
+  if (t === 'points') return 'titik'
+  if (t === 'ports') return 'port'
+  if (t === 'links') return 'sambungan'
+  if (t === 'breaks') return 'data putus'
+  return 'data'
+}
+
+function bulkSelectedKeys(tab) {
+  const t = String(tab || '')
+  if (!isBulkDeleteTab(t)) return []
+  return Array.isArray(bulkSelected.value?.[t]) ? bulkSelected.value[t] : []
+}
+
+function setBulkSelectedKeys(tab, keys) {
+  const t = String(tab || '')
+  if (!isBulkDeleteTab(t)) return
+  const normalized = Array.from(
+    new Set(
+      (Array.isArray(keys) ? keys : [])
+        .map((k) => (k || '').toString())
+        .filter((k) => k !== '')
+    )
+  )
+  bulkSelected.value = {
+    ...bulkSelected.value,
+    [t]: normalized,
+  }
+}
+
+function bulkVisibleKeys(tab) {
+  return bulkRowsForTab(tab, { filtered: true })
+    .map((row) => bulkKeyForItem(tab, row))
+    .filter((k) => k)
+}
+
+function bulkAllKeys(tab) {
+  return bulkRowsForTab(tab)
+    .map((row) => bulkKeyForItem(tab, row))
+    .filter((k) => k)
+}
+
+function bulkVisibleCount(tab) {
+  return bulkVisibleKeys(tab).length
+}
+
+function bulkSelectedCount(tab) {
+  const selected = new Set(bulkSelectedKeys(tab))
+  let count = 0
+  bulkAllKeys(tab).forEach((k) => {
+    if (selected.has(k)) count += 1
+  })
+  return count
+}
+
+function bulkVisibleSelectedCount(tab) {
+  const selected = new Set(bulkSelectedKeys(tab))
+  let count = 0
+  bulkVisibleKeys(tab).forEach((k) => {
+    if (selected.has(k)) count += 1
+  })
+  return count
+}
+
+function isBulkAllVisibleSelected(tab) {
+  const visible = bulkVisibleKeys(tab)
+  if (visible.length === 0) return false
+  const selected = new Set(bulkSelectedKeys(tab))
+  return visible.every((k) => selected.has(k))
+}
+
+function isBulkItemSelected(tab, item) {
+  const key = bulkKeyForItem(tab, item)
+  if (!key) return false
+  return bulkSelectedKeys(tab).includes(key)
+}
+
+function toggleBulkItem(tab, item) {
+  const key = bulkKeyForItem(tab, item)
+  if (!key) return
+  const current = new Set(bulkSelectedKeys(tab))
+  if (current.has(key)) current.delete(key)
+  else current.add(key)
+  setBulkSelectedKeys(tab, Array.from(current))
+}
+
+function toggleBulkSelectAllVisible(tab) {
+  const visible = bulkVisibleKeys(tab)
+  if (visible.length === 0) return
+
+  const selected = new Set(bulkSelectedKeys(tab))
+  const allSelected = visible.every((k) => selected.has(k))
+  if (allSelected) {
+    visible.forEach((k) => selected.delete(k))
+  } else {
+    visible.forEach((k) => selected.add(k))
+  }
+  setBulkSelectedKeys(tab, Array.from(selected))
+}
+
+function clearBulkSelection(tab) {
+  setBulkSelectedKeys(tab, [])
+}
+
+function removeBulkItemSelection(tab, item) {
+  const key = bulkKeyForItem(tab, item)
+  if (!key) return
+  const selected = new Set(bulkSelectedKeys(tab))
+  if (!selected.has(key)) return
+  selected.delete(key)
+  setBulkSelectedKeys(tab, Array.from(selected))
+}
+
+function pruneBulkSelection(tab) {
+  const valid = new Set(bulkAllKeys(tab))
+  const next = bulkSelectedKeys(tab).filter((k) => valid.has(k))
+  if (next.length !== bulkSelectedKeys(tab).length) {
+    setBulkSelectedKeys(tab, next)
+  }
+}
+
+function selectedBulkItems(tab) {
+  pruneBulkSelection(tab)
+  const selected = new Set(bulkSelectedKeys(tab))
+  return bulkRowsForTab(tab).filter((row) => {
+    const key = bulkKeyForItem(tab, row)
+    return key && selected.has(key)
+  })
+}
+
+function clearMapSelectionAfterDelete(tab, item) {
+  const id = Number(item?.id || 0)
+  if (!id) return
+  if (tab === 'cables' && Number(selectedCableId.value || 0) === id) selectedCableId.value = null
+  if (tab === 'points' && Number(selectedPointId.value || 0) === id) selectedPointId.value = null
+  if (tab === 'breaks' && Number(selectedBreakId.value || 0) === id) selectedBreakId.value = null
+}
+
+async function deleteFiberItemByTab(tab, item) {
+  const t = String(tab || '')
+  const id = Number(item?.id || 0)
+  if (!id || !isBulkDeleteTab(t)) throw new Error('ID data tidak valid.')
+
+  let url = ''
+  if (t === 'cables') url = `/api/v1/fiber/cables/${id}`
+  else if (t === 'points') url = `/api/v1/fiber/points/${id}`
+  else if (t === 'ports') url = `/api/v1/fiber/ports/${id}`
+  else if (t === 'links') url = `/api/v1/fiber/links/${id}`
+  else if (t === 'breaks') url = `/api/v1/fiber/breaks/${id}`
+  else throw new Error('Tipe data tidak didukung untuk hapus.')
+
+  const res = await requestJson(url, { method: 'DELETE' })
+  if (!res.ok) {
+    throw new Error(res.data?.message || `Gagal hapus ${bulkLabelForTab(t)} (HTTP ${res.status}).`)
+  }
+}
+
+async function deleteBulkSelected(tab) {
+  if (!canDelete.value || bulkDeleting.value) return
+  const t = String(tab || '')
+  if (!isBulkDeleteTab(t)) return
+
+  const items = selectedBulkItems(t)
+  if (items.length === 0) {
+    if (toast) toast.info('Belum ada data dipilih.')
+    return
+  }
+
+  const ok = confirm(`Hapus ${items.length} ${bulkLabelForTab(t)} terpilih?`)
+  if (!ok) return
+
+  bulkDeleting.value = true
+  let successCount = 0
+  let failCount = 0
+  let firstError = ''
+
+  try {
+    for (const item of items) {
+      try {
+        await deleteFiberItemByTab(t, item)
+        successCount += 1
+        clearMapSelectionAfterDelete(t, item)
+        removeBulkItemSelection(t, item)
+      } catch (e) {
+        failCount += 1
+        if (!firstError) firstError = e?.message || 'Gagal menghapus data.'
+      }
+    }
+
+    await loadAll()
+  } finally {
+    bulkDeleting.value = false
+    pruneBulkSelection(t)
+  }
+
+  if (successCount > 0 && failCount === 0) {
+    if (toast) toast.success(`Berhasil hapus ${successCount} ${bulkLabelForTab(t)}.`)
+    return
+  }
+  if (successCount > 0) {
+    if (toast) toast.info(`Hapus massal selesai: ${successCount} berhasil, ${failCount} gagal.`)
+    if (toast && firstError) toast.error(firstError)
+    return
+  }
+  if (toast) toast.error(firstError || `Gagal hapus ${bulkLabelForTab(t)}.`)
+}
 
 /* Core occupancy */
 const coreCableId = ref('')
@@ -2578,10 +2832,9 @@ async function deleteLinkItem(item) {
   if (!ok) return
 
   try {
-    const res = await requestJson(`/api/v1/fiber/links/${item.id}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(res.data?.message || `Gagal hapus sambungan (HTTP ${res.status}).`)
-
+    await deleteFiberItemByTab('links', item)
     if (toast) toast.success('Sambungan dihapus.')
+    removeBulkItemSelection('links', item)
     await loadAll()
   } catch (e) {
     console.error('Fiber: deleteLink failed', e)
@@ -2641,6 +2894,10 @@ async function runTrace() {
 
 watch([showCables, showPoints, showBreaks], () => {
   renderAllLayers()
+})
+
+watch([cables, points, ports, links, breaks], () => {
+  BULK_DELETE_TABS.forEach((tab) => pruneBulkSelection(tab))
 })
 
 watch(selectedCableId, (id) => {
@@ -3140,6 +3397,34 @@ onUnmounted(() => {
               <div v-if="panelSearch" class="text-[11px] text-gray-500 dark:text-gray-400">
                 Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredCables.length }}</span> / {{ cables.length }}
               </div>
+              <div v-if="canDelete" class="flex flex-wrap items-center gap-2">
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkVisibleCount('cables') === 0"
+                  @click="toggleBulkSelectAllVisible('cables')"
+                >
+                  {{ isBulkAllVisibleSelected('cables') ? 'Batal Pilih Semua' : `Pilih Semua (${bulkVisibleCount('cables')})` }}
+                </button>
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('cables') === 0"
+                  @click="clearBulkSelection('cables')"
+                >
+                  Clear Pilihan
+                </button>
+                <button
+                  class="btn btn-danger !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('cables') === 0"
+                  @click="deleteBulkSelected('cables')"
+                >
+                  {{ bulkDeleting ? 'Menghapus...' : `Hapus Dipilih (${bulkSelectedCount('cables')})` }}
+                </button>
+              </div>
+              <div v-if="canDelete && bulkSelectedCount('cables') > 0" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Terpilih: <span class="font-semibold text-gray-700 dark:text-gray-200">{{ bulkSelectedCount('cables') }}</span>
+                <span class="mx-1">|</span>
+                Terlihat: {{ bulkVisibleSelectedCount('cables') }}/{{ bulkVisibleCount('cables') }}
+              </div>
 
               <div v-if="filteredCables.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
                 {{ cables.length === 0 ? 'Belum ada data kabel.' : 'Tidak ada hasil.' }}
@@ -3153,7 +3438,16 @@ onUnmounted(() => {
                   @click="selectCable(c, { panel: 'close' })"
                 >
                   <div class="flex items-start justify-between gap-2">
-                    <div>
+                    <div class="min-w-0 flex items-start gap-2">
+                      <label v-if="canDelete" class="mt-0.5 inline-flex items-center shrink-0">
+                        <input
+                          type="checkbox"
+                          :checked="isBulkItemSelected('cables', c)"
+                          @click.stop
+                          @change.stop="toggleBulkItem('cables', c)"
+                        />
+                      </label>
+                      <div>
                       <div class="text-sm font-semibold text-gray-900 dark:text-white">{{ c.name }}</div>
                       <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                         <span v-if="c.cable_type">{{ c.cable_type }}</span>
@@ -3164,6 +3458,7 @@ onUnmounted(() => {
                         <div>Dari: <span class="font-medium text-gray-700 dark:text-gray-200">{{ pointNameById(c.from_point_id) || '-' }}</span></div>
                         <div>Ke: <span class="font-medium text-gray-700 dark:text-gray-200">{{ pointNameById(c.to_point_id) || '-' }}</span></div>
                       </div>
+                    </div>
                     </div>
 
                     <div class="flex items-center gap-1 shrink-0">
@@ -3190,6 +3485,34 @@ onUnmounted(() => {
               <div v-if="panelSearch" class="text-[11px] text-gray-500 dark:text-gray-400">
                 Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredPoints.length }}</span> / {{ points.length }}
               </div>
+              <div v-if="canDelete" class="flex flex-wrap items-center gap-2">
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkVisibleCount('points') === 0"
+                  @click="toggleBulkSelectAllVisible('points')"
+                >
+                  {{ isBulkAllVisibleSelected('points') ? 'Batal Pilih Semua' : `Pilih Semua (${bulkVisibleCount('points')})` }}
+                </button>
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('points') === 0"
+                  @click="clearBulkSelection('points')"
+                >
+                  Clear Pilihan
+                </button>
+                <button
+                  class="btn btn-danger !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('points') === 0"
+                  @click="deleteBulkSelected('points')"
+                >
+                  {{ bulkDeleting ? 'Menghapus...' : `Hapus Dipilih (${bulkSelectedCount('points')})` }}
+                </button>
+              </div>
+              <div v-if="canDelete && bulkSelectedCount('points') > 0" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Terpilih: <span class="font-semibold text-gray-700 dark:text-gray-200">{{ bulkSelectedCount('points') }}</span>
+                <span class="mx-1">|</span>
+                Terlihat: {{ bulkVisibleSelectedCount('points') }}/{{ bulkVisibleCount('points') }}
+              </div>
 
               <div v-if="filteredPoints.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
                 {{ points.length === 0 ? 'Belum ada data titik.' : 'Tidak ada hasil.' }}
@@ -3203,12 +3526,22 @@ onUnmounted(() => {
                   @click="selectPoint(p, { panel: 'close' })"
                 >
                   <div class="flex items-start justify-between gap-2">
-                    <div>
+                    <div class="min-w-0 flex items-start gap-2">
+                      <label v-if="canDelete" class="mt-0.5 inline-flex items-center shrink-0">
+                        <input
+                          type="checkbox"
+                          :checked="isBulkItemSelected('points', p)"
+                          @click.stop
+                          @change.stop="toggleBulkItem('points', p)"
+                        />
+                      </label>
+                      <div>
                       <div class="text-sm font-semibold text-gray-900 dark:text-white">{{ p.name }}</div>
                       <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                         <span v-if="p.point_type">{{ p.point_type }}</span>
                         <span v-if="p.latitude && p.longitude" class="ml-2">| {{ p.latitude }}, {{ p.longitude }}</span>
                       </div>
+                    </div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
                       <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditPoint(p)">Edit</button>
@@ -3233,6 +3566,34 @@ onUnmounted(() => {
               <div v-if="panelSearch" class="text-[11px] text-gray-500 dark:text-gray-400">
                 Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredPorts.length }}</span> / {{ ports.length }}
               </div>
+              <div v-if="canDelete" class="flex flex-wrap items-center gap-2">
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkVisibleCount('ports') === 0"
+                  @click="toggleBulkSelectAllVisible('ports')"
+                >
+                  {{ isBulkAllVisibleSelected('ports') ? 'Batal Pilih Semua' : `Pilih Semua (${bulkVisibleCount('ports')})` }}
+                </button>
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('ports') === 0"
+                  @click="clearBulkSelection('ports')"
+                >
+                  Clear Pilihan
+                </button>
+                <button
+                  class="btn btn-danger !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('ports') === 0"
+                  @click="deleteBulkSelected('ports')"
+                >
+                  {{ bulkDeleting ? 'Menghapus...' : `Hapus Dipilih (${bulkSelectedCount('ports')})` }}
+                </button>
+              </div>
+              <div v-if="canDelete && bulkSelectedCount('ports') > 0" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Terpilih: <span class="font-semibold text-gray-700 dark:text-gray-200">{{ bulkSelectedCount('ports') }}</span>
+                <span class="mx-1">|</span>
+                Terlihat: {{ bulkVisibleSelectedCount('ports') }}/{{ bulkVisibleCount('ports') }}
+              </div>
 
               <div v-if="filteredPorts.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
                 {{ ports.length === 0 ? 'Belum ada data port.' : 'Tidak ada hasil.' }}
@@ -3244,7 +3605,16 @@ onUnmounted(() => {
                   class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-indigo-200 dark:hover:border-indigo-900/40 bg-white dark:bg-dark-800"
                 >
                   <div class="flex items-start justify-between gap-2">
-                    <div>
+                    <div class="min-w-0 flex items-start gap-2">
+                      <label v-if="canDelete" class="mt-0.5 inline-flex items-center shrink-0">
+                        <input
+                          type="checkbox"
+                          :checked="isBulkItemSelected('ports', p)"
+                          @click.stop
+                          @change.stop="toggleBulkItem('ports', p)"
+                        />
+                      </label>
+                      <div>
                       <div class="text-xs font-bold text-indigo-700 dark:text-indigo-300">{{ String(p.port_type || '').toUpperCase() }}</div>
                       <div class="text-sm font-semibold text-gray-900 dark:text-white mt-1">{{ p.port_label || ('#' + p.id) }}</div>
                       <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 space-y-0.5">
@@ -3258,6 +3628,7 @@ onUnmounted(() => {
                           <span class="ml-1">- core {{ p.core_no }}</span>
                         </div>
                       </div>
+                    </div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
                       <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditPort(p)">Edit</button>
@@ -3282,6 +3653,34 @@ onUnmounted(() => {
               <div v-if="panelSearch" class="text-[11px] text-gray-500 dark:text-gray-400">
                 Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredLinkItems.length }}</span> / {{ linkItems.length }}
               </div>
+              <div v-if="canDelete" class="flex flex-wrap items-center gap-2">
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkVisibleCount('links') === 0"
+                  @click="toggleBulkSelectAllVisible('links')"
+                >
+                  {{ isBulkAllVisibleSelected('links') ? 'Batal Pilih Semua' : `Pilih Semua (${bulkVisibleCount('links')})` }}
+                </button>
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('links') === 0"
+                  @click="clearBulkSelection('links')"
+                >
+                  Clear Pilihan
+                </button>
+                <button
+                  class="btn btn-danger !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('links') === 0"
+                  @click="deleteBulkSelected('links')"
+                >
+                  {{ bulkDeleting ? 'Menghapus...' : `Hapus Dipilih (${bulkSelectedCount('links')})` }}
+                </button>
+              </div>
+              <div v-if="canDelete && bulkSelectedCount('links') > 0" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Terpilih: <span class="font-semibold text-gray-700 dark:text-gray-200">{{ bulkSelectedCount('links') }}</span>
+                <span class="mx-1">|</span>
+                Terlihat: {{ bulkVisibleSelectedCount('links') }}/{{ bulkVisibleCount('links') }}
+              </div>
 
               <div v-if="filteredLinkItems.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
                 {{ linkItems.length === 0 ? 'Belum ada data sambungan.' : 'Tidak ada hasil.' }}
@@ -3293,7 +3692,16 @@ onUnmounted(() => {
                   class="p-3 rounded-xl border border-gray-100 dark:border-dark-700 hover:border-amber-200 dark:hover:border-amber-900/40 bg-white dark:bg-dark-800"
                 >
                   <div class="flex items-start justify-between gap-2">
-                    <div class="min-w-0">
+                    <div class="min-w-0 flex items-start gap-2">
+                      <label v-if="canDelete" class="mt-0.5 inline-flex items-center shrink-0">
+                        <input
+                          type="checkbox"
+                          :checked="isBulkItemSelected('links', ln)"
+                          @click.stop
+                          @change.stop="toggleBulkItem('links', ln)"
+                        />
+                      </label>
+                      <div class="min-w-0">
                       <div class="text-xs font-bold text-amber-700 dark:text-amber-300">
                         {{ ln.kind === 'SPLIT_GROUP' ? 'SPLIT' : String(ln.link_type || '').toUpperCase() }}
                         <span v-if="ln.kind === 'SPLIT_GROUP'" class="ml-1">- {{ (ln.outputs || []).length }} output</span>
@@ -3323,6 +3731,7 @@ onUnmounted(() => {
                       <div v-if="ln.loss_db !== null && ln.loss_db !== undefined && ln.loss_db !== ''" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                         Loss: <span class="font-medium text-gray-700 dark:text-gray-200">{{ ln.loss_db }} dB</span>
                       </div>
+                    </div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
                       <button v-if="canEdit" class="btn btn-secondary !py-1 !px-2 !text-xs" @click.stop="openEditLink(ln)">Edit</button>
@@ -3566,6 +3975,34 @@ onUnmounted(() => {
               <div v-if="panelSearch || breakStatusFilter !== 'ALL'" class="text-[11px] text-gray-500 dark:text-gray-400">
                 Hasil: <span class="font-semibold text-gray-800 dark:text-gray-200">{{ filteredBreaks.length }}</span> / {{ breaks.length }}
               </div>
+              <div v-if="canDelete" class="flex flex-wrap items-center gap-2">
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkVisibleCount('breaks') === 0"
+                  @click="toggleBulkSelectAllVisible('breaks')"
+                >
+                  {{ isBulkAllVisibleSelected('breaks') ? 'Batal Pilih Semua' : `Pilih Semua (${bulkVisibleCount('breaks')})` }}
+                </button>
+                <button
+                  class="btn btn-secondary !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('breaks') === 0"
+                  @click="clearBulkSelection('breaks')"
+                >
+                  Clear Pilihan
+                </button>
+                <button
+                  class="btn btn-danger !py-2 !text-xs"
+                  :disabled="bulkDeleting || bulkSelectedCount('breaks') === 0"
+                  @click="deleteBulkSelected('breaks')"
+                >
+                  {{ bulkDeleting ? 'Menghapus...' : `Hapus Dipilih (${bulkSelectedCount('breaks')})` }}
+                </button>
+              </div>
+              <div v-if="canDelete && bulkSelectedCount('breaks') > 0" class="text-[11px] text-gray-500 dark:text-gray-400">
+                Terpilih: <span class="font-semibold text-gray-700 dark:text-gray-200">{{ bulkSelectedCount('breaks') }}</span>
+                <span class="mx-1">|</span>
+                Terlihat: {{ bulkVisibleSelectedCount('breaks') }}/{{ bulkVisibleCount('breaks') }}
+              </div>
 
               <div v-if="filteredBreaks.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
                 {{ breaks.length === 0 ? 'Belum ada data putus.' : 'Tidak ada hasil.' }}
@@ -3579,7 +4016,16 @@ onUnmounted(() => {
                   @click="selectBreak(b, { panel: 'close' })"
                 >
                   <div class="flex items-start justify-between gap-2">
-                    <div>
+                    <div class="min-w-0 flex items-start gap-2">
+                      <label v-if="canDelete" class="mt-0.5 inline-flex items-center shrink-0">
+                        <input
+                          type="checkbox"
+                          :checked="isBulkItemSelected('breaks', b)"
+                          @click.stop
+                          @change.stop="toggleBulkItem('breaks', b)"
+                        />
+                      </label>
+                      <div>
                       <div class="text-xs font-bold">{{ formatStatus(b.status) }}</div>
                       <div class="text-sm font-semibold text-gray-900 dark:text-white mt-1">
                         {{ cableNameById(b.cable_id) || (b.cable_id ? ('Kabel #' + b.cable_id) : 'Tanpa kabel') }}
@@ -3590,6 +4036,7 @@ onUnmounted(() => {
                         <span v-if="b.severity" class="ml-2">| {{ b.severity }}</span>
                       </div>
                       <div v-if="b.description" class="text-xs text-gray-600 dark:text-gray-300 mt-1 line-clamp-2">{{ b.description }}</div>
+                    </div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
                       <button
