@@ -313,6 +313,42 @@ class OltService
         $out = $this->sendCommand("show gpon onu detail-info gpon-onu_{$fsp}:{$onuId}");
         $detail = $this->parseOnuDetail($out);
 
+        // Refresh single ONU attenuation (Rx) directly from OLT.
+        $rx = null;
+        $rxKey = $fsp . ':' . $onuId;
+        try {
+            $rxOut = $this->sendCommand("show pon power onu-rx gpon-olt_{$fsp}");
+            $rxMap = $this->parseRxOutput($rxOut, $fsp);
+            if (isset($rxMap[$rxKey])) {
+                $rx = (float) $rxMap[$rxKey];
+            }
+        } catch (Throwable $e) {
+            // ignore and try fallback command below
+        }
+
+        if ($rx === null) {
+            try {
+                $rxOut = $this->sendCommand("show gpon onu optical-info gpon-olt_{$fsp}");
+                $rxMap = $this->parseRxOutput($rxOut, $fsp);
+                if (isset($rxMap[$rxKey])) {
+                    $rx = (float) $rxMap[$rxKey];
+                }
+            } catch (Throwable $e) {
+                // ignore and try fallback parse from detail-info text
+            }
+        }
+
+        if ($rx === null) {
+            $rxPower = (string) ($detail['rx_power'] ?? '');
+            if (preg_match('/-?\d+(?:\.\d+)?/', $rxPower, $m)) {
+                $rx = (float) $m[0];
+            }
+        }
+
+        if ($rx !== null) {
+            $detail['rx'] = $rx;
+        }
+
         // Native parity: save detail (name + online_duration) into DB cache when possible.
         $sn = trim((string)($detail['sn'] ?? $detail['serial'] ?? ''));
         if ($sn !== '') {

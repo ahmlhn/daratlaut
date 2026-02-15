@@ -1467,13 +1467,19 @@ async function loadOnuDetail(onu, { force = false, silent = false, throwOnError 
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/onu-detail?${params}`);
         if (data.status !== 'ok') throw new Error(data.message || 'Gagal load detail');
 
-        regDetails.value = { ...regDetails.value, [key]: data.data || {} };
+        const detail = { ...(data.data || {}) };
+        if ((detail.rx === undefined || detail.rx === null || detail.rx === '') && detail.rx_power) {
+            const parsedRx = extractRxValue(detail.rx_power);
+            if (parsedRx !== null) detail.rx = parsedRx;
+        }
+
+        regDetails.value = { ...regDetails.value, [key]: detail };
 
         // Keep row consistent with detail (best-effort).
         const idx = registered.value.findIndex(it => onuKey(it) === key);
         if (idx >= 0) {
             const cur = registered.value[idx] || {};
-            const merged = { ...cur, ...(data.data || {}) };
+            const merged = { ...cur, ...detail };
             const copy = registered.value.slice();
             copy[idx] = merged;
             registered.value = copy;
