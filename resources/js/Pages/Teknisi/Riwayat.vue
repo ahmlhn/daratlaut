@@ -139,10 +139,6 @@ const filteredHistory = computed(() => {
   })
 })
 
-const totalRevenue = computed(() =>
-  filteredHistory.value.reduce((sum, item) => sum + (parseFloat(item?.harga ?? item?.price) || 0), 0)
-)
-
 const totalDone = computed(() =>
   filteredHistory.value.filter((item) => String(item?.status || '') === 'Selesai').length
 )
@@ -334,17 +330,6 @@ watch(
             >
               ↻
             </button>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2">
-            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 shadow-sm">
-              <div class="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase">Total Job</div>
-              <div class="text-lg font-black text-slate-900 dark:text-slate-100">{{ filteredHistory.length }}</div>
-            </div>
-            <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 shadow-sm">
-              <div class="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase">Total Revenue</div>
-              <div class="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-300">{{ formatCurrency(totalRevenue) }}</div>
-            </div>
           </div>
 
           <div class="space-y-2">
