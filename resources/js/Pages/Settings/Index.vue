@@ -475,19 +475,6 @@ onMounted(() => {
                                 >
                                     {{ t.title }}
                                 </button>
-                                <button
-                                    v-if="canOpenRoleSettings"
-                                    type="button"
-                                    @click="setActiveSection('roles')"
-                                    :class="[
-                                        compactMode ? 'px-3 py-1.5 rounded-xl text-xs font-black tracking-tight transition whitespace-nowrap' : 'px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black tracking-tight transition whitespace-nowrap',
-                                        activeSection === 'roles'
-                                            ? 'bg-primary-600 text-white shadow-sm shadow-primary-500/20'
-                                            : 'text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-white/10'
-                                    ]"
-                                >
-                                    Kelola Role
-                                </button>
                             </div>
                         </div>
 
