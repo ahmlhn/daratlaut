@@ -457,26 +457,13 @@ onMounted(() => {
                             </button>
                         </div>
                     </div>
-                </div>
-            </div>
 
-            <!-- Loading (initial) -->
-            <div v-if="loading" class="card p-0 overflow-hidden rounded-2xl">
-                <div class="p-10 flex items-center justify-center gap-3">
-                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-                    <span class="text-gray-600 dark:text-gray-300 text-sm">Memuat data...</span>
-                </div>
-            </div>
-
-            <div v-else :class="compactMode ? 'space-y-4 lg:space-y-5' : 'space-y-6 lg:space-y-8'">
-                <!-- Top Tabs + Submenu Chips (Option B) -->
-                <div class="card p-0 overflow-hidden rounded-2xl">
-                    <div :class="['border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur', compactMode ? 'px-4 py-3 sm:px-5' : 'px-5 py-4 sm:px-7 sm:py-5']">
+                    <div :class="['border-t border-gray-200/70 dark:border-white/10', compactMode ? 'mt-4 pt-3' : 'mt-6 pt-5']">
                         <div class="min-w-0 flex gap-2 overflow-x-auto custom-scrollbar">
                             <div class="shrink-0 inline-flex gap-1 p-1 rounded-2xl bg-gray-100/70 dark:bg-white/5 border border-gray-200/70 dark:border-white/10">
                                 <button
                                     v-for="t in tabs"
-                                    :key="t.id"
+                                    :key="`header-tab-${t.id}`"
                                     type="button"
                                     @click="setActiveTab(t.id)"
                                     :class="[
@@ -504,10 +491,10 @@ onMounted(() => {
                             </div>
                         </div>
 
-                        <div v-if="activeTabSections.length > 1" :class="[compactMode ? 'mt-3 flex flex-wrap gap-2' : 'mt-3 flex flex-wrap gap-2']">
+                        <div v-if="activeTabSections.length > 1" class="mt-3 flex flex-wrap gap-2">
                             <button
                                 v-for="s in activeTabSections"
-                                :key="s.id"
+                                :key="`header-sub-${s.id}`"
                                 type="button"
                                 @click="setActiveSection(s.id)"
                                 :class="[
@@ -525,7 +512,17 @@ onMounted(() => {
                         </div>
                     </div>
                 </div>
+            </div>
 
+            <!-- Loading (initial) -->
+            <div v-if="loading" class="card p-0 overflow-hidden rounded-2xl">
+                <div class="p-10 flex items-center justify-center gap-3">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+                    <span class="text-gray-600 dark:text-gray-300 text-sm">Memuat data...</span>
+                </div>
+            </div>
+
+            <div v-else :class="compactMode ? 'space-y-4 lg:space-y-5' : 'space-y-6 lg:space-y-8'">
                 <!-- Content -->
                 <div :class="compactMode ? 'min-w-0 space-y-4 lg:space-y-5' : 'min-w-0 space-y-6 lg:space-y-8'">
 
