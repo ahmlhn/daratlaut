@@ -131,15 +131,31 @@ function getBaseRegStatus(item) {
     const state = normalizeRegState(item?.state);
     if (state) return state;
     const status = normalizeRegState(item?.status);
-    if (status && status !== 'offline') return status;
-    if (status === 'online') return status;
+    if (status) return status;
     return '';
+}
+
+function isRegRxPending(item) {
+    const fsp = String(item?.fsp || '').trim();
+    if (!fsp) return false;
+    return !!regLiveLoadingFsp.value?.[fsp];
 }
 
 function getRegStatusLabel(item) {
     const base = getBaseRegStatus(item);
-    if (base) return base;
-    return extractRxValue(item?.rx) !== null ? 'online' : 'offline';
+    const rxValue = extractRxValue(item?.rx);
+
+    // Strict mode: online only when Rx is available and base state isn't explicitly offline.
+    if (rxValue !== null) {
+        return base === 'offline' ? 'offline' : 'online';
+    }
+
+    // While OLT Rx is still loading, avoid prematurely showing offline.
+    if (isRegRxPending(item)) {
+        return 'loading';
+    }
+
+    return 'offline';
 }
 
 function getRxToneClass(value) {
@@ -155,8 +171,11 @@ function getRxTextClass(item) {
     return getRxToneClass(value);
 }
 
-function getRxStatusClass(value, isOnline) {
-    if (!isOnline) {
+function getRxStatusClass(value, status) {
+    if (status === 'loading') {
+        return 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-200';
+    }
+    if (status !== 'online') {
         return 'bg-slate-100 text-slate-600 dark:bg-slate-700/40 dark:text-slate-300';
     }
     if (value === null || value >= -25) {
@@ -169,11 +188,12 @@ function getRxStatusClass(value, isOnline) {
 }
 
 function formatRegStatus(item) {
-    const isOnline = getRegStatusLabel(item) === 'online';
+    const status = getRegStatusLabel(item);
     const rxValue = extractRxValue(item?.rx);
+    const label = status === 'loading' ? 'Memuat Rx...' : status === 'online' ? 'Online' : 'Offline';
     return {
-        label: isOnline ? 'Online' : 'Offline',
-        className: getRxStatusClass(rxValue, isOnline),
+        label,
+        className: getRxStatusClass(rxValue, status),
     };
 }
 
@@ -827,6 +847,7 @@ const regLoading = ref(false);
 const regLoadingText = ref('');
 const regFilterFsp = ref('');
 const regLoadedFsp = ref({});
+const regLiveLoadingFsp = ref({});
 const regStatus = ref({ tone: 'info', message: '' });
 const regSearch = ref('');
 const regSearchMode = ref(false);
@@ -914,6 +935,18 @@ function setRegSort(key) {
         regSortDir.value = 'asc';
     }
     regPage.value = 1;
+}
+
+function setRegLiveLoadingState(fsp, isLoading) {
+    const safeFsp = String(fsp || '').trim();
+    if (!safeFsp) return;
+    const next = { ...(regLiveLoadingFsp.value || {}) };
+    if (isLoading) {
+        next[safeFsp] = true;
+    } else {
+        delete next[safeFsp];
+    }
+    regLiveLoadingFsp.value = next;
 }
 
 function parseFspParts(fsp) {
@@ -1096,6 +1129,15 @@ const regFspInfoText = computed(() => {
     return `FSP dimuat: ${loaded}/${total}`;
 });
 
+const regRxLoadingInfoText = computed(() => {
+    const loadingFsp = Object.keys(regLiveLoadingFsp.value || {}).filter((fsp) => !!regLiveLoadingFsp.value?.[fsp]);
+    if (!loadingFsp.length) return '';
+    if (loadingFsp.length === 1) {
+        return `Rx sedang dimuat dari OLT (FSP ${loadingFsp[0]}).`;
+    }
+    return `Rx sedang dimuat dari OLT (${loadingFsp.length} FSP).`;
+});
+
 async function loadRegisteredCache({ fsp = '', search = '' } = {}) {
     if (!selectedOltId.value) return;
 
@@ -1121,6 +1163,8 @@ async function loadRegisteredCache({ fsp = '', search = '' } = {}) {
 
 async function loadRegisteredLive(fsp, { silent = false } = {}) {
     if (!selectedOltId.value || !fsp) return;
+
+    setRegLiveLoadingState(fsp, true);
 
     const showBlockingLoader = !silent;
     if (showBlockingLoader) {
@@ -1150,6 +1194,7 @@ async function loadRegisteredLive(fsp, { silent = false } = {}) {
     } catch (e) {
         if (!silent) setRegStatus(e.message || 'Gagal memuat data dari OLT.', 'error');
     } finally {
+        setRegLiveLoadingState(fsp, false);
         if (showBlockingLoader) {
             regLoading.value = false;
             regLoadingText.value = '';
@@ -1770,6 +1815,7 @@ async function onOltChanged(newId, prevId) {
     }, 0);
     regSearchMode.value = false;
     regLoadedFsp.value = {};
+    regLiveLoadingFsp.value = {};
     regExpandedKey.value = '';
     regDetails.value = {};
     cancelEditOnuName();
@@ -2112,6 +2158,9 @@ onMounted(async () => {
                                     <option v-for="fsp in fspList" :key="fsp" :value="fsp">{{ fsp }}</option>
                                 </select>
                                 <div class="text-[10px] text-slate-400 mt-1">{{ regFspInfoText }}</div>
+                                <div v-if="regRxLoadingInfoText" class="text-[10px] text-blue-500 mt-1">
+                                    {{ regRxLoadingInfoText }}
+                                </div>
                             </div>
                             <div>
                                 <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Pencarian</label>
