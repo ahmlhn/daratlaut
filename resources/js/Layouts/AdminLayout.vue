@@ -175,7 +175,6 @@ const baseNavigationGroups = [
     name: 'OPERASIONAL',
     items: [
       { name: 'Pasang Baru', href: '/installations', icon: 'wifi', featureKey: 'installations', permissionsAny: ['view installations'] },
-      { name: 'Riwayat Pasang', href: '/installations/riwayat', icon: 'check-circle', featureKey: 'installations', permissionsAny: ['view riwayat installations'] },
       { name: 'Tim', href: '/team', icon: 'user-group', featureKey: 'team', permissionsAny: ['view team', 'manage team'] },
     ]
   },

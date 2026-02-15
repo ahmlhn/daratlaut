@@ -45,7 +45,6 @@ const navigationGroups = [
     name: 'OPERASIONAL',
     items: [
       { name: 'Pasang Baru', href: '/installations', icon: 'wifi' },
-      { name: 'Riwayat Pasang', href: '/installations/riwayat', icon: 'check-circle' },
       { name: 'Tim', href: '/team', icon: 'user-group' },
       { name: 'POP', href: '/pops', icon: 'map-pin' },
       { name: 'OLT', href: '/olts', icon: 'server' },
