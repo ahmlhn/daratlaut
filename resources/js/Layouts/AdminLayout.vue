@@ -155,10 +155,6 @@ function isNavItemAllowed(item) {
   return true
 }
 
-function isTeknisiGroup(group) {
-  return String(group?.name || '').trim().toUpperCase() === 'TEKNISI'
-}
-
 const baseNavigationGroups = [
   {
     name: null,
@@ -236,16 +232,7 @@ const navigationGroups = computed(() => {
     })
   }))
 
-  const visible = groups.filter(group => (group.items || []).length > 0)
-
-  // Keep Teknisi group at the bottom so we can pin it as a sticky rail action cluster.
-  visible.sort((a, b) => {
-    if (isTeknisiGroup(a) && !isTeknisiGroup(b)) return 1
-    if (!isTeknisiGroup(a) && isTeknisiGroup(b)) return -1
-    return 0
-  })
-
-  return visible
+  return groups.filter(group => (group.items || []).length > 0)
 })
 
 const allNavItems = computed(() => {
@@ -377,17 +364,8 @@ const breadcrumbs = computed(() => {
       </div>
 
       <!-- Navigation -->
-      <nav class="flex-1 overflow-y-auto custom-scrollbar p-4 min-h-0 flex flex-col">
-        <div
-          v-for="(group, gIdx) in navigationGroups"
-          :key="gIdx"
-          :class="[
-            gIdx > 0 && !isTeknisiGroup(group) ? 'mt-6' : '',
-            isTeknisiGroup(group)
-              ? 'mt-auto sticky bottom-0 z-20 -mx-4 px-4 pt-3 pb-2 border-t border-gray-200 dark:border-white/10 bg-white/95 dark:bg-dark-900/95 backdrop-blur'
-              : '',
-          ]"
-        >
+      <nav class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-1 min-h-0">
+        <div v-for="(group, gIdx) in navigationGroups" :key="gIdx" :class="gIdx > 0 ? 'mt-6' : ''">
           <!-- Group header -->
           <p v-if="group.name && !sidebarCollapsed" class="px-3 mb-2 text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">
             {{ group.name }}
