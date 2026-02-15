@@ -450,14 +450,6 @@ onMounted(() => {
                                 <SettingsNavIcon name="cog" className="h-4 w-4" />
                                 <span>{{ compactMode ? 'Mode Normal' : 'Mode Ringkas' }}</span>
                             </button>
-                            <Link
-                                v-if="canOpenRoleSettings"
-                                href="/settings/roles"
-                                class="btn btn-secondary btn-press gap-2"
-                            >
-                                <SettingsNavIcon name="shield-check" className="h-4 w-4" />
-                                <span>Kelola Role</span>
-                            </Link>
                             <button @click="loadAll({ refresh: true })" :disabled="refreshing" class="btn btn-secondary btn-press gap-2">
                                 <SettingsNavIcon name="refresh" className="h-4 w-4" />
                                 <span>{{ refreshing ? 'Refreshing...' : 'Refresh' }}</span>
@@ -479,7 +471,7 @@ onMounted(() => {
                 <!-- Top Tabs + Submenu Chips (Option B) -->
                 <div class="card p-0 overflow-hidden rounded-2xl">
                     <div :class="['border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur', compactMode ? 'px-4 py-3 sm:px-5' : 'px-5 py-4 sm:px-7 sm:py-5']">
-                        <div :class="['flex flex-col gap-3', compactMode ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_320px_220px] xl:items-center' : 'lg:flex-row lg:items-center lg:justify-between']">
+                        <div :class="['flex flex-col gap-3', compactMode ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_300px_380px] xl:items-center' : 'lg:flex-row lg:items-center lg:justify-between']">
                             <div class="flex gap-2 overflow-x-auto custom-scrollbar">
                                 <div class="shrink-0 inline-flex gap-1 p-1 rounded-2xl bg-gray-100/70 dark:bg-white/5 border border-gray-200/70 dark:border-white/10">
                                     <button
@@ -526,20 +518,31 @@ onMounted(() => {
                                 </div>
                             </div>
 
-                            <div class="w-full" :class="compactMode ? 'xl:w-[220px]' : 'lg:w-[220px]'">
-                                <select
-                                    :value="activeSection"
-                                    @change="setActiveSection($event.target.value)"
-                                    class="input !rounded-xl text-sm w-full"
-                                >
-                                    <option
-                                        v-for="s in activeTabSections"
-                                        :key="`select-${s.id}`"
-                                        :value="s.id"
+                            <div class="w-full" :class="compactMode ? 'xl:w-[380px]' : 'lg:w-[380px]'">
+                                <div class="flex w-full gap-2 flex-col sm:flex-row">
+                                    <select
+                                        :value="activeSection"
+                                        @change="setActiveSection($event.target.value)"
+                                        class="input !rounded-xl text-sm w-full sm:flex-1 sm:min-w-0"
                                     >
-                                        {{ s.name }}
-                                    </option>
-                                </select>
+                                        <option
+                                            v-for="s in activeTabSections"
+                                            :key="`select-${s.id}`"
+                                            :value="s.id"
+                                        >
+                                            {{ s.name }}
+                                        </option>
+                                    </select>
+
+                                    <Link
+                                        v-if="canOpenRoleSettings"
+                                        href="/settings/roles"
+                                        class="btn btn-secondary btn-press gap-2 sm:shrink-0 sm:whitespace-nowrap"
+                                    >
+                                        <SettingsNavIcon name="shield-check" className="h-4 w-4" />
+                                        <span>Kelola Role</span>
+                                    </Link>
+                                </div>
                             </div>
                         </div>
 
