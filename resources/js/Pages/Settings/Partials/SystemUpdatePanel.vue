@@ -554,437 +554,471 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-      <div v-if="!embedded" class="min-w-0">
-        <h1 class="text-2xl font-black text-gray-900 dark:text-white">Update Sistem</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          Update lewat panel tanpa <span class="font-semibold">git pull</span> / <span class="font-semibold">composer</span>.
-          Saran: gunakan paket build (sudah termasuk <span class="font-semibold">vendor</span> dan <span class="font-semibold">public/build</span>).
-        </p>
-        <div v-if="installed?.source" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          Installed: <span class="font-semibold">{{ installed.source }}</span>
-          <span v-if="installed.github?.sha" class="ml-2">
-            sha <span class="font-mono font-semibold">{{ (installed.github.sha || '').slice(0, 7) }}</span>
-          </span>
-          <span v-if="installed.installed_at" class="ml-2">
-            at {{ formatDateTime(installed.installed_at) }}
-          </span>
-        </div>
+    <div class="relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-dark-950 sm:p-6">
+      <div class="pointer-events-none absolute inset-0">
+        <div class="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary-500/10 blur-3xl"></div>
+        <div class="absolute -bottom-20 -left-20 h-56 w-56 rounded-full bg-emerald-500/10 blur-3xl"></div>
       </div>
 
-      <div class="flex flex-wrap items-center gap-2">
-        <span :class="['px-2.5 py-1 rounded-full text-xs font-black tracking-wider', stagePill.klass]">
-          {{ stagePill.text }}
-        </span>
-        <button @click="refreshStatus" class="btn btn-secondary" :disabled="isBusy" type="button">
-          <span v-if="statusLoading" class="mr-2"><LoadingSpinner size="sm" /></span>
-          Refresh
-        </button>
-        <button @click="detailsOpen = !detailsOpen" class="btn btn-secondary" type="button">
-          {{ detailsOpen ? 'Tutup Detail' : 'Detail' }}
-        </button>
-      </div>
-    </div>
-
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div class="lg:col-span-2 space-y-6">
-          <div :class="sectionClass">
-            <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h3 class="text-base font-semibold text-gray-900 dark:text-white">Progress</h3>
-                <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
-                  <span class="font-semibold">Stage:</span> {{ stageLabel }}
-                </p>
-
-                <div
-                  v-if="!statusLoading && state && !cfg.enabled"
-                  class="mt-3 text-sm rounded-xl border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200 p-3"
-                >
-                  Fitur update dinonaktifkan di server. Set <span class="font-mono font-semibold">SYSTEM_UPDATE_ENABLED=true</span>.
-                </div>
-
-                <div
-                  v-if="err"
-                  class="mt-3 text-sm rounded-xl border border-red-200 bg-red-50 text-red-900 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200 p-3 whitespace-pre-line"
-                >
-                  {{ err }}
-                </div>
-              </div>
-
-              <div class="flex flex-col items-end gap-2">
-                <div class="inline-flex rounded-xl border border-gray-200 dark:border-white/10 bg-white/60 dark:bg-dark-950/60 p-1">
-                  <button
-                    type="button"
-                    @click="setSourceMode('zip')"
-                    :class="[
-                      'px-3 py-1.5 text-xs font-bold rounded-lg transition',
-                      sourceMode === 'zip' ? 'bg-white dark:bg-dark-950 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white',
-                    ]"
-                  >
-                    ZIP
-                  </button>
-                  <button
-                    type="button"
-                    @click="setSourceMode('github')"
-                    :disabled="!github.enabled"
-                    :class="[
-                      'px-3 py-1.5 text-xs font-bold rounded-lg transition',
-                      !github.enabled ? 'opacity-50 cursor-not-allowed' : '',
-                      sourceMode === 'github' ? 'bg-white dark:bg-dark-950 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white',
-                    ]"
-                  >
-                    GitHub
-                  </button>
-                </div>
-
-                <button @click="startPrimaryAction" class="btn btn-primary" :disabled="!canPrimary" type="button">
-                  <span v-if="running" class="mr-2"><LoadingSpinner size="sm" color="primary" /></span>
-                  {{ primaryLabel }}
-                </button>
-
-                <div v-if="primaryHint" class="text-xs text-gray-500 dark:text-gray-400 text-right max-w-xs">
-                  {{ primaryHint }}
-                </div>
-              </div>
-            </div>
-
-            <div v-if="detailsOpen" class="mt-4 flex flex-wrap items-center gap-2">
-              <button @click="prepare" class="btn btn-secondary px-3 py-2 text-xs" :disabled="!canPrepare" type="button">
-                Prepare
-              </button>
-              <button @click="runSteps({ autoPrepare: true })" class="btn btn-secondary px-3 py-2 text-xs" :disabled="!canApply" type="button">
-                Run Steps
-              </button>
-            </div>
-
-            <div v-if="detailsOpen" class="mt-5 grid grid-cols-2 sm:grid-cols-5 gap-3">
-              <div
-                v-for="st in stepper"
-                :key="st.id"
-                class="flex items-center gap-3 sm:flex-col sm:items-center sm:gap-2"
-              >
-                <div
-                  :class="[
-                    'h-9 w-9 rounded-full flex items-center justify-center text-sm font-black border',
-                    st.status === 'done' ? 'bg-emerald-600 text-white border-emerald-600' : '',
-                    st.status === 'current' ? 'bg-primary-600 text-white border-primary-600' : '',
-                    st.status === 'upcoming' ? 'bg-gray-100 text-gray-700 border-gray-200 dark:bg-white/5 dark:text-gray-200 dark:border-white/10' : '',
-                    st.status === 'error' ? 'bg-red-600 text-white border-red-600' : '',
-                  ]"
-                >
-                  <svg v-if="st.status === 'done'" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                  </svg>
-                  <svg v-else-if="st.status === 'error'" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86l-8.02 13.9A2 2 0 004 20h16a2 2 0 001.73-3.24l-8.02-13.9a2 2 0 00-3.46 0z" />
-                  </svg>
-                  <span v-else>{{ st.index }}</span>
-                </div>
-                <div class="sm:text-center">
-                  <div class="text-sm sm:text-xs font-semibold text-gray-900 dark:text-white">{{ st.label }}</div>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="copyProgress" class="mt-4">
-              <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                <span>Copy {{ copyProgress.idx }}/{{ copyProgress.total }} (copied {{ copyProgress.copied }}, skipped {{ copyProgress.skipped }})</span>
-                <span>{{ copyProgress.pct }}%</span>
-              </div>
-              <div class="h-2 bg-gray-100 dark:bg-white/10 rounded-full overflow-hidden mt-2">
-                <div class="h-full bg-gradient-to-r from-primary-600 to-primary-500" :style="{ width: `${copyProgress.pct}%` }"></div>
-              </div>
-            </div>
-
-            <div v-if="finalizeProgress" class="mt-4">
-              <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                <span>Finalize {{ finalizeProgress.idx }}/{{ finalizeProgress.total }}</span>
-                <span>{{ finalizeProgress.pct }}%</span>
-              </div>
-              <div class="h-2 bg-gray-100 dark:bg-white/10 rounded-full overflow-hidden mt-2">
-                <div class="h-full bg-gradient-to-r from-emerald-600 to-emerald-500" :style="{ width: `${finalizeProgress.pct}%` }"></div>
-              </div>
-            </div>
-
-            <div v-if="detailsOpen && state?.manifest" class="mt-5" :class="mutedBoxClass">
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                <div class="flex items-center justify-between sm:block">
-                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">vendor</div>
-                  <div
-                    class="mt-1 font-semibold"
-                    :class="state.manifest.vendor_included ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'"
-                  >
-                    {{ state.manifest.vendor_included ? 'included' : 'NOT included' }}
-                  </div>
-                </div>
-                <div class="flex items-center justify-between sm:block">
-                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">public/build</div>
-                  <div
-                    class="mt-1 font-semibold"
-                    :class="state.manifest.build_included ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'"
-                  >
-                    {{ state.manifest.build_included ? 'included' : 'NOT included' }}
-                  </div>
-                </div>
-                <div class="flex items-center justify-between sm:block">
-                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">excluded</div>
-                  <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ state.manifest.excluded_count || 0 }}</div>
-                </div>
-              </div>
-              <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
-                Tidak menimpa: <span class="font-semibold">.env</span>, <span class="font-semibold">storage/</span>,
-                <span class="font-semibold">bootstrap/cache</span>, <span class="font-semibold">public/storage</span>, <span class="font-semibold">public/uploads</span>.
-              </div>
-              <div v-if="!state.manifest.vendor_included" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
-                Paket tidak mengandung <span class="font-semibold">vendor/</span>. Sistem mempertahankan vendor yang ada.
-                Jika ada perubahan dependency, update bisa gagal.
-              </div>
-              <div v-if="!state.manifest.build_included" class="mt-1 text-xs text-amber-700 dark:text-amber-300">
-                Paket tidak mengandung <span class="font-semibold">public/build</span>. Sistem mempertahankan build yang ada.
-                Jika ada perubahan frontend, UI bisa tidak update.
-              </div>
-            </div>
-          </div>
-
-          <div v-if="sourceMode === 'github'" :class="sectionClass">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <h3 class="text-base font-semibold text-gray-900 dark:text-white">GitHub (main)</h3>
-                <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
-                  Ambil paket build dari GitHub Release, lalu apply otomatis.
-                </p>
-              </div>
-              <div class="flex items-center gap-2">
-                <button @click="githubCheckLatest" class="btn btn-secondary px-3 py-2 text-xs" :disabled="isBusy || !github.enabled || !github.configured || !github.token_present" type="button">
-                  Cek
-                </button>
-              </div>
-            </div>
-
-            <div
-              v-if="!github.enabled"
-              class="mt-4 text-sm rounded-xl border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200 p-3"
-            >
-              GitHub update dinonaktifkan (server config).
-            </div>
-
-            <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-gray-700 dark:text-gray-300">
-              <div :class="mutedBoxClass">
-                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Repo</div>
-                <div class="mt-1 font-semibold">
-                  <span v-if="github.configured">{{ github.owner }}/{{ github.repo }}</span>
-                  <span v-else class="text-amber-700 dark:text-amber-300">Belum diset di .env</span>
-                </div>
-                <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                  Branch: <span class="font-mono font-semibold">{{ github.branch || 'main' }}</span>
-                </div>
-                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Tag: <span class="font-mono font-semibold">{{ github.release_tag || 'panel-main-latest' }}</span>
-                  <span class="mx-2">|</span>
-                  Asset: <span class="font-mono font-semibold">{{ github.release_asset || 'update-package.zip' }}</span>
-                </div>
-              </div>
-
-              <div :class="mutedBoxClass">
-                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Token</div>
-                <div class="mt-1 font-semibold">
-                  <span v-if="github.token_present" class="text-emerald-700 dark:text-emerald-300">
-                    Ada ({{ github.token_hint || '****' }})
-                  </span>
-                  <span v-else class="text-amber-700 dark:text-amber-300">Belum ada</span>
-                </div>
-                <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                  Saran: Fine-grained PAT, akses <span class="font-semibold">Contents: Read</span> untuk repo ini saja.
-                </div>
-              </div>
-            </div>
-
-            <div v-if="detailsOpen || !github.token_present" class="mt-4" :class="mutedBoxClass">
-              <div class="flex items-start justify-between gap-3">
-                <div>
-                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Simpan Token</div>
-                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Token disimpan di server (file-based, encrypted).
-                  </div>
-                </div>
-                <button v-if="detailsOpen && github.token_present" @click="githubClearToken" class="btn btn-danger px-3 py-2 text-xs" :disabled="isBusy || ghBusy || !github.enabled" type="button">
-                  Hapus
-                </button>
-              </div>
-              <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input v-model="ghToken" type="password" class="input sm:col-span-2" placeholder="Fine-grained PAT (read-only)" />
-                <button @click="githubSaveToken" class="btn btn-secondary px-3 py-2 text-xs" :disabled="isBusy || ghBusy || !github.enabled" type="button">
-                  Simpan
-                </button>
-              </div>
-            </div>
-
-            <div v-if="ghCheck?.latest" class="mt-4" :class="mutedBoxClass">
-              <div class="flex items-start justify-between gap-4">
-                <div class="min-w-0">
-                  <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Latest</div>
-                  <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">
-                    <span class="font-mono">{{ ghCheck.latest.short }}</span>
-                    <span class="ml-2 text-gray-600 dark:text-gray-300 truncate">{{ ghCheck.latest.message }}</span>
-                  </div>
-                  <div v-if="ghCheck.latest.date" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ ghCheck.latest.date }}</div>
-
-                  <div v-if="ghCheck.built" class="mt-3">
-                    <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Built Artifact</div>
-                    <div class="mt-1 text-xs text-gray-600 dark:text-gray-300 space-y-1">
-                      <div>
-                        <span class="font-semibold">tag:</span>
-                        <span class="font-mono">{{ ghCheck.built.release?.tag || '-' }}</span>
-                      </div>
-                      <div v-if="ghCheck.built.meta?.short">
-                        <span class="font-semibold">sha:</span>
-                        <span class="font-mono">{{ ghCheck.built.meta.short }}</span>
-                        <span v-if="ghCheck.built.meta.built_at" class="ml-2 text-gray-500 dark:text-gray-400">{{ ghCheck.built.meta.built_at }}</span>
-                      </div>
-                      <div v-else class="text-amber-700 dark:text-amber-300">
-                        Metadata build tidak terbaca (body release tidak berisi JSON meta).
-                      </div>
-                      <div v-if="ghCheck.built.asset?.name">
-                        <span class="font-semibold">asset:</span>
-                        <span class="font-mono">{{ ghCheck.built.asset.name }}</span>
-                        <span v-if="typeof ghCheck.built.asset.size === 'number'" class="ml-2 text-gray-500 dark:text-gray-400">
-                          ({{ Math.round(ghCheck.built.asset.size / 1024 / 1024) }} MB)
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class="text-right text-xs whitespace-nowrap">
-                  <div v-if="ghCheck.build_ready === true" class="font-bold text-emerald-700 dark:text-emerald-300">BUILD READY</div>
-                  <div v-else-if="ghCheck.build_ready === false" class="font-bold text-amber-700 dark:text-amber-300">BUILD PENDING</div>
-                  <div v-if="ghCheck.update_available === false" class="font-bold text-emerald-700 dark:text-emerald-300">UP TO DATE</div>
-                  <div v-else-if="ghCheck.update_available === true" class="font-bold text-amber-700 dark:text-amber-300">UPDATE AVAILABLE</div>
-                  <div v-else class="font-bold text-gray-500 dark:text-gray-400">UNKNOWN</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="sourceMode === 'zip'" :class="sectionClass">
-            <div>
-              <h3 class="text-base font-semibold text-gray-900 dark:text-white">Paket ZIP</h3>
-              <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
-                Upload paket update manual (ZIP). Cocok untuk hosting tanpa akses git/composer.
-              </p>
-            </div>
-
-            <div class="mt-4 space-y-3">
-              <input ref="fileRef" type="file" accept=".zip" class="block w-full text-sm text-gray-700 dark:text-gray-300" @change="onZipFileChange" />
-              <div v-if="zipFile?.name" class="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate">
-                Selected: <span class="font-semibold">{{ zipFile.name }}</span>
-                <span v-if="zipFile.size" class="ml-2">({{ formatBytes(zipFile.size) }})</span>
-              </div>
-
-              <div class="flex flex-wrap gap-2">
-                <button v-if="detailsOpen" @click="uploadPackage" class="btn btn-secondary" :disabled="uploading || isBusy || !cfg.enabled" type="button">
-                  <span v-if="uploading" class="mr-2"><LoadingSpinner size="sm" /></span>
-                  {{ uploading ? `Uploading ${uploadPct}%` : 'Upload saja' }}
-                </button>
-                <button
-                  v-if="cfg.allow_download && cfg.package_url_set"
-                  @click="downloadConfigured"
-                  class="btn btn-secondary"
-                  :disabled="isBusy || !cfg.enabled"
-                  type="button"
-                >
-                  Download dari URL
-                </button>
-              </div>
-
-              <div v-if="uploading" class="h-2 bg-gray-100 dark:bg-white/10 rounded-full overflow-hidden">
-                <div class="h-full bg-gradient-to-r from-primary-600 to-primary-500" :style="{ width: `${uploadPct}%` }"></div>
-              </div>
-
-              <div v-if="detailsOpen" :class="mutedBoxClass">
-                <div class="text-xs text-gray-500 dark:text-gray-400">
-                  Tidak menimpa: <span class="font-semibold">.env</span>, <span class="font-semibold">storage/</span>,
-                  <span class="font-semibold">bootstrap/cache</span>, <span class="font-semibold">public/storage</span>,
-                  <span class="font-semibold">public/uploads</span>.
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="space-y-6">
-          <div :class="sectionClass">
-            <div class="flex items-center justify-between gap-3">
-              <h3 class="text-base font-semibold text-gray-900 dark:text-white">Log</h3>
-              <div class="flex items-center gap-2">
-                <button @click="logOpen = !logOpen" class="btn btn-secondary px-3 py-2 text-xs" type="button">
-                  {{ logOpen ? 'Tutup' : 'Lihat' }}
-                </button>
-                <button @click="copyLog" class="btn btn-secondary px-3 py-2 text-xs" type="button">
-                  Copy
-                </button>
-                <button v-if="logOpen && !autoFollow" @click="scrollLogToBottom" class="btn btn-secondary px-3 py-2 text-xs" type="button">
-                  Ke bawah
-                </button>
-                <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 select-none">
-                  <input v-model="autoFollow" type="checkbox" class="rounded border-gray-300 dark:border-white/20" />
-                  Auto-follow
-                </label>
-              </div>
-            </div>
-            <div v-if="logOpen" ref="logBoxRef" class="mt-3 h-80 overflow-auto rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-black/20 p-3">
-              <pre class="text-[11px] leading-relaxed text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ (state?.log_tail || []).join('\n') }}</pre>
-            </div>
-            <div v-else class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              Log disembunyikan. Akan terbuka otomatis saat terjadi error.
-            </div>
-          </div>
-
-          <div v-if="detailsOpen" :class="sectionClass">
-            <h3 class="text-base font-semibold text-gray-900 dark:text-white">Konfigurasi</h3>
-            <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
-              <div :class="mutedBoxClass">
-                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Enabled</div>
-                <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.enabled ? 'YES' : 'NO' }}</div>
-              </div>
-              <div :class="mutedBoxClass">
-                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Chunk size</div>
-                <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.chunk_size }}</div>
-              </div>
-              <div :class="mutedBoxClass">
-                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Max package</div>
-                <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.max_package_mb }} MB</div>
-              </div>
-              <div :class="mutedBoxClass">
-                <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Download</div>
-                <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.allow_download ? 'YES' : 'NO' }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="rounded-xl border border-red-200 bg-red-50 dark:border-red-500/20 dark:bg-red-500/10 p-5">
-        <div class="flex items-start justify-between gap-3">
-          <div>
-            <h3 class="text-base font-semibold text-red-900 dark:text-red-200">Danger Zone</h3>
-            <p class="mt-1 text-xs text-red-800 dark:text-red-200">
-              Reset hanya menghapus state/workdir update (paket ZIP tetap ada). Gunakan jika update macet atau state corrupt.
+      <div class="relative space-y-5">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div class="min-w-0">
+            <h1 v-if="!embedded" class="text-2xl font-black tracking-tight text-gray-900 dark:text-white">Update Sistem</h1>
+            <h2 v-else class="text-lg font-black tracking-tight text-gray-900 dark:text-white">Update Sistem</h2>
+            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              Update panel tanpa git pull/composer. Gunakan paket build agar vendor dan public/build ikut terpasang.
             </p>
           </div>
-          <button @click="dangerOpen = !dangerOpen" class="btn btn-secondary px-3 py-2 text-xs" type="button">
-            {{ dangerOpen ? 'Tutup' : 'Buka' }}
-          </button>
-        </div>
 
-        <div v-if="dangerOpen" class="mt-3 space-y-2">
-          <div class="text-xs text-red-800 dark:text-red-200">Ketik RESET untuk mengaktifkan tombol reset.</div>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <input v-model="resetText" class="input sm:col-span-2" placeholder="Ketik RESET" />
-            <button @click="resetUpdate" class="btn btn-danger" :disabled="isBusy || resetText !== 'RESET'" type="button">
-              Reset Update
+          <div class="flex flex-wrap items-center gap-2">
+            <span :class="['px-2.5 py-1 rounded-full text-xs font-black tracking-wider', stagePill.klass]">
+              {{ stagePill.text }}
+            </span>
+            <button @click="refreshStatus" class="btn btn-secondary" :disabled="isBusy" type="button">
+              <span v-if="statusLoading" class="mr-2"><LoadingSpinner size="sm" /></span>
+              Refresh
+            </button>
+            <button @click="detailsOpen = !detailsOpen" class="btn btn-secondary" type="button">
+              {{ detailsOpen ? 'Mode Ringkas' : 'Mode Detail' }}
             </button>
           </div>
         </div>
+
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div class="rounded-xl border border-gray-200/80 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Status</div>
+            <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ stageLabel }}</div>
+            <div v-if="hasStagedPackage" class="mt-1 text-xs text-amber-700 dark:text-amber-300">Ada proses update yang belum selesai.</div>
+          </div>
+
+          <div class="rounded-xl border border-gray-200/80 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Sumber Aktif</div>
+            <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ sourceMode === 'github' ? 'GitHub Release' : 'Paket ZIP' }}</div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ sourceMode === 'github' ? `${github.owner || '-'} / ${github.repo || '-'}` : 'Upload manual atau download URL' }}
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-gray-200/80 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Paket</div>
+            <div class="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">{{ pkg?.filename || 'Belum ada paket staged' }}</div>
+            <div v-if="pkg?.size" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ formatBytes(pkg.size) }}</div>
+          </div>
+
+          <div class="rounded-xl border border-gray-200/80 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Terpasang</div>
+            <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ installed?.source || '-' }}</div>
+            <div v-if="installed?.github?.sha" class="mt-1 text-xs font-mono text-gray-500 dark:text-gray-400">
+              {{ (installed.github.sha || '').slice(0, 7) }}
+            </div>
+            <div v-if="installed?.installed_at" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ formatDateTime(installed.installed_at) }}</div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-gray-200/80 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+          <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div class="space-y-3">
+              <div class="inline-flex rounded-xl border border-gray-200 bg-white/80 p-1 dark:border-white/10 dark:bg-dark-950/60">
+                <button
+                  type="button"
+                  @click="setSourceMode('zip')"
+                  :class="[
+                    'px-3 py-1.5 text-xs font-bold rounded-lg transition',
+                    sourceMode === 'zip' ? 'bg-white dark:bg-dark-950 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white',
+                  ]"
+                >
+                  ZIP
+                </button>
+                <button
+                  type="button"
+                  @click="setSourceMode('github')"
+                  :disabled="!github.enabled"
+                  :class="[
+                    'px-3 py-1.5 text-xs font-bold rounded-lg transition',
+                    !github.enabled ? 'opacity-50 cursor-not-allowed' : '',
+                    sourceMode === 'github' ? 'bg-white dark:bg-dark-950 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white',
+                  ]"
+                >
+                  GitHub
+                </button>
+              </div>
+              <p v-if="primaryHint" class="text-xs text-gray-500 dark:text-gray-400">{{ primaryHint }}</p>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <button @click="startPrimaryAction" class="btn btn-primary min-w-[170px]" :disabled="!canPrimary" type="button">
+                <span v-if="running" class="mr-2"><LoadingSpinner size="sm" color="primary" /></span>
+                {{ primaryLabel }}
+              </button>
+              <button v-if="detailsOpen" @click="prepare" class="btn btn-secondary px-3 py-2 text-xs" :disabled="!canPrepare" type="button">
+                Prepare
+              </button>
+              <button v-if="detailsOpen" @click="runSteps({ autoPrepare: true })" class="btn btn-secondary px-3 py-2 text-xs" :disabled="!canApply" type="button">
+                Run Steps
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="!statusLoading && state && !cfg.enabled"
+          class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
+        >
+          Fitur update dinonaktifkan di server. Set <span class="font-mono font-semibold">SYSTEM_UPDATE_ENABLED=true</span>.
+        </div>
+
+        <div
+          v-if="err"
+          class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900 whitespace-pre-line dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200"
+        >
+          {{ err }}
+        </div>
+
+        <div v-if="copyProgress || finalizeProgress" class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div v-if="copyProgress" class="rounded-xl border border-gray-200/80 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+            <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+              <span>Copy {{ copyProgress.idx }}/{{ copyProgress.total }}</span>
+              <span>{{ copyProgress.pct }}%</span>
+            </div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              copied {{ copyProgress.copied }} | skipped {{ copyProgress.skipped }}
+            </div>
+            <div class="mt-2 h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
+              <div class="h-full bg-gradient-to-r from-primary-600 to-primary-500" :style="{ width: `${copyProgress.pct}%` }"></div>
+            </div>
+          </div>
+
+          <div v-if="finalizeProgress" class="rounded-xl border border-gray-200/80 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+            <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+              <span>Finalize {{ finalizeProgress.idx }}/{{ finalizeProgress.total }}</span>
+              <span>{{ finalizeProgress.pct }}%</span>
+            </div>
+            <div class="mt-2 h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
+              <div class="h-full bg-gradient-to-r from-emerald-600 to-emerald-500" :style="{ width: `${finalizeProgress.pct}%` }"></div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="detailsOpen" class="rounded-xl border border-gray-200/80 bg-white/70 p-4 dark:border-white/10 dark:bg-white/5">
+          <div class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Alur Update</div>
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <div
+              v-for="st in stepper"
+              :key="st.id"
+              class="flex items-center gap-3 sm:flex-col sm:items-center sm:gap-2"
+            >
+              <div
+                :class="[
+                  'h-9 w-9 rounded-full flex items-center justify-center text-sm font-black border',
+                  st.status === 'done' ? 'bg-emerald-600 text-white border-emerald-600' : '',
+                  st.status === 'current' ? 'bg-primary-600 text-white border-primary-600' : '',
+                  st.status === 'upcoming' ? 'bg-gray-100 text-gray-700 border-gray-200 dark:bg-white/5 dark:text-gray-200 dark:border-white/10' : '',
+                  st.status === 'error' ? 'bg-red-600 text-white border-red-600' : '',
+                ]"
+              >
+                <svg v-if="st.status === 'done'" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+                <svg v-else-if="st.status === 'error'" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86l-8.02 13.9A2 2 0 004 20h16a2 2 0 001.73-3.24l-8.02-13.9a2 2 0 00-3.46 0z" />
+                </svg>
+                <span v-else>{{ st.index }}</span>
+              </div>
+              <div class="sm:text-center">
+                <div class="text-sm sm:text-xs font-semibold text-gray-900 dark:text-white">{{ st.label }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="detailsOpen && state?.manifest" :class="mutedBoxClass">
+          <div class="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+            <div class="flex items-center justify-between sm:block">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">vendor</div>
+              <div
+                class="mt-1 font-semibold"
+                :class="state.manifest.vendor_included ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'"
+              >
+                {{ state.manifest.vendor_included ? 'included' : 'NOT included' }}
+              </div>
+            </div>
+            <div class="flex items-center justify-between sm:block">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">public/build</div>
+              <div
+                class="mt-1 font-semibold"
+                :class="state.manifest.build_included ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'"
+              >
+                {{ state.manifest.build_included ? 'included' : 'NOT included' }}
+              </div>
+            </div>
+            <div class="flex items-center justify-between sm:block">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">excluded</div>
+              <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ state.manifest.excluded_count || 0 }}</div>
+            </div>
+          </div>
+          <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
+            Tidak menimpa: <span class="font-semibold">.env</span>, <span class="font-semibold">storage/</span>,
+            <span class="font-semibold">bootstrap/cache</span>, <span class="font-semibold">public/storage</span>, <span class="font-semibold">public/uploads</span>.
+          </div>
+          <div v-if="!state.manifest.vendor_included" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+            Paket tidak mengandung <span class="font-semibold">vendor/</span>. Jika ada perubahan dependency, update bisa gagal.
+          </div>
+          <div v-if="!state.manifest.build_included" class="mt-1 text-xs text-amber-700 dark:text-amber-300">
+            Paket tidak mengandung <span class="font-semibold">public/build</span>. Jika ada perubahan frontend, UI bisa tidak update.
+          </div>
+        </div>
       </div>
     </div>
+
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-12">
+      <div class="space-y-6 xl:col-span-8">
+        <div v-if="sourceMode === 'zip'" :class="sectionClass">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 class="text-base font-semibold text-gray-900 dark:text-white">Paket ZIP</h3>
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                Upload paket update manual untuk hosting tanpa akses git/composer.
+              </p>
+            </div>
+            <button
+              v-if="cfg.allow_download && cfg.package_url_set"
+              @click="downloadConfigured"
+              class="btn btn-secondary"
+              :disabled="isBusy || !cfg.enabled"
+              type="button"
+            >
+              Download dari URL
+            </button>
+          </div>
+
+          <div class="mt-4 space-y-3">
+            <input
+              ref="fileRef"
+              type="file"
+              accept=".zip"
+              class="block w-full text-sm text-gray-700 dark:text-gray-300"
+              @change="onZipFileChange"
+            />
+
+            <div v-if="zipFile?.name" class="text-xs text-gray-500 dark:text-gray-400">
+              Dipilih: <span class="font-semibold">{{ zipFile.name }}</span>
+              <span v-if="zipFile.size" class="ml-2">({{ formatBytes(zipFile.size) }})</span>
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+              <button v-if="detailsOpen" @click="uploadPackage" class="btn btn-secondary" :disabled="uploading || isBusy || !cfg.enabled" type="button">
+                <span v-if="uploading" class="mr-2"><LoadingSpinner size="sm" /></span>
+                {{ uploading ? `Uploading ${uploadPct}%` : 'Upload saja' }}
+              </button>
+            </div>
+
+            <div v-if="uploading" class="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
+              <div class="h-full bg-gradient-to-r from-primary-600 to-primary-500" :style="{ width: `${uploadPct}%` }"></div>
+            </div>
+
+            <div class="rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-dark-900/40 p-3 text-xs text-gray-500 dark:text-gray-400">
+              Tidak menimpa: <span class="font-semibold">.env</span>, <span class="font-semibold">storage/</span>,
+              <span class="font-semibold">bootstrap/cache</span>, <span class="font-semibold">public/storage</span>, <span class="font-semibold">public/uploads</span>.
+            </div>
+          </div>
+        </div>
+
+        <div v-else :class="sectionClass">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 class="text-base font-semibold text-gray-900 dark:text-white">GitHub Release</h3>
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                Download paket build terbaru dari GitHub lalu apply update otomatis.
+              </p>
+            </div>
+            <button
+              @click="githubCheckLatest"
+              class="btn btn-secondary px-3 py-2 text-xs"
+              :disabled="isBusy || !github.enabled || !github.configured || !github.token_present"
+              type="button"
+            >
+              Cek Latest
+            </button>
+          </div>
+
+          <div
+            v-if="!github.enabled"
+            class="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
+          >
+            GitHub update dinonaktifkan (server config).
+          </div>
+
+          <div class="mt-4 grid grid-cols-1 gap-3 text-sm text-gray-700 dark:text-gray-300 sm:grid-cols-2">
+            <div :class="mutedBoxClass">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Repo</div>
+              <div class="mt-1 font-semibold">
+                <span v-if="github.configured">{{ github.owner }}/{{ github.repo }}</span>
+                <span v-else class="text-amber-700 dark:text-amber-300">Belum diset di .env</span>
+              </div>
+              <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Branch: <span class="font-mono font-semibold">{{ github.branch || 'main' }}</span>
+              </div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Tag: <span class="font-mono font-semibold">{{ github.release_tag || 'panel-main-latest' }}</span>
+                <span class="mx-2">|</span>
+                Asset: <span class="font-mono font-semibold">{{ github.release_asset || 'update-package.zip' }}</span>
+              </div>
+            </div>
+
+            <div :class="mutedBoxClass">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Token</div>
+              <div class="mt-1 font-semibold">
+                <span v-if="github.token_present" class="text-emerald-700 dark:text-emerald-300">Ada ({{ github.token_hint || '****' }})</span>
+                <span v-else class="text-amber-700 dark:text-amber-300">Belum ada</span>
+              </div>
+              <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Saran: Fine-grained PAT dengan akses <span class="font-semibold">Contents: Read</span>.
+              </div>
+            </div>
+          </div>
+
+          <div v-if="detailsOpen || !github.token_present" class="mt-4" :class="mutedBoxClass">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Simpan Token</div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Token disimpan di server (file-based, encrypted).
+                </div>
+              </div>
+              <button v-if="detailsOpen && github.token_present" @click="githubClearToken" class="btn btn-danger px-3 py-2 text-xs" :disabled="isBusy || ghBusy || !github.enabled" type="button">
+                Hapus
+              </button>
+            </div>
+            <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <input v-model="ghToken" type="password" class="input sm:col-span-2" placeholder="Fine-grained PAT (read-only)" />
+              <button @click="githubSaveToken" class="btn btn-secondary px-3 py-2 text-xs" :disabled="isBusy || ghBusy || !github.enabled" type="button">
+                Simpan
+              </button>
+            </div>
+          </div>
+
+          <div v-if="ghCheck?.latest" class="mt-4" :class="mutedBoxClass">
+            <div class="flex items-start justify-between gap-4">
+              <div class="min-w-0">
+                <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Latest</div>
+                <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">
+                  <span class="font-mono">{{ ghCheck.latest.short }}</span>
+                  <span class="ml-2 truncate text-gray-600 dark:text-gray-300">{{ ghCheck.latest.message }}</span>
+                </div>
+                <div v-if="ghCheck.latest.date" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ ghCheck.latest.date }}</div>
+
+                <div v-if="ghCheck.built" class="mt-3 space-y-1 text-xs text-gray-600 dark:text-gray-300">
+                  <div>
+                    <span class="font-semibold">tag:</span>
+                    <span class="font-mono">{{ ghCheck.built.release?.tag || '-' }}</span>
+                  </div>
+                  <div v-if="ghCheck.built.meta?.short">
+                    <span class="font-semibold">sha:</span>
+                    <span class="font-mono">{{ ghCheck.built.meta.short }}</span>
+                    <span v-if="ghCheck.built.meta.built_at" class="ml-2 text-gray-500 dark:text-gray-400">{{ ghCheck.built.meta.built_at }}</span>
+                  </div>
+                  <div v-else class="text-amber-700 dark:text-amber-300">
+                    Metadata build tidak terbaca.
+                  </div>
+                  <div v-if="ghCheck.built.asset?.name">
+                    <span class="font-semibold">asset:</span>
+                    <span class="font-mono">{{ ghCheck.built.asset.name }}</span>
+                    <span v-if="typeof ghCheck.built.asset.size === 'number'" class="ml-2 text-gray-500 dark:text-gray-400">
+                      ({{ Math.round(ghCheck.built.asset.size / 1024 / 1024) }} MB)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="space-y-1 text-right text-xs whitespace-nowrap">
+                <div v-if="ghCheck.build_ready === true" class="font-bold text-emerald-700 dark:text-emerald-300">BUILD READY</div>
+                <div v-else-if="ghCheck.build_ready === false" class="font-bold text-amber-700 dark:text-amber-300">BUILD PENDING</div>
+                <div v-if="ghCheck.update_available === false" class="font-bold text-emerald-700 dark:text-emerald-300">UP TO DATE</div>
+                <div v-else-if="ghCheck.update_available === true" class="font-bold text-amber-700 dark:text-amber-300">UPDATE AVAILABLE</div>
+                <div v-else class="font-bold text-gray-500 dark:text-gray-400">UNKNOWN</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-6 xl:col-span-4">
+        <div :class="sectionClass">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="text-base font-semibold text-gray-900 dark:text-white">Log Update</h3>
+            <div class="flex flex-wrap items-center gap-2">
+              <button @click="logOpen = !logOpen" class="btn btn-secondary px-3 py-2 text-xs" type="button">
+                {{ logOpen ? 'Tutup' : 'Lihat' }}
+              </button>
+              <button @click="copyLog" class="btn btn-secondary px-3 py-2 text-xs" type="button">
+                Copy
+              </button>
+              <button v-if="logOpen && !autoFollow" @click="scrollLogToBottom" class="btn btn-secondary px-3 py-2 text-xs" type="button">
+                Ke bawah
+              </button>
+            </div>
+          </div>
+
+          <label class="mt-3 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 select-none">
+            <input v-model="autoFollow" type="checkbox" class="rounded border-gray-300 dark:border-white/20" />
+            Auto-follow log
+          </label>
+
+          <div v-if="logOpen" ref="logBoxRef" class="mt-3 h-80 overflow-auto rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-black/20 p-3">
+            <pre class="text-[11px] leading-relaxed text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ (state?.log_tail || []).join('\n') }}</pre>
+          </div>
+          <div v-else class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            Log disembunyikan. Akan terbuka otomatis saat terjadi error.
+          </div>
+        </div>
+
+        <div v-if="detailsOpen" :class="sectionClass">
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">Konfigurasi Server</h3>
+          <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div :class="mutedBoxClass">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Enabled</div>
+              <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.enabled ? 'YES' : 'NO' }}</div>
+            </div>
+            <div :class="mutedBoxClass">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Chunk size</div>
+              <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.chunk_size }}</div>
+            </div>
+            <div :class="mutedBoxClass">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Max package</div>
+              <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.max_package_mb }} MB</div>
+            </div>
+            <div :class="mutedBoxClass">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Download</div>
+              <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.allow_download ? 'YES' : 'NO' }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-red-200 bg-red-50 p-5 dark:border-red-500/20 dark:bg-red-500/10">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="text-base font-semibold text-red-900 dark:text-red-200">Danger Zone</h3>
+              <p class="mt-1 text-xs text-red-800 dark:text-red-200">
+                Reset hanya menghapus state/workdir update (paket ZIP tetap ada). Gunakan jika update macet atau state corrupt.
+              </p>
+            </div>
+            <button @click="dangerOpen = !dangerOpen" class="btn btn-secondary px-3 py-2 text-xs" type="button">
+              {{ dangerOpen ? 'Tutup' : 'Buka' }}
+            </button>
+          </div>
+
+          <div v-if="dangerOpen" class="mt-3 space-y-2">
+            <div class="text-xs text-red-800 dark:text-red-200">Ketik RESET untuk mengaktifkan tombol reset.</div>
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <input v-model="resetText" class="input sm:col-span-2" placeholder="Ketik RESET" />
+              <button @click="resetUpdate" class="btn btn-danger" :disabled="isBusy || resetText !== 'RESET'" type="button">
+                Reset Update
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
+
