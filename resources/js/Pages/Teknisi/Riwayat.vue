@@ -19,11 +19,27 @@ const savingEdit = ref(false)
 const showEditModal = ref(false)
 const editTarget = ref(null)
 
+function pad2(n) {
+  return String(n).padStart(2, '0')
+}
+
+function toYmd(date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+}
+
+function currentMonthRange() {
+  const now = new Date()
+  const start = new Date(now.getFullYear(), now.getMonth(), 1)
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  return { start: toYmd(start), end: toYmd(end) }
+}
+
+const monthDefault = currentMonthRange()
 const filters = ref({
-  date_from: props.initialFilters.date_from || new Date(new Date().setDate(1)).toISOString().split('T')[0],
-  date_to: props.initialFilters.date_to || new Date().toISOString().split('T')[0],
-  status: props.initialFilters.status || 'Selesai',
-  q: '',
+  date_from: props.initialFilters.date_from || monthDefault.start,
+  date_to: props.initialFilters.date_to || monthDefault.end,
+  status: props.initialFilters.status || '',
+  q: props.initialFilters.q || '',
 })
 
 const statusColors = {
@@ -99,13 +115,6 @@ async function loadHistory() {
   }
 }
 
-function formatDateLong(dateStr) {
-  if (!dateStr) return '-'
-  const d = new Date(String(dateStr).replace(' ', 'T'))
-  if (Number.isNaN(d.getTime())) return '-'
-  return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
 function formatDateWithTime(dateStr) {
   if (!dateStr) return '-'
   const d = new Date(String(dateStr).replace(' ', 'T'))
@@ -139,16 +148,14 @@ const filteredHistory = computed(() => {
   })
 })
 
-const totalDone = computed(() =>
-  filteredHistory.value.filter((item) => String(item?.status || '') === 'Selesai').length
-)
-
-const totalCanceled = computed(() =>
-  filteredHistory.value.filter((item) => String(item?.status || '') === 'Batal').length
-)
-
 function clearSearch() {
   filters.value.q = ''
+}
+
+function applyCurrentMonth() {
+  const range = currentMonthRange()
+  filters.value.date_from = range.start
+  filters.value.date_to = range.end
 }
 
 function pickString(obj, ...keys) {
@@ -311,112 +318,96 @@ watch(
 <template>
   <Head title="Riwayat Pekerjaan" />
   <AdminLayout>
-    <div class="text-slate-800 dark:text-slate-100 pb-24">
-      <div class="sticky top-0 z-30 w-full">
-        <div class="absolute inset-x-0 top-0 bottom-0 bg-slate-50/95 dark:bg-slate-900/90 backdrop-blur border-b border-slate-200 dark:border-white/10 pointer-events-none"></div>
-        <div class="relative max-w-3xl mx-auto px-3 sm:px-5 pb-2 sm:pb-3 pt-2 space-y-2">
-          <div class="flex items-start justify-between gap-2">
-            <div>
-              <h1 class="text-lg font-black text-slate-900 dark:text-slate-100">Riwayat Pekerjaan</h1>
-              <p class="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">
-                {{ props.techName }} • {{ props.techRole }}
-              </p>
+    <div class="text-slate-800 dark:text-slate-100 pb-20">
+      <div class="max-w-4xl mx-auto px-3 sm:px-5 pt-4 space-y-3">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h1 class="text-xl font-black text-slate-900 dark:text-slate-100">Riwayat Pekerjaan</h1>
+            <p class="text-xs text-slate-500 dark:text-slate-400 font-medium">
+              {{ props.techName }} • {{ props.techRole }}
+            </p>
+          </div>
+          <button
+            @click="loadHistory"
+            class="h-10 w-10 shrink-0 flex items-center justify-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-slate-600 dark:text-slate-300 shadow-sm hover:bg-slate-50 dark:hover:bg-white/5 transition"
+            type="button"
+            title="Refresh"
+          >
+            ↻
+          </button>
+        </div>
+
+        <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur border border-slate-200 dark:border-white/10 rounded-2xl p-3 sm:p-4 space-y-2 shadow-sm">
+          <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_150px] gap-2">
+            <div class="relative">
+              <input
+                v-model="filters.q"
+                type="text"
+                class="w-full h-11 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl pl-10 pr-10 text-sm font-medium text-slate-700 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none"
+                placeholder="Cari ticket / nama / alamat / pop"
+              />
+              <div class="absolute inset-y-0 left-0 w-10 flex items-center justify-center text-slate-400 dark:text-slate-500">⌕</div>
+              <button v-if="filters.q" @click="clearSearch" type="button" class="absolute inset-y-0 right-0 w-10 flex items-center justify-center text-slate-400 hover:text-red-500">✕</button>
             </div>
-            <button
-              @click="loadHistory"
-              class="h-10 w-10 flex items-center justify-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-slate-600 dark:text-slate-300 shadow-sm hover:bg-blue-50 dark:hover:bg-white/5 transition"
-              type="button"
-              title="Refresh"
-            >
-              ↻
-            </button>
+            <select v-model="filters.status" class="h-11 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl px-3 text-sm font-semibold text-slate-700 dark:text-slate-100 outline-none">
+              <option value="">Semua Status</option>
+              <option value="Selesai">Selesai</option>
+              <option value="Batal">Batal</option>
+            </select>
           </div>
 
-          <div class="space-y-2">
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Dari Tanggal</label>
-                <input v-model="filters.date_from" type="date" class="w-full h-11 bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl px-3 text-sm font-semibold text-slate-700 dark:text-slate-100 outline-none" />
-              </div>
-              <div>
-                <label class="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Sampai Tanggal</label>
-                <input v-model="filters.date_to" type="date" class="w-full h-11 bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl px-3 text-sm font-semibold text-slate-700 dark:text-slate-100 outline-none" />
-              </div>
-            </div>
-
-            <div class="grid grid-cols-[minmax(0,1fr)_110px] gap-2">
-              <div class="relative">
-                <input
-                  v-model="filters.q"
-                  type="text"
-                  class="w-full h-11 bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl pl-10 pr-10 text-sm font-semibold text-slate-700 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 outline-none"
-                  placeholder="Cari ticket / nama / alamat / pop"
-                />
-                <div class="absolute inset-y-0 left-0 w-10 flex items-center justify-center text-slate-400 dark:text-slate-500">⌕</div>
-                <button v-if="filters.q" @click="clearSearch" type="button" class="absolute inset-y-0 right-0 w-10 flex items-center justify-center text-slate-400 hover:text-red-500">✕</button>
-              </div>
-              <select v-model="filters.status" class="h-11 bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl px-3 text-xs font-bold text-slate-700 dark:text-slate-100 outline-none">
-                <option value="">Semua</option>
-                <option value="Selesai">Selesai</option>
-                <option value="Batal">Batal</option>
-              </select>
-            </div>
-
-            <div class="grid grid-cols-2 gap-2 text-[11px]">
-              <div class="bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-200 border border-emerald-100 dark:border-emerald-500/30 rounded-xl px-3 py-2 font-bold">Selesai: {{ totalDone }}</div>
-              <div class="bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-200 border border-red-100 dark:border-red-500/30 rounded-xl px-3 py-2 font-bold">Batal: {{ totalCanceled }}</div>
-            </div>
+          <div class="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+            <input v-model="filters.date_from" type="date" class="h-11 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl px-3 text-sm font-medium text-slate-700 dark:text-slate-100 outline-none" />
+            <input v-model="filters.date_to" type="date" class="h-11 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl px-3 text-sm font-medium text-slate-700 dark:text-slate-100 outline-none" />
+            <button
+              type="button"
+              class="h-11 px-4 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 text-sm font-semibold text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
+              @click="applyCurrentMonth"
+            >
+              Bulan Ini
+            </button>
           </div>
         </div>
       </div>
 
-      <div class="max-w-3xl mx-auto px-3 sm:px-5 mt-4">
+      <div class="max-w-4xl mx-auto px-3 sm:px-5 mt-4">
         <div v-if="loading" class="text-center py-12">
           <div class="animate-spin rounded-full h-10 w-10 border-b-4 border-blue-600 mx-auto"></div>
           <p class="text-sm text-slate-400 dark:text-slate-500 mt-3 font-bold">Memuat riwayat...</p>
         </div>
 
-        <div v-else-if="filteredHistory.length > 0" class="space-y-3 pb-10">
+        <div v-else-if="filteredHistory.length > 0" class="space-y-2 pb-10">
           <div
             v-for="item in filteredHistory"
             :key="item.id"
-            class="bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-sm border border-slate-200 dark:border-white/10 space-y-3"
+            class="bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-sm border border-slate-200 dark:border-white/10"
           >
-            <div class="flex items-start justify-between gap-3">
+            <div class="flex items-start justify-between gap-3 mb-1">
               <div class="min-w-0">
-                <div class="text-xs font-bold text-slate-400 dark:text-slate-500 mb-1">#{{ item.ticket_id || item.id }}</div>
                 <h3 class="font-black text-slate-900 dark:text-slate-100 truncate">{{ item.nama || item.customer_name || '-' }}</h3>
-                <p class="text-sm text-slate-500 dark:text-slate-400 line-clamp-2">{{ item.alamat || item.address || '-' }}</p>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">{{ item.alamat || item.address || '-' }}</p>
               </div>
-              <span :class="['px-2 py-1 rounded-lg text-[10px] font-bold uppercase whitespace-nowrap', statusColors[item.status] || 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-white/10']">
+              <span :class="['px-2.5 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap', statusColors[item.status] || 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-white/10']">
                 {{ item.status || '-' }}
               </span>
             </div>
 
-            <div class="grid grid-cols-2 gap-2 text-[11px]">
-              <div class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg px-2 py-1.5">
-                <div class="text-slate-400 dark:text-slate-500 font-bold uppercase">POP</div>
-                <div class="text-slate-700 dark:text-slate-200 font-bold">{{ item.pop || '-' }}</div>
-              </div>
-              <div class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg px-2 py-1.5">
-                <div class="text-slate-400 dark:text-slate-500 font-bold uppercase">Selesai</div>
-                <div class="text-slate-700 dark:text-slate-200 font-bold">{{ formatDateLong(itemFinishedAt(item)) }}</div>
-              </div>
+            <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400 font-medium mb-3">
+              <span>#{{ item.ticket_id || item.id }}</span>
+              <span>POP: {{ item.pop || '-' }}</span>
+              <span>{{ formatDateWithTime(itemFinishedAt(item)) }}</span>
             </div>
 
-            <div class="flex items-center justify-between text-xs">
-              <div class="text-slate-500 dark:text-slate-400 font-semibold">{{ formatDateWithTime(itemFinishedAt(item)) }}</div>
+            <div class="flex items-center justify-between gap-2">
               <div class="text-emerald-600 dark:text-emerald-300 font-black">{{ formatCurrency(item.harga || item.price) }}</div>
-            </div>
-
-            <div v-if="canEditRiwayat" class="pt-1">
               <button
+                v-if="canEditRiwayat"
                 type="button"
-                class="w-full h-10 rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-200 text-xs font-black tracking-wide hover:bg-blue-100 dark:hover:bg-blue-500/20 transition disabled:opacity-60"
+                class="h-9 px-3 rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-200 text-xs font-black tracking-wide hover:bg-blue-100 dark:hover:bg-blue-500/20 transition disabled:opacity-60"
                 :disabled="savingEdit"
                 @click="openEditModal(item)"
               >
-                Edit Data Riwayat
+                Edit
               </button>
             </div>
           </div>
