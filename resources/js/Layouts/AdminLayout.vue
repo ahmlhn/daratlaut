@@ -214,7 +214,6 @@ const baseNavigationGroups = [
     items: [
       { name: 'Paket Layanan', href: '/plans', icon: 'tag', featureKey: 'plans', permissionsAny: ['view plans'] },
       { name: 'Pengaturan', href: '/settings', icon: 'cog', featureKey: 'settings', permissionsAny: ['manage settings', 'manage roles'] },
-      { name: 'Kelola Role', href: '/settings/roles', icon: 'shield-check', featureKey: 'settings', permissionsAny: ['manage settings', 'manage roles'] },
     ]
   },
   {

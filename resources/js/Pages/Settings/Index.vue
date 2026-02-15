@@ -1,17 +1,26 @@
 <script setup>
 import { ref, reactive, onMounted, computed, watch } from 'vue';
-import { Head } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import SystemUpdatePanel from '@/Pages/Settings/Partials/SystemUpdatePanel.vue';
 import SettingsNavIcon from '@/Pages/Settings/Partials/SettingsNavIcon.vue';
 
 const API = '/api/v1/settings';
+const page = usePage();
 const loading = ref(true);
 const refreshing = ref(false);
 const saving = ref(false);
 const testLoading = ref('');
 const lastLoadedAt = ref(null);
 const navQuery = ref('');
+
+const userPermissions = computed(() =>
+    (page.props.auth?.user?.permissions || []).map((p) => String(p || '').trim().toLowerCase())
+);
+const canOpenRoleSettings = computed(() => {
+    const perms = userPermissions.value || [];
+    return perms.includes('manage roles') || perms.includes('manage settings');
+});
 
 // ===== Reactive State =====
 const gatewayStatus = ref({ wa: {}, tg: {} });
@@ -409,6 +418,14 @@ onMounted(loadAll);
                         </div>
 
                         <div class="flex items-center gap-2 shrink-0">
+                            <Link
+                                v-if="canOpenRoleSettings"
+                                href="/settings/roles"
+                                class="btn btn-secondary btn-press gap-2"
+                            >
+                                <SettingsNavIcon name="shield-check" className="h-4 w-4" />
+                                <span>Kelola Role</span>
+                            </Link>
                             <button @click="loadAll({ refresh: true })" :disabled="refreshing" class="btn btn-secondary btn-press gap-2">
                                 <SettingsNavIcon name="refresh" className="h-4 w-4" />
                                 <span>{{ refreshing ? 'Refreshing...' : 'Refresh' }}</span>
