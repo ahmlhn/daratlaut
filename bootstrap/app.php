@@ -8,6 +8,7 @@ use App\Http\Middleware\RedirectIfAuthenticated;
 use App\Http\Middleware\RequireManageSettings;
 use App\Http\Middleware\RequireSuperAdmin;
 use App\Http\Middleware\ResolveTenant;
+use App\Http\Middleware\TriggerOltDailySyncOnAccess;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Application;
@@ -30,6 +31,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'manage.settings' => RequireManageSettings::class,
             'superadmin' => RequireSuperAdmin::class,
             'tenant.feature' => EnsureTenantFeatureEnabled::class,
+            'olt.daily.sync' => TriggerOltDailySyncOnAccess::class,
             'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
             'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
