@@ -32,12 +32,7 @@ class TriggerOltDailySyncOnAccess
             return;
         }
 
-        $role = strtolower(trim((string) ($user->role ?? '')));
-        if ($role === 'svp lapangan') {
-            $role = 'svp_lapangan';
-        }
-
-        if (!in_array($role, ['teknisi', 'owner'], true)) {
+        if (!$this->userCanAccessOlt($user)) {
             return;
         }
 
@@ -49,5 +44,39 @@ class TriggerOltDailySyncOnAccess
             // Best effort only: avoid blocking page access.
         }
     }
-}
 
+    private function userCanAccessOlt(mixed $user): bool
+    {
+        // RBAC-first: follow configured permission settings.
+        try {
+            if (method_exists($user, 'can')) {
+                $permissions = [
+                    'view olts',
+                    'manage olt',
+                    'create olts',
+                    'edit olts',
+                    'delete olts',
+                ];
+
+                foreach ($permissions as $permission) {
+                    if ($user->can($permission)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+            // ignore and continue to legacy fallback
+        }
+
+        // Legacy fallback for deployments that still rely on hardcoded role mapping.
+        try {
+            if (method_exists($user, 'canManageOlt')) {
+                return (bool) $user->canManageOlt();
+            }
+        } catch (Throwable $e) {
+            // ignore
+        }
+
+        return false;
+    }
+}
