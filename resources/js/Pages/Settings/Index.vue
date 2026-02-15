@@ -13,6 +13,8 @@ const saving = ref(false);
 const testLoading = ref('');
 const lastLoadedAt = ref(null);
 const navQuery = ref('');
+const compactMode = ref(true);
+const COMPACT_UI_KEY = 'settings_ui_compact';
 
 const userPermissions = computed(() =>
     (page.props.auth?.user?.permissions || []).map((p) => String(p || '').trim().toLowerCase())
@@ -136,6 +138,21 @@ const sectionSearchResults = computed(() => {
     if (!q) return [];
     return sections.filter((s) => s.name.toLowerCase().includes(q));
 });
+
+function toggleCompactMode() {
+    compactMode.value = !compactMode.value;
+}
+
+watch(
+    () => compactMode.value,
+    (v) => {
+        try {
+            window.localStorage.setItem(COMPACT_UI_KEY, v ? '1' : '0');
+        } catch (e) {
+            // Ignore localStorage errors silently.
+        }
+    }
+);
 
 // ===== Fetch helpers =====
 async function api(path, opts = {}) {
@@ -392,32 +409,47 @@ function statusColor(s) {
     return 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300';
 }
 
-onMounted(loadAll);
+onMounted(() => {
+    try {
+        const saved = window.localStorage.getItem(COMPACT_UI_KEY);
+        if (saved === '0' || saved === '1') compactMode.value = saved === '1';
+    } catch (e) {
+        // Ignore localStorage errors silently.
+    }
+    loadAll();
+});
 </script>
 
 <template>
     <Head title="Pengaturan" />
     <AdminLayout>
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 pb-16">
+        <div :class="['max-w-7xl mx-auto px-4 sm:px-6 lg:px-8', compactMode ? 'space-y-6 pb-10' : 'space-y-10 pb-16']">
             <!-- Header -->
-            <div class="relative overflow-hidden rounded-3xl border border-gray-200/60 dark:border-white/10 bg-white dark:bg-dark-900 shadow-sm">
+            <div :class="['relative overflow-hidden border border-gray-200/60 dark:border-white/10 bg-white dark:bg-dark-900 shadow-sm', compactMode ? 'rounded-2xl' : 'rounded-3xl']">
                 <div class="pointer-events-none absolute inset-0">
                     <div class="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-gradient-to-br from-primary-500/25 to-primary-700/10 blur-3xl"></div>
                     <div class="absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 blur-3xl"></div>
                 </div>
-                <div class="relative p-7 sm:p-10">
-                    <div class="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                <div :class="['relative', compactMode ? 'p-5 sm:p-6' : 'p-7 sm:p-10']">
+                    <div :class="['flex flex-col gap-4 sm:flex-row sm:justify-between', compactMode ? 'sm:items-center' : 'sm:items-start']">
                         <div class="min-w-0">
-                            <h1 class="text-3xl sm:text-4xl font-black tracking-tight text-gray-900 dark:text-white">Pengaturan</h1>
-                            <p class="mt-2 text-sm sm:text-base text-gray-600 dark:text-gray-400 max-w-2xl">
+                            <h1 :class="[compactMode ? 'text-2xl sm:text-3xl' : 'text-3xl sm:text-4xl', 'font-black tracking-tight text-gray-900 dark:text-white']">Pengaturan</h1>
+                            <p class="mt-2 text-sm sm:text-base text-gray-600 dark:text-gray-400 max-w-2xl" v-if="!compactMode">
                                 Konfigurasi gateway, notifikasi, template, POP, dan fee teknisi.
                             </p>
-                            <p v-if="lastLoadedAt" class="mt-3 text-xs text-gray-500 dark:text-gray-500">
+                            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400 max-w-2xl" v-else>
+                                Gateway, notifikasi, template, POP, dan fee teknisi.
+                            </p>
+                            <p v-if="lastLoadedAt" :class="[compactMode ? 'mt-2 text-[11px]' : 'mt-3 text-xs', 'text-gray-500 dark:text-gray-500']">
                                 Terakhir refresh: <span class="font-semibold">{{ lastLoadedAt.toLocaleString('id-ID') }}</span>
                             </p>
                         </div>
 
-                        <div class="flex items-center gap-2 shrink-0">
+                        <div class="flex items-center gap-2 shrink-0 flex-wrap">
+                            <button @click="toggleCompactMode" class="btn btn-secondary btn-press gap-2">
+                                <SettingsNavIcon name="cog" className="h-4 w-4" />
+                                <span>{{ compactMode ? 'Mode Normal' : 'Mode Ringkas' }}</span>
+                            </button>
                             <Link
                                 v-if="canOpenRoleSettings"
                                 href="/settings/roles"
@@ -443,11 +475,11 @@ onMounted(loadAll);
                 </div>
             </div>
 
-            <div v-else class="space-y-6 lg:space-y-8">
+            <div v-else :class="compactMode ? 'space-y-4 lg:space-y-5' : 'space-y-6 lg:space-y-8'">
                 <!-- Top Tabs + Submenu Chips (Option B) -->
                 <div class="card p-0 overflow-hidden rounded-2xl">
-                    <div class="px-5 py-4 sm:px-7 sm:py-5 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
-                        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div :class="['border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur', compactMode ? 'px-4 py-3 sm:px-5' : 'px-5 py-4 sm:px-7 sm:py-5']">
+                        <div :class="['flex flex-col gap-3', compactMode ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_320px_220px] xl:items-center' : 'lg:flex-row lg:items-center lg:justify-between']">
                             <div class="flex gap-2 overflow-x-auto custom-scrollbar">
                                 <div class="shrink-0 inline-flex gap-1 p-1 rounded-2xl bg-gray-100/70 dark:bg-white/5 border border-gray-200/70 dark:border-white/10">
                                     <button
@@ -456,7 +488,7 @@ onMounted(loadAll);
                                         type="button"
                                         @click="setActiveTab(t.id)"
                                         :class="[
-                                            'px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black tracking-tight transition whitespace-nowrap',
+                                            compactMode ? 'px-3 py-1.5 rounded-xl text-xs font-black tracking-tight transition whitespace-nowrap' : 'px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black tracking-tight transition whitespace-nowrap',
                                             activeTab === t.id
                                                 ? 'bg-primary-600 text-white shadow-sm shadow-primary-500/20'
                                                 : 'text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-white/10'
@@ -467,7 +499,7 @@ onMounted(loadAll);
                                 </div>
                             </div>
 
-                            <div class="relative w-full lg:w-[340px]">
+                            <div class="relative w-full" :class="compactMode ? 'xl:w-[320px]' : 'lg:w-[340px]'">
                                 <input v-model="navQuery" type="text" class="input !rounded-xl" placeholder="Cari pengaturan...">
                                 <div
                                     v-if="navQuery.trim()"
@@ -493,9 +525,25 @@ onMounted(loadAll);
                                     </div>
                                 </div>
                             </div>
+
+                            <div class="w-full" :class="compactMode ? 'xl:w-[220px]' : 'lg:w-[220px]'">
+                                <select
+                                    :value="activeSection"
+                                    @change="setActiveSection($event.target.value)"
+                                    class="input !rounded-xl text-sm w-full"
+                                >
+                                    <option
+                                        v-for="s in activeTabSections"
+                                        :key="`select-${s.id}`"
+                                        :value="s.id"
+                                    >
+                                        {{ s.name }}
+                                    </option>
+                                </select>
+                            </div>
                         </div>
 
-                        <div class="mt-3 flex flex-wrap gap-2">
+                        <div v-if="!compactMode" class="mt-3 flex flex-wrap gap-2">
                             <button
                                 v-for="s in activeTabSections"
                                 :key="s.id"
@@ -516,7 +564,7 @@ onMounted(loadAll);
                 </div>
 
                 <!-- Content -->
-                <div class="min-w-0 space-y-6 lg:space-y-8">
+                <div :class="compactMode ? 'min-w-0 space-y-4 lg:space-y-5' : 'min-w-0 space-y-6 lg:space-y-8'">
 
                     <!-- ===== GATEWAY STATUS ===== -->
                     <div v-if="activeSection === 'status'" class="card p-0 overflow-hidden rounded-2xl">
