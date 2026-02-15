@@ -12,7 +12,6 @@ const refreshing = ref(false);
 const saving = ref(false);
 const testLoading = ref('');
 const lastLoadedAt = ref(null);
-const navQuery = ref('');
 const compactMode = ref(true);
 const COMPACT_UI_KEY = 'settings_ui_compact';
 
@@ -131,12 +130,6 @@ const activeTabSections = computed(() => {
     const t = tabs.find((x) => x.id === activeTab.value) || tabs[0];
     const byId = sectionById.value;
     return (t?.items || []).map((id) => byId[id]).filter(Boolean);
-});
-
-const sectionSearchResults = computed(() => {
-    const q = navQuery.value.trim().toLowerCase();
-    if (!q) return [];
-    return sections.filter((s) => s.name.toLowerCase().includes(q));
 });
 
 function toggleCompactMode() {
@@ -471,7 +464,7 @@ onMounted(() => {
                 <!-- Top Tabs + Submenu Chips (Option B) -->
                 <div class="card p-0 overflow-hidden rounded-2xl">
                     <div :class="['border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur', compactMode ? 'px-4 py-3 sm:px-5' : 'px-5 py-4 sm:px-7 sm:py-5']">
-                        <div :class="['flex flex-col gap-3', compactMode ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_300px_220px] xl:items-center' : 'lg:flex-row lg:items-center lg:justify-between']">
+                        <div :class="['flex flex-col gap-3', compactMode ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_220px] xl:items-center' : 'lg:flex-row lg:items-center lg:justify-between']">
                             <div class="min-w-0 flex gap-2 overflow-x-auto custom-scrollbar">
                                 <div class="shrink-0 inline-flex gap-1 p-1 rounded-2xl bg-gray-100/70 dark:bg-white/5 border border-gray-200/70 dark:border-white/10">
                                     <button
@@ -498,33 +491,6 @@ onMounted(() => {
                                     >
                                         Kelola Role
                                     </Link>
-                                </div>
-                            </div>
-
-                            <div class="relative min-w-0 w-full" :class="compactMode ? 'xl:w-full' : 'lg:w-[340px]'">
-                                <input v-model="navQuery" type="text" class="input !rounded-xl" placeholder="Cari pengaturan...">
-                                <div
-                                    v-if="navQuery.trim()"
-                                    class="absolute z-30 mt-2 w-full rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 shadow-xl overflow-hidden"
-                                >
-                                    <div v-if="sectionSearchResults.length === 0" class="p-4 text-sm text-gray-500 dark:text-gray-400">
-                                        Menu tidak ditemukan.
-                                    </div>
-                                    <div v-else class="max-h-72 overflow-auto custom-scrollbar p-2">
-                                        <button
-                                            v-for="s in sectionSearchResults"
-                                            :key="s.id"
-                                            type="button"
-                                            @click="setActiveSection(s.id); navQuery = ''"
-                                            class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm font-semibold text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-white/5 transition"
-                                        >
-                                            <SettingsNavIcon :name="s.icon" className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-                                            <span class="flex-1">{{ s.name }}</span>
-                                            <span class="text-[10px] font-black tracking-widest text-gray-400 dark:text-gray-500 uppercase">
-                                                {{ tabs.find((t) => t.id === tabBySectionId[s.id])?.title || '' }}
-                                            </span>
-                                        </button>
-                                    </div>
                                 </div>
                             </div>
 
