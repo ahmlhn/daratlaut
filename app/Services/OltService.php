@@ -356,9 +356,9 @@ class OltService
             $this->sendCommand('exit'); // Exit config
             throw new RuntimeException("ONU registration failed: $out");
         }
-        
-        // Set ONU name
-        $this->sendCommand("onu {$onuId} name {$name}");
+
+        // Set ONU name (prefer interface gpon-onu style, fallback to interface gpon-olt).
+        $nameApplied = $this->setOnuNameAfterRegister($fsp, $onuId, $name);
         
         $this->sendCommand('exit'); // Exit interface
         
@@ -380,7 +380,40 @@ class OltService
             'onu_id' => $onuId,
             'sn' => $sn,
             'name' => $name,
+            'name_applied' => $nameApplied,
         ];
+    }
+
+    private function setOnuNameAfterRegister(string $fsp, int $onuId, string $name): bool
+    {
+        $primaryOut = '';
+
+        try {
+            // Primary command set used by current native workflow.
+            $out1 = $this->sendCommand("interface gpon-onu_{$fsp}:{$onuId}");
+            $out2 = $this->sendCommand("name {$name}");
+            $out3 = $this->sendCommand('exit'); // back to global config
+            $primaryOut = $out1 . "\n" . $out2 . "\n" . $out3;
+        } catch (Throwable $e) {
+            $primaryOut = $e->getMessage();
+        }
+
+        $hasPrimaryError = preg_match(self::ERROR_RE, $primaryOut) && !preg_match(self::OK_RE, $primaryOut);
+        if (!$hasPrimaryError) {
+            // Keep caller flow predictable: return to GPON-OLT interface.
+            $this->sendCommand("interface gpon-olt_{$fsp}");
+            return true;
+        }
+
+        try {
+            // Fallback for firmwares that only support setting name from GPON-OLT context.
+            $this->sendCommand("interface gpon-olt_{$fsp}");
+            $outAlt = $this->sendCommand("onu {$onuId} name {$name}");
+            $hasFallbackError = preg_match(self::ERROR_RE, $outAlt) && !preg_match(self::OK_RE, $outAlt);
+            return !$hasFallbackError;
+        } catch (Throwable $e) {
+            return false;
+        }
     }
 
     /**

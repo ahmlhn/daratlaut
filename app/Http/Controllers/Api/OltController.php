@@ -1032,6 +1032,7 @@ class OltController extends Controller
                 'onu_id' => (int) ($result['onu_id'] ?? ($request->onu_id ?? 0)),
                 'sn' => (string) ($result['sn'] ?? $request->sn),
                 'onu_name' => (string) ($result['name'] ?? $request->name),
+                'name_applied' => (bool) ($result['name_applied'] ?? true),
                 'save_config' => $saveConfig,
             ];
             $logId = OltLog::logAction(
@@ -1045,9 +1046,17 @@ class OltController extends Controller
                 $actor
             );
 
+            $nameApplied = (bool) ($result['name_applied'] ?? true);
+            $message = $saveConfig
+                ? 'ONU berhasil diregistrasi dan config disimpan (write).'
+                : 'ONU berhasil diregistrasi.';
+            if (!$nameApplied) {
+                $message .= ' Tetapi set nama ONU di OLT gagal, silakan rename manual.';
+            }
+
             return response()->json([
                 'status' => 'ok',
-                'message' => $saveConfig ? 'ONU berhasil diregistrasi dan config disimpan (write).' : 'ONU berhasil diregistrasi.',
+                'message' => $message,
                 'data' => $result,
                 'log_id' => $logId,
                 'log_excerpt' => $logExcerpt,

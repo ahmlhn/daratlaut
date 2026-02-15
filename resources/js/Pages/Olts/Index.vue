@@ -228,6 +228,7 @@ function buildRegisterLiveLines({ fsp, sn, name }) {
     const safeFsp = String(fsp || 'x/x/x');
     const safeSn = String(sn || 'SN');
     const onuName = sanitizeOnuName(name) || name || `ONU-${safeSn}`;
+    const onuType = selectedOlt.value?.onu_type_default || 'ALL-ONT';
     const tcont = selectedOlt.value?.tcont_default || 'pppoe';
     const vlan = selectedOlt.value?.vlan_default || '';
     const spid = selectedOlt.value?.service_port_id_default || '';
@@ -235,8 +236,8 @@ function buildRegisterLiveLines({ fsp, sn, name }) {
     const lines = [];
     lines.push('conf t');
     lines.push(`interface gpon-olt_${safeFsp}`);
-    lines.push(`onu <auto-id> sn ${safeSn}`);
-    lines.push(`interface gpon-onu_${safeFsp}`);
+    lines.push(`onu <auto-id> type ${onuType} sn ${safeSn}`);
+    lines.push(`interface gpon-onu_${safeFsp}:<auto-id>`);
     lines.push(`name ${onuName}`);
     lines.push(`tcont profile ${tcont}`);
     if (vlan && spid) lines.push(`service-port ${spid} vlan ${vlan}`);
@@ -786,7 +787,8 @@ async function registerSelectedOnu() {
         uncfg.value = uncfg.value.filter(o => String(o.sn) !== String(item.sn));
         clearUncfgSelection();
         storeUncfgCache(selectedOltId.value);
-        setUncfgStatus('ONU berhasil diregistrasi.', 'success');
+        const nameApplied = data?.data?.name_applied !== false;
+        setUncfgStatus(String(data.message || 'ONU berhasil diregistrasi.'), nameApplied ? 'success' : 'info');
         if (isTeknisi.value) teknisiWriteReady.value = true;
 
         const res = data?.data || {};
