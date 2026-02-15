@@ -35,17 +35,48 @@ class InstallationController extends Controller
     {
         $user = $request->user();
         if ($user && isset($user->role)) {
-            return strtolower((string) $user->role);
+            return $this->normalizeLegacyRole((string) $user->role);
         }
 
-        return strtolower((string) (session('level') ?: session('teknisi_role') ?: 'system'));
+        return $this->normalizeLegacyRole((string) (session('level') ?: session('teknisi_role') ?: 'system'));
+    }
+
+    private function normalizeLegacyRole(?string $role): string
+    {
+        $role = strtolower(trim((string) $role));
+        if ($role === 'svp lapangan') return 'svp_lapangan';
+        return $role;
     }
 
     private function isPrivileged(string $role): bool
     {
-        $role = strtolower(trim($role));
-        if ($role === 'svp lapangan') $role = 'svp_lapangan';
+        $role = $this->normalizeLegacyRole($role);
         return in_array($role, ['admin', 'cs', 'svp_lapangan'], true);
+    }
+
+    private function userCan(Request $request, string $permission): bool
+    {
+        $user = $request->user();
+        if (!$user) return false;
+
+        $legacyRole = $this->normalizeLegacyRole($user->role ?? null);
+        if (in_array($legacyRole, ['admin', 'owner'], true)) return true;
+
+        return method_exists($user, 'can') && $user->can($permission);
+    }
+
+    private function userCanAny(Request $request, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            if ($this->userCan($request, (string) $permission)) return true;
+        }
+        return false;
+    }
+
+    private function requireAnyPermission(Request $request, array $permissions): ?JsonResponse
+    {
+        if ($this->userCanAny($request, $permissions)) return null;
+        return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
     }
 
     private function normalizePhone(?string $raw): string
@@ -664,6 +695,9 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['view installations'])) {
+            return $resp;
+        }
 
         $page = max(1, (int) $request->input('page', 1));
         $perPage = (int) $request->input('per_page', 20);
@@ -797,6 +831,9 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['view installations', 'view teknisi'])) {
+            return $resp;
+        }
 
         $page = max(1, (int) $request->input('page', 1));
         $perPage = (int) $request->input('per_page', 20);
@@ -818,11 +855,10 @@ class InstallationController extends Controller
             $status = '';
         }
 
-        $role = $this->actorRole($request);
-        $isPrivileged = $this->isPrivileged($role);
+        $canViewAllRiwayat = $this->userCan($request, 'view installations');
         $currentTech = (string) ($request->user()?->name ?? '');
 
-        if (!$isPrivileged) {
+        if (!$canViewAllRiwayat) {
             if ($currentTech === '') {
                 return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
             }
@@ -919,6 +955,9 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['view installations'])) {
+            return $resp;
+        }
 
         return response()->json([
             'status' => 'success',
@@ -934,6 +973,9 @@ class InstallationController extends Controller
         $tenantId = $this->tenantId($request);
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
+        }
+        if ($resp = $this->requireAnyPermission($request, ['view installations', 'view teknisi'])) {
+            return $resp;
         }
 
         $row = DB::table('noci_installations')
@@ -957,11 +999,8 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
-
-        $role = $this->actorRole($request);
-        $isPrivileged = $this->isPrivileged($role);
-        if (!$isPrivileged && $role !== 'teknisi') {
-            return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
+        if ($resp = $this->requireAnyPermission($request, ['create installations', 'edit installations', 'edit teknisi'])) {
+            return $resp;
         }
 
         $validated = $request->validate([
@@ -1085,6 +1124,9 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['edit installations', 'edit teknisi'])) {
+            return $resp;
+        }
 
         $old = DB::table('noci_installations')
             ->where('tenant_id', $tenantId)
@@ -1095,7 +1137,7 @@ class InstallationController extends Controller
         }
 
         $role = $this->actorRole($request);
-        $isPrivileged = $this->isPrivileged($role);
+        $isPrivileged = $this->userCan($request, 'edit installations') || $this->userCan($request, 'approve installations');
         $currentTech = (string) ($request->user()?->name ?? '');
 
         if (!$isPrivileged) {
@@ -1324,10 +1366,8 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
-
-        $role = $this->actorRole($request);
-        if (!$this->isPrivileged($role)) {
-            return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
+        if ($resp = $this->requireAnyPermission($request, ['delete installations'])) {
+            return $resp;
         }
 
         $row = DB::table('noci_installations')
@@ -1360,12 +1400,10 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
-
-        $role = $this->actorRole($request);
-        $isPrivileged = $this->isPrivileged($role);
-        if (!$isPrivileged && $role !== 'teknisi') {
-            return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
+        if ($resp = $this->requireAnyPermission($request, ['edit installations', 'edit teknisi'])) {
+            return $resp;
         }
+        $isPrivileged = $this->userCan($request, 'edit installations') || $this->userCan($request, 'approve installations');
 
         $validated = $request->validate([
             'status' => ['required', Rule::in(self::STATUSES)],
@@ -1422,6 +1460,9 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['view installations', 'view teknisi'])) {
+            return $resp;
+        }
 
         $exists = DB::table('noci_installations')
             ->where('tenant_id', $tenantId)
@@ -1458,6 +1499,9 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['view installations', 'edit installations', 'view teknisi', 'edit teknisi'])) {
+            return $resp;
+        }
 
         $pops = DB::table('noci_pops')
             ->where('tenant_id', $tenantId)
@@ -1476,6 +1520,9 @@ class InstallationController extends Controller
         $tenantId = $this->tenantId($request);
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
+        }
+        if ($resp = $this->requireAnyPermission($request, ['view installations', 'edit installations', 'view teknisi', 'edit teknisi'])) {
+            return $resp;
         }
 
         $list = LegacyUser::query()
@@ -1496,6 +1543,9 @@ class InstallationController extends Controller
         $tenantId = $this->tenantId($request);
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
+        }
+        if ($resp = $this->requireAnyPermission($request, ['edit installations', 'edit teknisi'])) {
+            return $resp;
         }
 
         $validated = $request->validate([
@@ -1550,6 +1600,9 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['edit installations', 'edit teknisi'])) {
+            return $resp;
+        }
 
         $validated = $request->validate([
             'to_tech' => 'required|string|max:255',
@@ -1565,8 +1618,7 @@ class InstallationController extends Controller
             return response()->json(['status' => 'error', 'msg' => 'Data tidak ditemukan'], 404);
         }
 
-        $role = $this->actorRole($request);
-        $isPrivileged = $this->isPrivileged($role);
+        $isPrivileged = $this->userCan($request, 'edit installations') || $this->userCan($request, 'approve installations');
         $currentTech = (string) ($request->user()?->name ?? '');
         if (!$isPrivileged && !$this->isAssigned($task, $currentTech)) {
             return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
@@ -1619,6 +1671,9 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['edit installations', 'edit teknisi'])) {
+            return $resp;
+        }
 
         $validated = $request->validate([
             'reason' => 'nullable|string|max:255',
@@ -1633,8 +1688,7 @@ class InstallationController extends Controller
             return response()->json(['status' => 'error', 'msg' => 'Data tidak ditemukan'], 404);
         }
 
-        $role = $this->actorRole($request);
-        $isPrivileged = $this->isPrivileged($role);
+        $isPrivileged = $this->userCan($request, 'edit installations') || $this->userCan($request, 'approve installations');
         $currentTech = (string) ($request->user()?->name ?? '');
         if (!$isPrivileged && !$this->isAssigned($task, $currentTech)) {
             return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
@@ -1679,10 +1733,8 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
-
-        $role = $this->actorRole($request);
-        if (!$this->isPrivileged($role)) {
-            return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
+        if ($resp = $this->requireAnyPermission($request, ['approve installations', 'edit installations', 'edit teknisi'])) {
+            return $resp;
         }
 
         $validated = $request->validate([
@@ -1752,10 +1804,8 @@ class InstallationController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
-
-        $role = $this->actorRole($request);
-        if (!$this->isPrivileged($role)) {
-            return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
+        if ($resp = $this->requireAnyPermission($request, ['edit installations', 'edit teknisi'])) {
+            return $resp;
         }
 
         $validated = $request->validate([
@@ -1782,10 +1832,8 @@ class InstallationController extends Controller
             return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
         }
         \Illuminate\Support\Facades\Log::info("DEBUG: sendPopRecap hit for tenant {$tenantId}");
-
-        $role = $this->actorRole($request);
-        if (!$this->isPrivileged($role)) {
-            return response()->json(['status' => 'error', 'msg' => 'Akses ditolak.'], 403);
+        if ($resp = $this->requireAnyPermission($request, ['send installations recap', 'send teknisi recap'])) {
+            return $resp;
         }
 
         $validated = $request->validate([

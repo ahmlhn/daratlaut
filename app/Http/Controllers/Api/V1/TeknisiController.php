@@ -16,6 +16,38 @@ class TeknisiController extends Controller
         return (int) ($request->attributes->get('tenant_id') ?? 0);
     }
 
+    private function normalizeLegacyRole(?string $role): string
+    {
+        $role = strtolower(trim((string) $role));
+        if ($role === 'svp lapangan') return 'svp_lapangan';
+        return $role;
+    }
+
+    private function userCan(Request $request, string $permission): bool
+    {
+        $user = $request->user();
+        if (!$user) return false;
+
+        $legacyRole = $this->normalizeLegacyRole($user->role ?? null);
+        if (in_array($legacyRole, ['admin', 'owner'], true)) return true;
+
+        return method_exists($user, 'can') && $user->can($permission);
+    }
+
+    private function userCanAny(Request $request, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            if ($this->userCan($request, (string) $permission)) return true;
+        }
+        return false;
+    }
+
+    private function requireAnyPermission(Request $request, array $permissions): ?JsonResponse
+    {
+        if ($this->userCanAny($request, $permissions)) return null;
+        return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
+    }
+
     private function actorName(Request $request): string
     {
         $name = (string) ($request->input('tech_name') ?? ($request->user()?->name ?? ''));
@@ -71,6 +103,9 @@ class TeknisiController extends Controller
         $tenantId = $this->tenantId($request);
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
+        }
+        if ($resp = $this->requireAnyPermission($request, ['view teknisi'])) {
+            return $resp;
         }
         $techName = $this->actorName($request);
         $tab = $request->input('tab', 'all'); // all | mine
@@ -146,6 +181,9 @@ class TeknisiController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['view teknisi'])) {
+            return $resp;
+        }
 
         $task = DB::table('noci_installations')
             ->where('id', $id)
@@ -179,6 +217,9 @@ class TeknisiController extends Controller
         $tenantId = $this->tenantId($request);
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
+        }
+        if ($resp = $this->requireAnyPermission($request, ['edit teknisi'])) {
+            return $resp;
         }
         $userId = (int) ($request->user()?->id ?? 0);
         $userName = (string) ($request->user()?->name ?? 'System');
@@ -292,6 +333,9 @@ class TeknisiController extends Controller
         $tenantId = $this->tenantId($request);
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
+        }
+        if ($resp = $this->requireAnyPermission($request, ['edit teknisi'])) {
+            return $resp;
         }
         $userId = (int) ($request->user()?->id ?? 0);
         $userName = (string) ($request->user()?->name ?? 'System');
@@ -409,6 +453,9 @@ class TeknisiController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['view teknisi'])) {
+            return $resp;
+        }
         $techName = $this->actorName($request);
         $dateFrom = (string) ($request->input('date_from', now()->startOfMonth()->toDateString()));
         $dateTo = (string) ($request->input('date_to', now()->toDateString()));
@@ -453,6 +500,9 @@ class TeknisiController extends Controller
         $tenantId = $this->tenantId($request);
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
+        }
+        if ($resp = $this->requireAnyPermission($request, ['view teknisi'])) {
+            return $resp;
         }
         $techName = $this->actorName($request);
         $userId = (int) ($request->user()?->id ?? 0);
@@ -509,6 +559,9 @@ class TeknisiController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['edit teknisi'])) {
+            return $resp;
+        }
         $techName = $this->actorName($request);
         $userId = $request->user()->id ?? 0;
         $date = $request->input('date', now()->toDateString());
@@ -559,6 +612,9 @@ class TeknisiController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['send teknisi recap'])) {
+            return $resp;
+        }
 
         // Get group
         $group = DB::table('noci_recap_groups')
@@ -596,6 +652,9 @@ class TeknisiController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['view teknisi'])) {
+            return $resp;
+        }
 
         $pops = DB::table('noci_pops')
             ->where('tenant_id', $tenantId)
@@ -620,6 +679,9 @@ class TeknisiController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
         }
+        if ($resp = $this->requireAnyPermission($request, ['view teknisi'])) {
+            return $resp;
+        }
 
         $technicians = DB::table('noci_users')
             ->where('tenant_id', $tenantId)
@@ -642,6 +704,9 @@ class TeknisiController extends Controller
         $tenantId = $this->tenantId($request);
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
+        }
+        if ($resp = $this->requireAnyPermission($request, ['view teknisi'])) {
+            return $resp;
         }
 
         $sales = DB::table('noci_team')
