@@ -1456,7 +1456,7 @@ async function toggleRegDetail(onu) {
     await loadOnuDetail(onu, { force: false, silent: true });
 }
 
-async function loadOnuDetail(onu, { force = false, silent = false } = {}) {
+async function loadOnuDetail(onu, { force = false, silent = false, throwOnError = false } = {}) {
     if (!selectedOltId.value) return;
     const key = onuKey(onu);
     if (!force && regDetails.value[key]) return;
@@ -1482,6 +1482,7 @@ async function loadOnuDetail(onu, { force = false, silent = false } = {}) {
         if (!silent) setRegStatus('Detail ONU dimuat.', 'success');
     } catch (e) {
         if (!silent) setRegStatus(e.message || 'Gagal load detail', 'error');
+        if (throwOnError) throw e;
     } finally {
         if (regDetailLoadingKey.value === key) regDetailLoadingKey.value = '';
     }
@@ -1544,10 +1545,9 @@ async function refreshRegisteredOnu(onu) {
     const key = onuKey(onu);
     setRowActionLoading(key, 'refresh', true);
     try {
-        await loadOnuDetail(onu, { force: true, silent: true });
+        setRegStatus('Merefresh detail ONU...', 'loading');
+        await loadOnuDetail(onu, { force: true, silent: true, throwOnError: true });
         setRegStatus('Detail ONU di-refresh.', 'success');
-        const fsp = String(onu?.fsp || '').trim();
-        if (fsp) loadRegisteredLive(fsp, { silent: true }).catch(() => {});
     } catch (e) {
         setRegStatus(e.message || 'Gagal refresh', 'error');
     } finally {
