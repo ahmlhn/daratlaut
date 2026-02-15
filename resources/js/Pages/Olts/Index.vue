@@ -1123,7 +1123,7 @@ async function loadRegisteredLive(fsp, { silent = false } = {}) {
     if (!selectedOltId.value || !fsp) return;
 
     regLoading.value = true;
-    regLoadingText.value = 'Memuat data dari OLT...';
+    regLoadingText.value = silent ? 'Memuat data...' : 'Memuat data dari OLT...';
     if (!silent) setRegStatus('Memuat data dari OLT...', 'info');
 
     try {
