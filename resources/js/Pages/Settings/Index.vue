@@ -1,9 +1,10 @@
 <script setup>
 import { ref, reactive, onMounted, computed, watch } from 'vue';
-import { Head, Link, usePage } from '@inertiajs/vue3';
+import { Head, usePage } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import SystemUpdatePanel from '@/Pages/Settings/Partials/SystemUpdatePanel.vue';
 import SettingsNavIcon from '@/Pages/Settings/Partials/SettingsNavIcon.vue';
+import RoleManagementPanel from '@/Pages/Settings/Partials/RoleManagementPanel.vue';
 
 const API = '/api/v1/settings';
 const page = usePage();
@@ -66,6 +67,7 @@ const sections = [
     { id: 'maps', name: 'Google Maps', icon: 'map' },
     { id: 'public_url', name: 'Link Isolir', icon: 'link' },
     { id: 'logs', name: 'Log Notifikasi', icon: 'clock' },
+    { id: 'roles', name: 'Kelola Role', icon: 'cog' },
     { id: 'system_update', name: 'Update Sistem', icon: 'refresh' },
 ];
 
@@ -74,7 +76,7 @@ const tabs = [
     { id: 'gateway', title: 'Gateway', items: ['status', 'wa', 'mpwa', 'tg'] },
     { id: 'pesan', title: 'Pesan', items: ['templates', 'logs'] },
     { id: 'operasional', title: 'Operasional', items: ['pops', 'recap_groups', 'fee'] },
-    { id: 'system', title: 'System', items: ['public_url', 'maps', 'system_update'] },
+    { id: 'system', title: 'System', items: ['public_url', 'maps', 'roles', 'system_update'] },
 ];
 
 const sectionById = computed(() => Object.fromEntries(sections.map((s) => [s.id, s])));
@@ -100,6 +102,7 @@ const activeTab = ref('gateway');
 
 function setActiveSection(id) {
     if (!id) return;
+    if (id === 'roles' && !canOpenRoleSettings.value) return;
     activeSection.value = id;
     const tab = tabBySectionId.value[id];
     if (tab) {
@@ -111,7 +114,9 @@ function setActiveSection(id) {
 function setActiveTab(tabId) {
     activeTab.value = tabId;
     const t = tabs.find((x) => x.id === tabId);
-    const next = lastSectionByTab[tabId] || t?.items?.[0];
+    const items = (t?.items || []).filter((id) => id !== 'roles' || canOpenRoleSettings.value);
+    const preferred = lastSectionByTab[tabId];
+    const next = preferred && (preferred !== 'roles' || canOpenRoleSettings.value) ? preferred : items[0];
     if (next) activeSection.value = next;
 }
 
@@ -129,7 +134,10 @@ watch(
 const activeTabSections = computed(() => {
     const t = tabs.find((x) => x.id === activeTab.value) || tabs[0];
     const byId = sectionById.value;
-    return (t?.items || []).map((id) => byId[id]).filter(Boolean);
+    return (t?.items || [])
+        .filter((id) => id !== 'roles' || canOpenRoleSettings.value)
+        .map((id) => byId[id])
+        .filter(Boolean);
 });
 
 function toggleCompactMode() {
@@ -480,16 +488,19 @@ onMounted(() => {
                                 >
                                     {{ t.title }}
                                 </button>
-                                <Link
+                                <button
                                     v-if="canOpenRoleSettings"
-                                    href="/settings/roles"
+                                    type="button"
+                                    @click="setActiveSection('roles')"
                                     :class="[
                                         compactMode ? 'px-3 py-1.5 rounded-xl text-xs font-black tracking-tight transition whitespace-nowrap' : 'px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black tracking-tight transition whitespace-nowrap',
-                                        'text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-white/10'
+                                        activeSection === 'roles'
+                                            ? 'bg-primary-600 text-white shadow-sm shadow-primary-500/20'
+                                            : 'text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-white/10'
                                     ]"
                                 >
                                     Kelola Role
-                                </Link>
+                                </button>
                             </div>
                         </div>
 
@@ -1079,6 +1090,11 @@ onMounted(() => {
                         <div class="px-6 py-6 sm:px-8">
                             <SystemUpdatePanel embedded />
                         </div>
+                    </div>
+
+                    <!-- ===== ROLE MANAGEMENT ===== -->
+                    <div v-if="activeSection === 'roles' && canOpenRoleSettings">
+                        <RoleManagementPanel />
                     </div>
 
                 </div>
