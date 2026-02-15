@@ -1122,9 +1122,12 @@ async function loadRegisteredCache({ fsp = '', search = '' } = {}) {
 async function loadRegisteredLive(fsp, { silent = false } = {}) {
     if (!selectedOltId.value || !fsp) return;
 
-    regLoading.value = true;
-    regLoadingText.value = silent ? 'Memuat data...' : 'Memuat data dari OLT...';
-    if (!silent) setRegStatus('Memuat data dari OLT...', 'info');
+    const showBlockingLoader = !silent;
+    if (showBlockingLoader) {
+        regLoading.value = true;
+        regLoadingText.value = 'Memuat data dari OLT...';
+        setRegStatus('Memuat data dari OLT...', 'info');
+    }
 
     try {
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/registered?fsp=${encodeURIComponent(fsp)}`);
@@ -1147,8 +1150,10 @@ async function loadRegisteredLive(fsp, { silent = false } = {}) {
     } catch (e) {
         if (!silent) setRegStatus(e.message || 'Gagal memuat data dari OLT.', 'error');
     } finally {
-        regLoading.value = false;
-        regLoadingText.value = '';
+        if (showBlockingLoader) {
+            regLoading.value = false;
+            regLoadingText.value = '';
+        }
     }
 }
 
