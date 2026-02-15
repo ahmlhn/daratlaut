@@ -464,63 +464,45 @@ onMounted(() => {
                 <!-- Top Tabs + Submenu Chips (Option B) -->
                 <div class="card p-0 overflow-hidden rounded-2xl">
                     <div :class="['border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur', compactMode ? 'px-4 py-3 sm:px-5' : 'px-5 py-4 sm:px-7 sm:py-5']">
-                        <div :class="['flex flex-col gap-3', compactMode ? 'xl:grid xl:grid-cols-[minmax(0,1fr)_220px] xl:items-center' : 'lg:flex-row lg:items-center lg:justify-between']">
-                            <div class="min-w-0 flex gap-2 overflow-x-auto custom-scrollbar">
-                                <div class="shrink-0 inline-flex gap-1 p-1 rounded-2xl bg-gray-100/70 dark:bg-white/5 border border-gray-200/70 dark:border-white/10">
-                                    <button
-                                        v-for="t in tabs"
-                                        :key="t.id"
-                                        type="button"
-                                        @click="setActiveTab(t.id)"
-                                        :class="[
-                                            compactMode ? 'px-3 py-1.5 rounded-xl text-xs font-black tracking-tight transition whitespace-nowrap' : 'px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black tracking-tight transition whitespace-nowrap',
-                                            activeTab === t.id
-                                                ? 'bg-primary-600 text-white shadow-sm shadow-primary-500/20'
-                                                : 'text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-white/10'
-                                        ]"
-                                    >
-                                        {{ t.title }}
-                                    </button>
-                                    <Link
-                                        v-if="canOpenRoleSettings"
-                                        href="/settings/roles"
-                                        :class="[
-                                            compactMode ? 'px-3 py-1.5 rounded-xl text-xs font-black tracking-tight transition whitespace-nowrap' : 'px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black tracking-tight transition whitespace-nowrap',
-                                            'text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-white/10'
-                                        ]"
-                                    >
-                                        Kelola Role
-                                    </Link>
-                                </div>
-                            </div>
-
-                            <div class="min-w-0 w-full" :class="compactMode ? 'xl:w-full' : 'lg:w-[220px]'">
-                                <div class="flex w-full gap-2">
-                                    <select
-                                        :value="activeSection"
-                                        @change="setActiveSection($event.target.value)"
-                                        class="input !rounded-xl text-sm w-full"
-                                    >
-                                        <option
-                                            v-for="s in activeTabSections"
-                                            :key="`select-${s.id}`"
-                                            :value="s.id"
-                                        >
-                                            {{ s.name }}
-                                        </option>
-                                    </select>
-                                </div>
+                        <div class="min-w-0 flex gap-2 overflow-x-auto custom-scrollbar">
+                            <div class="shrink-0 inline-flex gap-1 p-1 rounded-2xl bg-gray-100/70 dark:bg-white/5 border border-gray-200/70 dark:border-white/10">
+                                <button
+                                    v-for="t in tabs"
+                                    :key="t.id"
+                                    type="button"
+                                    @click="setActiveTab(t.id)"
+                                    :class="[
+                                        compactMode ? 'px-3 py-1.5 rounded-xl text-xs font-black tracking-tight transition whitespace-nowrap' : 'px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black tracking-tight transition whitespace-nowrap',
+                                        activeTab === t.id
+                                            ? 'bg-primary-600 text-white shadow-sm shadow-primary-500/20'
+                                            : 'text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-white/10'
+                                    ]"
+                                >
+                                    {{ t.title }}
+                                </button>
+                                <Link
+                                    v-if="canOpenRoleSettings"
+                                    href="/settings/roles"
+                                    :class="[
+                                        compactMode ? 'px-3 py-1.5 rounded-xl text-xs font-black tracking-tight transition whitespace-nowrap' : 'px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black tracking-tight transition whitespace-nowrap',
+                                        'text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-white/10'
+                                    ]"
+                                >
+                                    Kelola Role
+                                </Link>
                             </div>
                         </div>
 
-                        <div v-if="!compactMode" class="mt-3 flex flex-wrap gap-2">
+                        <div v-if="activeTabSections.length > 1" :class="[compactMode ? 'mt-3 flex flex-wrap gap-2' : 'mt-3 flex flex-wrap gap-2']">
                             <button
                                 v-for="s in activeTabSections"
                                 :key="s.id"
                                 type="button"
                                 @click="setActiveSection(s.id)"
                                 :class="[
-                                    'inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs sm:text-sm font-semibold transition border',
+                                    compactMode
+                                        ? 'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition border'
+                                        : 'inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs sm:text-sm font-semibold transition border',
                                     activeSection === s.id
                                         ? 'bg-primary-600 text-white border-primary-600 shadow-sm shadow-primary-500/20'
                                         : 'bg-white dark:bg-dark-900 text-gray-700 dark:text-gray-200 border-gray-200/70 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5'
