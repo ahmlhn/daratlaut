@@ -133,15 +133,14 @@ const user = computed(() => page.props.auth?.user || { name: 'Guest', email: '' 
 const layoutOptions = computed(() => page.props.layoutOptions || {})
 const tenantFeatures = computed(() => page.props.tenantFeatures || {})
 
-const userRole = computed(() => (user.value?.role || '').toString().toLowerCase().trim())
 const userPermissions = computed(() => user.value?.permissions || [])
-const isAdminOwner = computed(() => ['admin', 'owner'].includes(userRole.value))
 const isSuperAdmin = computed(() => !!user.value?.is_superadmin)
 
 function canAny(perms) {
-  if (isAdminOwner.value) return true
-  const list = userPermissions.value || []
-  return (perms || []).some((p) => list.includes(p))
+  const list = (userPermissions.value || []).map((p) => String(p || '').trim().toLowerCase())
+  const need = (perms || []).map((p) => String(p || '').trim().toLowerCase()).filter(Boolean)
+  if (!need.length) return true
+  return need.some((p) => list.includes(p))
 }
 
 function isFeatureEnabled(featureKey) {
