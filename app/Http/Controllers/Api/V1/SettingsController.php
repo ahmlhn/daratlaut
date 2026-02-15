@@ -46,6 +46,7 @@ class SettingsController extends Controller
         $recapGroups = $this->getRecapGroupsData($tid);
         $feeSettings = $this->getFeeSettingsData($tid);
         $mapsConfig = $this->getMapsConfigData($tid);
+        $cronSettings = $this->getCronSettingsData($tid);
         $publicUrl = $this->getPublicUrl($tid);
         $gatewayStatus = $this->getGatewayStatusData($tid);
 
@@ -59,6 +60,7 @@ class SettingsController extends Controller
             'recap_groups' => $recapGroups,
             'fee_settings' => $feeSettings,
             'maps_config' => $mapsConfig,
+            'cron_settings' => $cronSettings,
             'public_url' => $publicUrl,
             'gateway_status' => $gatewayStatus,
         ]);
@@ -416,6 +418,131 @@ class SettingsController extends Controller
         }
 
         return response()->json(['status' => 'success']);
+    }
+
+    // ========== Cron Scheduler Settings ==========
+
+    private function getCronSettingsData(int $tid): array
+    {
+        $defaults = [
+            'nightly_enabled' => false,
+            'nightly_time' => '21:30',
+            'reminders_enabled' => false,
+            'reminders_time' => '07:00',
+            'reminder_base_url' => '',
+        ];
+
+        if (!Schema::hasTable('noci_cron_settings')) {
+            $basePath = base_path();
+            $artisanPath = base_path('artisan');
+            $quotedBase = '"' . str_replace('"', '\"', $basePath) . '"';
+            $quotedArtisan = '"' . str_replace('"', '\"', $artisanPath) . '"';
+
+            return array_merge($defaults, [
+                'project_path' => $basePath,
+                'artisan_path' => $artisanPath,
+                'cron_line_linux' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >> /dev/null 2>&1',
+                'cron_line_cpanel' => '* * * * * php ' . $quotedArtisan . ' schedule:run >/dev/null 2>&1',
+                'windows_task_command' => 'php "' . $artisanPath . '" schedule:run',
+            ]);
+        }
+
+        $row = DB::table('noci_cron_settings')->where('tenant_id', $tid)->first();
+
+        $basePath = base_path();
+        $artisanPath = base_path('artisan');
+        $quotedBase = '"' . str_replace('"', '\"', $basePath) . '"';
+        $quotedArtisan = '"' . str_replace('"', '\"', $artisanPath) . '"';
+
+        return [
+            'nightly_enabled' => (bool) ($row->nightly_enabled ?? $defaults['nightly_enabled']),
+            'nightly_time' => $this->normalizeClockValue((string) ($row->nightly_time ?? ''), $defaults['nightly_time']),
+            'reminders_enabled' => (bool) ($row->reminders_enabled ?? $defaults['reminders_enabled']),
+            'reminders_time' => $this->normalizeClockValue((string) ($row->reminders_time ?? ''), $defaults['reminders_time']),
+            'reminder_base_url' => trim((string) ($row->reminder_base_url ?? $defaults['reminder_base_url'])),
+            'project_path' => $basePath,
+            'artisan_path' => $artisanPath,
+            'cron_line_linux' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >> /dev/null 2>&1',
+            'cron_line_cpanel' => '* * * * * php ' . $quotedArtisan . ' schedule:run >/dev/null 2>&1',
+            'windows_task_command' => 'php "' . $artisanPath . '" schedule:run',
+        ];
+    }
+
+    public function getCronSettings(Request $request): JsonResponse
+    {
+        return response()->json(['data' => $this->getCronSettingsData($this->tenantId($request))]);
+    }
+
+    public function saveCronSettings(Request $request): JsonResponse
+    {
+        $tid = $this->tenantId($request);
+
+        if (!Schema::hasTable('noci_cron_settings')) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Tabel noci_cron_settings tidak ditemukan. Jalankan migration terbaru terlebih dahulu.',
+            ], 500);
+        }
+
+        $validated = $request->validate([
+            'nightly_enabled' => ['nullable', 'boolean'],
+            'nightly_time' => ['nullable', 'string', 'max:5'],
+            'reminders_enabled' => ['nullable', 'boolean'],
+            'reminders_time' => ['nullable', 'string', 'max:5'],
+            'reminder_base_url' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $nightlyEnabled = (int) ((bool) ($validated['nightly_enabled'] ?? false));
+        $remindersEnabled = (int) ((bool) ($validated['reminders_enabled'] ?? false));
+
+        $nightlyTime = $this->normalizeClockValue((string) ($validated['nightly_time'] ?? ''), '21:30');
+        $remindersTime = $this->normalizeClockValue((string) ($validated['reminders_time'] ?? ''), '07:00');
+
+        $baseUrl = trim((string) ($validated['reminder_base_url'] ?? ''));
+        if ($baseUrl !== '') {
+            $baseUrl = rtrim($baseUrl, '/');
+            if (!preg_match('#^https?://#i', $baseUrl)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Reminder Base URL harus diawali http:// atau https://',
+                ], 422);
+            }
+        }
+
+        $payload = [
+            'nightly_enabled' => $nightlyEnabled,
+            'nightly_time' => $nightlyTime,
+            'reminders_enabled' => $remindersEnabled,
+            'reminders_time' => $remindersTime,
+            'reminder_base_url' => $baseUrl,
+            'updated_at' => now(),
+        ];
+
+        $exists = DB::table('noci_cron_settings')->where('tenant_id', $tid)->exists();
+        if ($exists) {
+            DB::table('noci_cron_settings')->where('tenant_id', $tid)->update($payload);
+        } else {
+            DB::table('noci_cron_settings')->insert(array_merge($payload, [
+                'tenant_id' => $tid,
+                'created_at' => now(),
+            ]));
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Pengaturan cron berhasil disimpan.',
+            'data' => $this->getCronSettingsData($tid),
+        ]);
+    }
+
+    private function normalizeClockValue(string $value, string $fallback): string
+    {
+        $value = trim($value);
+        if (preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $value)) {
+            return $value;
+        }
+
+        return $fallback;
     }
 
     // ========== Gateway Status ==========

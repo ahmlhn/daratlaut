@@ -47,6 +47,18 @@ const editingRecap = ref(false);
 const feeSettings = reactive({ teknisi_fee_install: 0, sales_fee_install: 0, expense_categories: [] });
 const mapsConfig = reactive({ google_maps_api_key: '' });
 const showMapsKey = ref(false);
+const cronSettings = reactive({
+    nightly_enabled: 0,
+    nightly_time: '21:30',
+    reminders_enabled: 0,
+    reminders_time: '07:00',
+    reminder_base_url: '',
+    project_path: '',
+    artisan_path: '',
+    cron_line_linux: '',
+    cron_line_cpanel: '',
+    windows_task_command: '',
+});
 
 const publicUrl = ref('');
 
@@ -65,6 +77,7 @@ const sections = [
     { id: 'recap_groups', name: 'Group Rekap', icon: 'user-group' },
     { id: 'fee', name: 'Fee Teknisi', icon: 'cash' },
     { id: 'maps', name: 'Google Maps', icon: 'map' },
+    { id: 'cron', name: 'Cron Scheduler', icon: 'clock' },
     { id: 'public_url', name: 'Link Isolir', icon: 'link' },
     { id: 'logs', name: 'Log Notifikasi', icon: 'clock' },
     { id: 'roles', name: 'Kelola Role', icon: 'cog' },
@@ -76,7 +89,7 @@ const tabs = [
     { id: 'gateway', title: 'Gateway', items: ['status', 'wa', 'mpwa', 'tg'] },
     { id: 'pesan', title: 'Pesan', items: ['templates', 'logs'] },
     { id: 'operasional', title: 'Operasional', items: ['pops', 'recap_groups', 'fee'] },
-    { id: 'system', title: 'System', items: ['public_url', 'maps', 'roles', 'system_update'] },
+    { id: 'system', title: 'System', items: ['public_url', 'maps', 'cron', 'roles', 'system_update'] },
 ];
 
 const sectionById = computed(() => Object.fromEntries(sections.map((s) => [s.id, s])));
@@ -215,6 +228,20 @@ async function loadAll(opts = {}) {
             mapsConfig.google_maps_api_key = data.maps_config.google_maps_api_key || '';
         } else {
             mapsConfig.google_maps_api_key = '';
+        }
+        if (data.cron_settings) {
+            Object.assign(cronSettings, {
+                nightly_enabled: data.cron_settings.nightly_enabled ? 1 : 0,
+                nightly_time: data.cron_settings.nightly_time || '21:30',
+                reminders_enabled: data.cron_settings.reminders_enabled ? 1 : 0,
+                reminders_time: data.cron_settings.reminders_time || '07:00',
+                reminder_base_url: data.cron_settings.reminder_base_url || '',
+                project_path: data.cron_settings.project_path || '',
+                artisan_path: data.cron_settings.artisan_path || '',
+                cron_line_linux: data.cron_settings.cron_line_linux || '',
+                cron_line_cpanel: data.cron_settings.cron_line_cpanel || '',
+                windows_task_command: data.cron_settings.windows_task_command || '',
+            });
         }
         // Public URL
         publicUrl.value = data.public_url || '';
@@ -394,10 +421,55 @@ async function saveMaps() {
     finally { saving.value = false; }
 }
 
+// ===== Cron Settings =====
+async function saveCron() {
+    saving.value = true;
+    try {
+        const payload = {
+            nightly_enabled: !!cronSettings.nightly_enabled,
+            nightly_time: cronSettings.nightly_time || '21:30',
+            reminders_enabled: !!cronSettings.reminders_enabled,
+            reminders_time: cronSettings.reminders_time || '07:00',
+            reminder_base_url: cronSettings.reminder_base_url || '',
+        };
+        const res = await api('/cron', { method: 'POST', body: JSON.stringify(payload) });
+        if (res.status === 'error') {
+            alert(`Gagal: ${res.message || 'Tidak bisa menyimpan konfigurasi cron.'}`);
+            return;
+        }
+        if (res.data) {
+            Object.assign(cronSettings, {
+                nightly_enabled: res.data.nightly_enabled ? 1 : 0,
+                nightly_time: res.data.nightly_time || '21:30',
+                reminders_enabled: res.data.reminders_enabled ? 1 : 0,
+                reminders_time: res.data.reminders_time || '07:00',
+                reminder_base_url: res.data.reminder_base_url || '',
+                project_path: res.data.project_path || cronSettings.project_path,
+                artisan_path: res.data.artisan_path || cronSettings.artisan_path,
+                cron_line_linux: res.data.cron_line_linux || cronSettings.cron_line_linux,
+                cron_line_cpanel: res.data.cron_line_cpanel || cronSettings.cron_line_cpanel,
+                windows_task_command: res.data.windows_task_command || cronSettings.windows_task_command,
+            });
+        }
+        alert('Pengaturan cron tersimpan!');
+    } catch (e) {
+        alert(`Gagal menyimpan cron: ${e.message}`);
+    } finally {
+        saving.value = false;
+    }
+}
+
 // ===== Public URL =====
+async function copyText(text, successMsg = 'Disalin!') {
+    try {
+        await navigator.clipboard.writeText(text || '');
+        alert(successMsg);
+    } catch (e) {
+        alert('Gagal menyalin teks');
+    }
+}
 function copyUrl() {
-    navigator.clipboard.writeText(publicUrl.value);
-    alert('URL disalin!');
+    copyText(publicUrl.value, 'URL disalin!');
 }
 
 // ===== Helpers =====
@@ -918,6 +990,87 @@ onMounted(() => {
                                 <button @click="saveFee" :disabled="saving" class="btn btn-primary">
                                     {{ saving ? 'Menyimpan...' : 'Simpan Konfigurasi' }}
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ===== CRON SCHEDULER ===== -->
+                    <div v-if="activeSection === 'cron'" class="space-y-6">
+                        <div class="card p-0 overflow-hidden rounded-2xl">
+                            <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                                <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Cron Scheduler</h2>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Atur jadwal eksekusi otomatis untuk closing malam dan reminder operasional.</p>
+                            </div>
+
+                            <div class="px-6 py-6 sm:px-8 space-y-6">
+                                <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 space-y-5">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div class="space-y-2">
+                                            <label class="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
+                                                <input v-model="cronSettings.nightly_enabled" :true-value="1" :false-value="0" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                                Aktifkan Closing Malam (`ops:nightly-closing`)
+                                            </label>
+                                            <input v-model="cronSettings.nightly_time" type="time" class="input w-full md:w-48">
+                                            <p class="text-xs text-gray-500 dark:text-gray-400">Rekomendasi: 21:30 WIB setelah jam operasional.</p>
+                                        </div>
+
+                                        <div class="space-y-2">
+                                            <label class="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
+                                                <input v-model="cronSettings.reminders_enabled" :true-value="1" :false-value="0" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                                Aktifkan Reminder Pagi (`ops:send-reminders`)
+                                            </label>
+                                            <input v-model="cronSettings.reminders_time" type="time" class="input w-full md:w-48">
+                                            <p class="text-xs text-gray-500 dark:text-gray-400">Rekomendasi: 07:00 WIB sebelum briefing tim lapangan.</p>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Base URL Link Detail Reminder</label>
+                                        <input v-model="cronSettings.reminder_base_url" type="url" class="input w-full" placeholder="https://my.daratlaut.com">
+                                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Dipakai untuk link DETAIL/AMBIL yang ikut dikirim ke grup WA saat reminder.</p>
+                                    </div>
+
+                                    <div class="pt-1">
+                                        <button @click="saveCron" :disabled="saving" class="btn btn-primary">
+                                            {{ saving ? 'Menyimpan...' : 'Simpan Pengaturan Cron' }}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card p-0 overflow-hidden rounded-2xl">
+                            <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                                <h3 class="text-base sm:text-lg font-bold tracking-tight text-gray-900 dark:text-white">Cara Setting di Server</h3>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Langkah ini wajib 1 kali saja di server agar scheduler Laravel berjalan setiap menit.</p>
+                            </div>
+
+                            <div class="px-6 py-6 sm:px-8 space-y-4">
+                                <ol class="list-decimal pl-5 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+                                    <li>Pastikan command scheduler dijalankan tiap menit (`schedule:run`).</li>
+                                    <li>Pastikan timezone server sesuai target operasional (disarankan Asia/Jakarta).</li>
+                                    <li>Setelah cron server aktif, jadwal per tenant akan mengikuti pengaturan di panel ini.</li>
+                                </ol>
+
+                                <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-gray-50 dark:bg-dark-950 p-4 space-y-3">
+                                    <div>
+                                        <p class="text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Cron Linux / VPS</p>
+                                        <code class="block text-xs sm:text-sm break-all text-gray-800 dark:text-gray-200">{{ cronSettings.cron_line_linux || '* * * * * cd /path/to/backend-laravel && php artisan schedule:run >> /dev/null 2>&1' }}</code>
+                                        <button @click="copyText(cronSettings.cron_line_linux || '* * * * * cd /path/to/backend-laravel && php artisan schedule:run >> /dev/null 2>&1', 'Cron Linux disalin!')" class="btn btn-secondary mt-2">Copy</button>
+                                    </div>
+
+                                    <div>
+                                        <p class="text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Cron cPanel</p>
+                                        <code class="block text-xs sm:text-sm break-all text-gray-800 dark:text-gray-200">{{ cronSettings.cron_line_cpanel || '* * * * * php /home/USER/path/backend-laravel/artisan schedule:run >/dev/null 2>&1' }}</code>
+                                        <button @click="copyText(cronSettings.cron_line_cpanel || '* * * * * php /home/USER/path/backend-laravel/artisan schedule:run >/dev/null 2>&1', 'Cron cPanel disalin!')" class="btn btn-secondary mt-2">Copy</button>
+                                    </div>
+
+                                    <div>
+                                        <p class="text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Windows Task Scheduler</p>
+                                        <code class="block text-xs sm:text-sm break-all text-gray-800 dark:text-gray-200">{{ cronSettings.windows_task_command || 'php artisan schedule:run' }}</code>
+                                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Buat task yang jalan tiap 1 menit di folder project Laravel.</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

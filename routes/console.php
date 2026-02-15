@@ -2,7 +2,10 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schedule;
+use Illuminate\Support\Facades\Schema;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -69,4 +72,99 @@ if ($oltDailySyncEnabled) {
         ->dailyAt($oltDailySyncTime)
         ->withoutOverlapping()
         ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
+}
+
+/*
+|--------------------------------------------------------------------------
+| Ops Daily Scheduler (Native Cron Parity)
+|--------------------------------------------------------------------------
+|
+| Fitur parity untuk cron native:
+| - ops:nightly-closing (parity cron_night.php)
+| - ops:send-reminders (parity cron_reminders.php)
+|
+| Disabled by default. Enable via:
+| OPS_NIGHTLY_SCHEDULE_ENABLED=true
+| OPS_REMINDERS_SCHEDULE_ENABLED=true
+|
+*/
+$opsNightlyEnabled = filter_var((string) env('OPS_NIGHTLY_SCHEDULE_ENABLED', 'false'), FILTER_VALIDATE_BOOL);
+if ($opsNightlyEnabled) {
+    $opsNightlyTime = env('OPS_NIGHTLY_SCHEDULE_TIME', '21:30');
+
+    Schedule::command('ops:nightly-closing')
+        ->dailyAt($opsNightlyTime)
+        ->withoutOverlapping()
+        ->appendOutputTo(storage_path('logs/ops-nightly-closing.log'));
+}
+
+$opsRemindersEnabled = filter_var((string) env('OPS_REMINDERS_SCHEDULE_ENABLED', 'false'), FILTER_VALIDATE_BOOL);
+if ($opsRemindersEnabled) {
+    $opsRemindersTime = env('OPS_REMINDERS_SCHEDULE_TIME', '07:00');
+
+    Schedule::command('ops:send-reminders')
+        ->dailyAt($opsRemindersTime)
+        ->withoutOverlapping()
+        ->appendOutputTo(storage_path('logs/ops-reminders.log'));
+}
+
+/*
+|--------------------------------------------------------------------------
+| Ops Tenant Scheduler (From Settings Page)
+|--------------------------------------------------------------------------
+|
+| Reads per-tenant schedules from table `noci_cron_settings`.
+| Enable/disable via env OPS_TENANT_SCHEDULE_ENABLED (default: true).
+|
+*/
+$opsTenantScheduleEnabled = filter_var((string) env('OPS_TENANT_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
+
+if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
+    $normalizeClock = static function (?string $value, string $fallback): string {
+        $value = trim((string) $value);
+        if (preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $value)) {
+            return $value;
+        }
+        return $fallback;
+    };
+
+    try {
+        $rows = DB::table('noci_cron_settings')
+            ->where(function ($q) {
+                $q->where('nightly_enabled', 1)->orWhere('reminders_enabled', 1);
+            })
+            ->orderBy('tenant_id')
+            ->get(['tenant_id', 'nightly_enabled', 'nightly_time', 'reminders_enabled', 'reminders_time', 'reminder_base_url']);
+
+        foreach ($rows as $row) {
+            $tenantId = (int) ($row->tenant_id ?? 0);
+            if ($tenantId <= 0) continue;
+
+            if ((int) ($row->nightly_enabled ?? 0) === 1) {
+                $nightlyTime = $normalizeClock((string) ($row->nightly_time ?? ''), '21:30');
+
+                Schedule::command('ops:nightly-closing', ['--tenant' => (string) $tenantId])
+                    ->dailyAt($nightlyTime)
+                    ->withoutOverlapping()
+                    ->appendOutputTo(storage_path('logs/ops-nightly-closing.log'));
+            }
+
+            if ((int) ($row->reminders_enabled ?? 0) === 1) {
+                $remindersTime = $normalizeClock((string) ($row->reminders_time ?? ''), '07:00');
+                $params = ['--tenant' => (string) $tenantId];
+
+                $baseUrl = trim((string) ($row->reminder_base_url ?? ''));
+                if ($baseUrl !== '') {
+                    $params['--base-url'] = $baseUrl;
+                }
+
+                Schedule::command('ops:send-reminders', $params)
+                    ->dailyAt($remindersTime)
+                    ->withoutOverlapping()
+                    ->appendOutputTo(storage_path('logs/ops-reminders.log'));
+            }
+        }
+    } catch (\Throwable $e) {
+        Log::warning('Failed loading tenant cron schedules', ['error' => $e->getMessage()]);
+    }
 }
