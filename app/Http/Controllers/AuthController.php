@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\LegacyUser;
+use App\Support\SuperAdminAccess;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -125,7 +126,9 @@ class AuthController extends Controller
 
         $request->session()->regenerate();
 
-        $defaultRedirect = $isTeknisi ? '/teknisi' : '/dashboard';
+        $defaultRedirect = $isTeknisi
+            ? '/teknisi'
+            : (SuperAdminAccess::hasAccess($user) ? '/superadmin' : '/dashboard');
         return redirect()->intended($defaultRedirect);
     }
 

@@ -191,7 +191,14 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->group(function 
     Route::get('/maps', [MapsController::class, 'index'])->name('maps.index');
 });
 
-Route::middleware(['auth', 'superadmin'])->group(function () {
-    Route::get('/superadmin/tenants', [SuperAdminTenantController::class, 'index'])
-        ->name('superadmin.tenants.index');
-});
+Route::middleware(['auth', 'superadmin'])
+    ->prefix('superadmin')
+    ->name('superadmin.')
+    ->group(function () {
+        Route::get('/', function () {
+            return redirect()->route('superadmin.tenants.index');
+        })->name('index');
+
+        Route::get('/tenants', [SuperAdminTenantController::class, 'index'])
+            ->name('tenants.index');
+    });

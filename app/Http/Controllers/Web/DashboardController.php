@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Web;
 
+use App\Support\SuperAdminAccess;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -9,6 +10,10 @@ class DashboardController
 {
     public function index(Request $request)
     {
+        if (SuperAdminAccess::hasAccess($request->user())) {
+            return redirect()->route('superadmin.index');
+        }
+
         $role = strtolower(trim((string) ($request->user()?->role ?? session('level', ''))));
         if ($role === 'svp lapangan') $role = 'svp_lapangan';
 

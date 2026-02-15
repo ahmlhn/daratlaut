@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\SuperAdminAccess;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -18,7 +19,12 @@ class RedirectIfAuthenticated
 
     private function redirectPath(Request $request): string
     {
-        $role = $this->normalizeRole($request->user()?->role ?? session('level', ''));
+        $user = $request->user() ?: Auth::user();
+        if (SuperAdminAccess::hasAccess($user)) {
+            return '/superadmin';
+        }
+
+        $role = $this->normalizeRole($user?->role ?? session('level', ''));
         $isTeknisi = in_array($role, ['teknisi', 'svp_lapangan'], true)
             || (bool) session('is_teknisi')
             || (bool) session('teknisi_logged_in');

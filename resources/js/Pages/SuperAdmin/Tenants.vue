@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { Head } from '@inertiajs/vue3'
-import AdminLayout from '@/Layouts/AdminLayout.vue'
+import SuperAdminLayout from '@/Layouts/SuperAdminLayout.vue'
 
 const props = defineProps({
   featureCatalog: {
@@ -232,7 +232,7 @@ onMounted(loadData)
 <template>
   <Head title="Superadmin Tenant Control" />
 
-  <AdminLayout>
+  <SuperAdminLayout>
     <div class="space-y-6">
       <section class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-900 p-6 sm:p-8 shadow-sm">
         <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -410,5 +410,5 @@ onMounted(loadData)
         </section>
       </div>
     </div>
-  </AdminLayout>
+  </SuperAdminLayout>
 </template>

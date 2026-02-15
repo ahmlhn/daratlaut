@@ -134,7 +134,6 @@ const layoutOptions = computed(() => page.props.layoutOptions || {})
 const tenantFeatures = computed(() => page.props.tenantFeatures || {})
 
 const userPermissions = computed(() => user.value?.permissions || [])
-const isSuperAdmin = computed(() => !!user.value?.is_superadmin)
 
 function canAny(perms) {
   const list = (userPermissions.value || []).map((p) => String(p || '').trim().toLowerCase())
@@ -150,7 +149,6 @@ function isFeatureEnabled(featureKey) {
 
 function isNavItemAllowed(item) {
   if (!item) return false
-  if (item.superadminOnly && !isSuperAdmin.value) return false
   if (!isFeatureEnabled(item.featureKey)) return false
   if (item.permissionsAny && item.permissionsAny.length > 0) return canAny(item.permissionsAny)
   if (item.permission) return canAny([item.permission])
@@ -221,12 +219,6 @@ const baseNavigationGroups = [
     items: [
       { name: 'Keuangan', href: '/finance', icon: 'cash', featureKey: 'finance', permissionsAny: ['view finance', 'manage finance'] },
       { name: 'Laporan', href: '/reports', icon: 'chart', featureKey: 'reports', permissionsAny: ['view reports'] },
-    ]
-  },
-  {
-    name: 'SUPERADMIN',
-    items: [
-      { name: 'Kelola Tenant', href: '/superadmin/tenants', icon: 'shield-check', superadminOnly: true },
     ]
   },
 ]
