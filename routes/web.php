@@ -22,6 +22,7 @@ use App\Http\Controllers\Web\PlanController;
 use App\Http\Controllers\Web\PopController;
 use App\Http\Controllers\Web\ReportController;
 use App\Http\Controllers\Web\SettingsController;
+use App\Http\Controllers\Web\SuperAdminTenantController;
 use App\Http\Controllers\Web\SystemUpdateController;
 use App\Http\Controllers\Web\TeamController;
 use App\Http\Controllers\Web\TeknisiController;
@@ -95,7 +96,7 @@ Route::get('/chat/{script}.js', function (string $script) {
 })->where('script', '^(inline|app|game)$')->name('chat.legacy_js');
 
 // Authenticated routes
-Route::middleware(['auth', 'resolve.tenant'])->group(function () {
+Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
@@ -162,7 +163,7 @@ Route::middleware(['auth', 'resolve.tenant'])->group(function () {
     Route::post('/system-update/github/download', [SystemUpdateController::class, 'githubDownload'])->name('system_update.github_download');
     Route::post('/system-update/github/token', [SystemUpdateController::class, 'githubSaveToken'])->name('system_update.github_token');
     Route::post('/system-update/github/token/clear', [SystemUpdateController::class, 'githubClearToken'])->name('system_update.github_token_clear');
-    
+
     // OLT Management
     Route::get('/olts', [OltController::class, 'index'])->name('olts.index');
 
@@ -184,4 +185,9 @@ Route::middleware(['auth', 'resolve.tenant'])->group(function () {
     
     // Maps
     Route::get('/maps', [MapsController::class, 'index'])->name('maps.index');
+});
+
+Route::middleware(['auth', 'superadmin'])->group(function () {
+    Route::get('/superadmin/tenants', [SuperAdminTenantController::class, 'index'])
+        ->name('superadmin.tenants.index');
 });

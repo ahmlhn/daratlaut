@@ -17,12 +17,13 @@ use App\Http\Controllers\Api\V1\PaymentGatewayController;
 use App\Http\Controllers\Api\V1\PlanController;
 use App\Http\Controllers\Api\V1\PopController;
 use App\Http\Controllers\Api\V1\SettingsController;
+use App\Http\Controllers\Api\V1\SuperAdminTenantController;
 use App\Http\Controllers\Api\V1\TeamController;
 use App\Http\Controllers\Api\V1\TeknisiController;
 use Illuminate\Support\Facades\Route;
 
 // Protected API routes (session + tenant)
-Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->group(function () {
+Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->prefix('v1')->name('api.v1.')->group(function () {
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index']);
     Route::get('/dashboard/activity', [DashboardController::class, 'activity']);
@@ -257,7 +258,17 @@ Route::middleware(['auth', 'resolve.tenant'])->prefix('v1')->name('api.v1.')->gr
         Route::delete('/roles/{id}', [\App\Http\Controllers\Api\V1\RoleController::class, 'destroy']);
         Route::get('/permissions', [\App\Http\Controllers\Api\V1\RoleController::class, 'permissions']);
     });
+
 });
+
+// Superadmin tenant management (not tenant-scoped)
+Route::middleware(['auth', 'superadmin'])
+    ->prefix('v1/superadmin')
+    ->group(function () {
+        Route::get('/tenants', [SuperAdminTenantController::class, 'index']);
+        Route::put('/tenants/{tenantId}', [SuperAdminTenantController::class, 'updateTenant']);
+        Route::put('/tenants/{tenantId}/features', [SuperAdminTenantController::class, 'saveFeatures']);
+    });
 
 // Midtrans webhook (no auth)
 Route::post('/midtrans/notification', [PaymentGatewayController::class, 'notification']);

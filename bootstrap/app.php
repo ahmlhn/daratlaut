@@ -1,10 +1,12 @@
 <?php
 
 use App\Http\Middleware\CheckSession;
+use App\Http\Middleware\EnsureTenantFeatureEnabled;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\RedirectTrailingSlash;
 use App\Http\Middleware\RedirectIfAuthenticated;
 use App\Http\Middleware\RequireManageSettings;
+use App\Http\Middleware\RequireSuperAdmin;
 use App\Http\Middleware\ResolveTenant;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
@@ -26,6 +28,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'auth' => CheckSession::class,
             'guest' => RedirectIfAuthenticated::class,
             'manage.settings' => RequireManageSettings::class,
+            'superadmin' => RequireSuperAdmin::class,
+            'tenant.feature' => EnsureTenantFeatureEnabled::class,
             'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
             'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,

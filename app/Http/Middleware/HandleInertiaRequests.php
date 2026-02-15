@@ -2,6 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\SuperAdminAccess;
+use App\Support\TenantFeatureCatalog;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -43,6 +45,14 @@ class HandleInertiaRequests extends Middleware
     public function share(Request $request): array
     {
         $user = $request->user();
+        $tenantFeatures = [];
+
+        if ($user) {
+            $tenantId = (int) ($user->tenant_id ?? 0);
+            $tenantFeatures = $tenantId > 0
+                ? TenantFeatureCatalog::stateForTenant($tenantId)
+                : TenantFeatureCatalog::defaultState();
+        }
 
         return [
             ...parent::share($request),
@@ -55,8 +65,10 @@ class HandleInertiaRequests extends Middleware
                     'role' => $user->role ?? null,
                     'roles' => method_exists($user, 'getRoleNames') ? $user->getRoleNames() : [],
                     'permissions' => method_exists($user, 'getAllPermissions') ? $user->getAllPermissions()->pluck('name')->values() : [],
+                    'is_superadmin' => SuperAdminAccess::hasAccess($user),
                 ] : null,
             ],
+            'tenantFeatures' => $tenantFeatures,
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
                 'error' => fn () => $request->session()->get('error'),

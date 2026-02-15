@@ -131,10 +131,12 @@ const page = usePage()
 const currentPath = computed(() => page.url)
 const user = computed(() => page.props.auth?.user || { name: 'Guest', email: '' })
 const layoutOptions = computed(() => page.props.layoutOptions || {})
+const tenantFeatures = computed(() => page.props.tenantFeatures || {})
 
 const userRole = computed(() => (user.value?.role || '').toString().toLowerCase().trim())
 const userPermissions = computed(() => user.value?.permissions || [])
 const isAdminOwner = computed(() => ['admin', 'owner'].includes(userRole.value))
+const isSuperAdmin = computed(() => !!user.value?.is_superadmin)
 
 function canAny(perms) {
   if (isAdminOwner.value) return true
@@ -142,8 +144,15 @@ function canAny(perms) {
   return (perms || []).some((p) => list.includes(p))
 }
 
+function isFeatureEnabled(featureKey) {
+  if (!featureKey) return true
+  return tenantFeatures.value?.[featureKey] !== false
+}
+
 function isNavItemAllowed(item) {
   if (!item) return false
+  if (item.superadminOnly && !isSuperAdmin.value) return false
+  if (!isFeatureEnabled(item.featureKey)) return false
   if (item.permissionsAny && item.permissionsAny.length > 0) return canAny(item.permissionsAny)
   if (item.permission) return canAny([item.permission])
   return true
@@ -153,68 +162,74 @@ const baseNavigationGroups = [
   {
     name: null,
     items: [
-      { name: 'Dashboard', href: '/dashboard', icon: 'home', permissionsAny: ['view dashboard'] },
+      { name: 'Dashboard', href: '/dashboard', icon: 'home', featureKey: 'dashboard', permissionsAny: ['view dashboard'] },
     ]
   },
   {
     name: 'CHAT',
     items: [
-      { name: 'Chat Admin', href: '/chat', icon: 'chat', permissionsAny: ['view chat'] },
+      { name: 'Chat Admin', href: '/chat', icon: 'chat', featureKey: 'chat', permissionsAny: ['view chat'] },
     ]
   },
   {
     name: 'OPERASIONAL',
     items: [
-      { name: 'Pasang Baru', href: '/installations', icon: 'wifi', permissionsAny: ['view installations'] },
-      { name: 'Riwayat Pasang', href: '/installations/riwayat', icon: 'check-circle', permissionsAny: ['view riwayat installations'] },
-      { name: 'Tim', href: '/team', icon: 'user-group', permissionsAny: ['view team', 'manage team'] },
+      { name: 'Pasang Baru', href: '/installations', icon: 'wifi', featureKey: 'installations', permissionsAny: ['view installations'] },
+      { name: 'Riwayat Pasang', href: '/installations/riwayat', icon: 'check-circle', featureKey: 'installations', permissionsAny: ['view riwayat installations'] },
+      { name: 'Tim', href: '/team', icon: 'user-group', featureKey: 'team', permissionsAny: ['view team', 'manage team'] },
     ]
   },
   {
     name: 'TEKNISI',
     items: [
-      { name: 'Tugas Saya', href: '/teknisi', icon: 'clipboard', permissionsAny: ['view teknisi'] },
-      { name: 'Riwayat', href: '/teknisi/riwayat', icon: 'clock', permissionsAny: ['view teknisi'] },
-      { name: 'Rekap Harian', href: '/teknisi/rekap', icon: 'document-report', permissionsAny: ['view teknisi'] },
-      { name: 'Maps Teknisi', href: '/maps', icon: 'map', permissionsAny: ['view maps', 'manage maps'] },
+      { name: 'Tugas Saya', href: '/teknisi', icon: 'clipboard', featureKey: 'teknisi', permissionsAny: ['view teknisi'] },
+      { name: 'Riwayat', href: '/teknisi/riwayat', icon: 'clock', featureKey: 'teknisi', permissionsAny: ['view teknisi'] },
+      { name: 'Rekap Harian', href: '/teknisi/rekap', icon: 'document-report', featureKey: 'teknisi', permissionsAny: ['view teknisi'] },
+      { name: 'Maps Teknisi', href: '/maps', icon: 'map', featureKey: 'maps', permissionsAny: ['view maps', 'manage maps'] },
     ]
   },
   {
     name: 'JARINGAN',
     items: [
-      { name: 'Kabel FO', href: '/fiber', icon: 'map-pin', permissionsAny: ['view fiber', 'manage fiber'] },
-      { name: 'OLT', href: '/olts', icon: 'server', permissionsAny: ['view olts', 'manage olt'] },
+      { name: 'Kabel FO', href: '/fiber', icon: 'map-pin', featureKey: 'fiber', permissionsAny: ['view fiber', 'manage fiber'] },
+      { name: 'OLT', href: '/olts', icon: 'server', featureKey: 'olts', permissionsAny: ['view olts', 'manage olt'] },
     ]
   },
   {
     name: 'PELANGGAN',
     items: [
-      { name: 'Semua Pelanggan', href: '/customers', icon: 'users', permissionsAny: ['view customers'] },
-      { name: 'Pelanggan Aktif', href: '/customers?status=AKTIF', icon: 'user-check', permissionsAny: ['view customers'] },
-      { name: 'Pelanggan Suspend', href: '/customers?status=SUSPEND', icon: 'user-x', permissionsAny: ['view customers'] },
+      { name: 'Semua Pelanggan', href: '/customers', icon: 'users', featureKey: 'customers', permissionsAny: ['view customers'] },
+      { name: 'Pelanggan Aktif', href: '/customers?status=AKTIF', icon: 'user-check', featureKey: 'customers', permissionsAny: ['view customers'] },
+      { name: 'Pelanggan Suspend', href: '/customers?status=SUSPEND', icon: 'user-x', featureKey: 'customers', permissionsAny: ['view customers'] },
     ]
   },
   {
     name: 'BILLING',
     items: [
-      { name: 'Invoice Belum Bayar', href: '/invoices?status=OPEN', icon: 'document-text', permissionsAny: ['view invoices'] },
-      { name: 'Invoice Lunas', href: '/invoices?status=PAID', icon: 'document-check', permissionsAny: ['view invoices'] },
-      { name: 'Riwayat Pembayaran', href: '/payments', icon: 'credit-card', permissionsAny: ['view payments'] },
+      { name: 'Invoice Belum Bayar', href: '/invoices?status=OPEN', icon: 'document-text', featureKey: 'invoices', permissionsAny: ['view invoices'] },
+      { name: 'Invoice Lunas', href: '/invoices?status=PAID', icon: 'document-check', featureKey: 'invoices', permissionsAny: ['view invoices'] },
+      { name: 'Riwayat Pembayaran', href: '/payments', icon: 'credit-card', featureKey: 'payments', permissionsAny: ['view payments'] },
     ]
   },
   {
     name: 'PENGATURAN',
     items: [
-      { name: 'Paket Layanan', href: '/plans', icon: 'tag', permissionsAny: ['view plans'] },
-      { name: 'Pengaturan', href: '/settings', icon: 'cog', permissionsAny: ['manage settings', 'manage roles'] },
-      { name: 'Kelola Role', href: '/settings/roles', icon: 'shield-check', permissionsAny: ['manage settings', 'manage roles'] },
+      { name: 'Paket Layanan', href: '/plans', icon: 'tag', featureKey: 'plans', permissionsAny: ['view plans'] },
+      { name: 'Pengaturan', href: '/settings', icon: 'cog', featureKey: 'settings', permissionsAny: ['manage settings', 'manage roles'] },
+      { name: 'Kelola Role', href: '/settings/roles', icon: 'shield-check', featureKey: 'settings', permissionsAny: ['manage settings', 'manage roles'] },
     ]
   },
   {
     name: 'KEUANGAN',
     items: [
-      { name: 'Keuangan', href: '/finance', icon: 'cash', permissionsAny: ['view finance', 'manage finance'] },
-      { name: 'Laporan', href: '/reports', icon: 'chart', permissionsAny: ['view reports'] },
+      { name: 'Keuangan', href: '/finance', icon: 'cash', featureKey: 'finance', permissionsAny: ['view finance', 'manage finance'] },
+      { name: 'Laporan', href: '/reports', icon: 'chart', featureKey: 'reports', permissionsAny: ['view reports'] },
+    ]
+  },
+  {
+    name: 'SUPERADMIN',
+    items: [
+      { name: 'Kelola Tenant', href: '/superadmin/tenants', icon: 'shield-check', superadminOnly: true },
     ]
   },
 ]
