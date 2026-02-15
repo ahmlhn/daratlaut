@@ -92,6 +92,7 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->prefix('v1')->n
     Route::get('/teknisi/rekap', [TeknisiController::class, 'rekap']);
     Route::post('/teknisi/expenses', [TeknisiController::class, 'saveExpenses']);
     Route::post('/teknisi/rekap/send', [TeknisiController::class, 'sendRekapToGroup']);
+    Route::post('/teknisi/rekap/upload-proof', [TeknisiController::class, 'uploadRekapProof']);
     Route::get('/teknisi/pops', [TeknisiController::class, 'pops']);
     Route::get('/teknisi/technicians', [TeknisiController::class, 'technicians']);
     Route::get('/teknisi/sales', [TeknisiController::class, 'sales']);
