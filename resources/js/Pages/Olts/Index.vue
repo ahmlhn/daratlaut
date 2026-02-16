@@ -248,6 +248,7 @@ function buildRegisterLiveLines({ fsp, sn, name }) {
     const safeFsp = String(fsp || 'x/x/x');
     const safeSn = String(sn || 'SN');
     const onuName = sanitizeOnuName(name) || name || `ONU-${safeSn}`;
+    const description = `AUTO-PROV-${safeSn}`.slice(0, 64);
     const onuType = selectedOlt.value?.onu_type_default || 'ALL-ONT';
     const tcont = selectedOlt.value?.tcont_default || 'pppoe';
     const vlan = selectedOlt.value?.vlan_default || '';
@@ -257,11 +258,20 @@ function buildRegisterLiveLines({ fsp, sn, name }) {
     lines.push('conf t');
     lines.push(`interface gpon-olt_${safeFsp}`);
     lines.push(`onu <auto-id> type ${onuType} sn ${safeSn}`);
+    lines.push('exit');
     lines.push(`interface gpon-onu_${safeFsp}:<auto-id>`);
     lines.push(`name ${onuName}`);
-    lines.push(`tcont profile ${tcont}`);
-    if (vlan && spid) lines.push(`service-port ${spid} vlan ${vlan}`);
-    lines.push('pon-onu-mng');
+    lines.push(`description ${description}`);
+    lines.push('sn-bind enable sn');
+    lines.push(`tcont 1 name T1 profile ${tcont}`);
+    lines.push('gemport 1 name G1 tcont 1');
+    lines.push('encrypt 1 enable downstream');
+    if (vlan && spid) lines.push(`service-port ${spid} vport 1 user-vlan ${vlan} vlan ${vlan}`);
+    if (spid) lines.push(`service-port ${spid} description Internet`);
+    lines.push('exit');
+    lines.push(`pon-onu-mng gpon-onu_${safeFsp}:<auto-id>`);
+    if (vlan) lines.push(`service internet gemport 1 vlan ${vlan}`);
+    lines.push('exit');
     lines.push('end');
     return lines;
 }

@@ -364,53 +364,71 @@ class OltService
     public function registerOnu(string $fsp, string $sn, string $name, ?int $onuId = null): array
     {
         // Native parity + safety: remove whitespace and unsafe CLI chars; keep it short.
-        $name = trim((string) $name);
-        $name = preg_replace('/\s+/', '', $name);
-        $name = preg_replace('/[^A-Za-z0-9_.-]/', '', $name);
-        $name = substr($name, 0, 32);
+        $name = $this->sanitizeOnuName($name);
         if ($name === '') {
             throw new RuntimeException('Nama ONU tidak valid (kosong setelah sanitasi).');
         }
-        
+
+        $sn = preg_replace('/[^A-Za-z0-9]/', '', (string) $sn);
+        if ($sn === '') {
+            throw new RuntimeException('SN ONU tidak valid.');
+        }
+
         // Find available ONU ID if not specified
         if ($onuId === null) {
             $onuId = $this->findAvailableOnuId($fsp);
         }
-        
-        // Enter config mode
-        $this->sendCommand('configure terminal');
-        $this->sendCommand("interface gpon-olt_{$fsp}");
-        
-        // Register ONU
-        $onuType = $this->olt->onu_type_default ?? self::DEFAULT_ONU_TYPE;
-        $cmd = "onu {$onuId} type {$onuType} sn {$sn}";
-        $out = $this->sendCommandConfirm($cmd);
-        
-        // Check for errors
-        if (preg_match(self::ERROR_RE, $out) && !preg_match(self::OK_RE, $out)) {
-            $this->sendCommand('exit'); // Exit interface
-            $this->sendCommand('exit'); // Exit config
-            throw new RuntimeException("ONU registration failed: $out");
+
+        $tcont = $this->sanitizeCliToken((string) ($this->olt->tcont_default ?? self::DEFAULT_TCONT_PROFILE));
+        if ($tcont === '') $tcont = self::DEFAULT_TCONT_PROFILE;
+
+        $onuType = $this->sanitizeCliToken((string) ($this->olt->onu_type_default ?? self::DEFAULT_ONU_TYPE));
+        if ($onuType === '') $onuType = self::DEFAULT_ONU_TYPE;
+
+        $vlan = (int) ($this->olt->vlan_default ?? self::DEFAULT_VLAN);
+        if ($vlan < 1 || $vlan > 4094) $vlan = self::DEFAULT_VLAN;
+
+        $spid = (int) ($this->olt->service_port_id_default ?? self::DEFAULT_SERVICE_PORT_ID);
+        if ($spid < 1 || $spid > 65535) $spid = self::DEFAULT_SERVICE_PORT_ID;
+
+        $description = substr("AUTO-PROV-{$sn}", 0, 64);
+        $nameApplied = false;
+
+        // Native command parity with api_olt.php (manual + auto use the same provisioning sequence).
+        $this->enterConfigMode();
+        try {
+            $this->sendCommandStrict("interface gpon-olt_{$fsp}");
+            $this->sendCommandStrict("onu {$onuId} type {$onuType} sn {$sn}", 25, true);
+            $this->sendCommandStrict('exit');
+
+            $this->sendCommandStrict("interface gpon-onu_{$fsp}:{$onuId}");
+            $this->sendCommandStrict("name {$name}");
+            $this->sendCommandStrict("description {$description}");
+            $this->sendCommandStrict('sn-bind enable sn');
+            $this->sendCommandStrict("tcont 1 name T1 profile {$tcont}");
+            $this->sendCommandStrict('gemport 1 name G1 tcont 1');
+            $this->sendCommandStrict('encrypt 1 enable downstream');
+            $this->applyServicePortWithFallback($fsp, $onuId, $spid, $vlan);
+            $this->sendCommandStrict("service-port {$spid} description Internet");
+            $this->sendCommandStrict('exit');
+
+            $this->sendCommandStrict("pon-onu-mng gpon-onu_{$fsp}:{$onuId}");
+            $this->sendCommandStrict("service internet gemport 1 vlan {$vlan}");
+            $this->sendCommandStrict('exit');
+            $nameApplied = true;
+        } finally {
+            // Always return to exec mode so subsequent actions stay predictable.
+            $this->sendCommand('end');
         }
 
-        // Set ONU name (prefer interface gpon-onu style, fallback to interface gpon-olt).
-        $nameApplied = $this->setOnuNameAfterRegister($fsp, $onuId, $name);
-        
-        $this->sendCommand('exit'); // Exit interface
-        
-        // Configure service
-        $this->configureOnuService($fsp, $onuId);
-        
-        $this->sendCommand('exit'); // Exit config
-        
         // Save to database
         $this->saveOnuToDb($fsp, $onuId, $sn, $name);
-        
+
         // Log action
         if (!$this->suppressActionLog) {
             $this->logAction('register', 'success', "ONU {$fsp}:{$onuId} ({$sn}) registered as '{$name}'");
         }
-        
+
         return [
             'fsp' => $fsp,
             'onu_id' => $onuId,
@@ -420,58 +438,86 @@ class OltService
         ];
     }
 
-    private function setOnuNameAfterRegister(string $fsp, int $onuId, string $name): bool
+    private function sanitizeOnuName(string $name): string
     {
-        $primaryOut = '';
+        $name = trim((string) $name);
+        $name = preg_replace('/\s+/', '', $name);
+        $name = preg_replace('/[^A-Za-z0-9_.-]/', '', $name);
+        return substr($name, 0, 32);
+    }
 
-        try {
-            // Primary command set used by current native workflow.
-            $out1 = $this->sendCommand("interface gpon-onu_{$fsp}:{$onuId}");
-            $out2 = $this->sendCommand("name {$name}");
-            $out3 = $this->sendCommand('exit'); // back to global config
-            $primaryOut = $out1 . "\n" . $out2 . "\n" . $out3;
-        } catch (Throwable $e) {
-            $primaryOut = $e->getMessage();
+    private function sanitizeCliToken(string $value): string
+    {
+        return preg_replace('/[^A-Za-z0-9_.-]/', '', trim($value));
+    }
+
+    private function outputHasError(string $out): bool
+    {
+        return (bool) preg_match(self::ERROR_RE, $out) && !preg_match(self::OK_RE, $out);
+    }
+
+    private function commandException(string $cmd, string $out): RuntimeException
+    {
+        $flat = trim(preg_replace('/\s+/', ' ', str_replace(["\r", "\n"], ' ', $out)));
+        if ($flat === '') $flat = 'unknown error';
+        if (strlen($flat) > 260) $flat = substr($flat, 0, 260) . '...';
+        return new RuntimeException("Command gagal ({$cmd}): {$flat}");
+    }
+
+    private function sendCommandStrict(string $cmd, int $timeout = 18, bool $confirm = false): string
+    {
+        $out = $confirm
+            ? $this->sendCommandConfirm($cmd, $timeout)
+            : $this->sendCommand($cmd, $timeout);
+
+        if ($this->outputHasError($out)) {
+            throw $this->commandException($cmd, $out);
         }
 
-        $hasPrimaryError = preg_match(self::ERROR_RE, $primaryOut) && !preg_match(self::OK_RE, $primaryOut);
-        if (!$hasPrimaryError) {
-            // Keep caller flow predictable: return to GPON-OLT interface.
-            $this->sendCommand("interface gpon-olt_{$fsp}");
-            return true;
+        return $out;
+    }
+
+    private function enterConfigMode(): void
+    {
+        $out = $this->sendCommand('conf t');
+        if (!$this->outputHasError($out)) {
+            return;
         }
 
-        try {
-            // Fallback for firmwares that only support setting name from GPON-OLT context.
-            $this->sendCommand("interface gpon-olt_{$fsp}");
-            $outAlt = $this->sendCommand("onu {$onuId} name {$name}");
-            $hasFallbackError = preg_match(self::ERROR_RE, $outAlt) && !preg_match(self::OK_RE, $outAlt);
-            return !$hasFallbackError;
-        } catch (Throwable $e) {
-            return false;
+        $outAlt = $this->sendCommand('configure terminal');
+        if ($this->outputHasError($outAlt)) {
+            throw $this->commandException('conf t|configure terminal', $out . "\n" . $outAlt);
         }
     }
 
-    /**
-     * Configure ONU service (PPPoE)
-     */
-    private function configureOnuService(string $fsp, int $onuId): void
+    private function buildServicePortCommandVariants(string $fsp, int $onuId, int $spid, int $vlan): array
     {
-        $tcont = $this->olt->tcont_default ?? self::DEFAULT_TCONT_PROFILE;
-        $vlan = $this->olt->vlan_default ?? self::DEFAULT_VLAN;
-        $spid = $this->olt->service_port_id_default ?? self::DEFAULT_SERVICE_PORT_ID;
-        
-        // Configure ONU interface
-        $this->sendCommand("interface gpon-onu_{$fsp}:{$onuId}");
-        $this->sendCommand("tcont 1 profile {$tcont}");
-        $this->sendCommand("gemport 1 tcont 1");
-        $this->sendCommand("service-port {$spid} vport 1 user-vlan {$vlan} vlan {$vlan}");
-        $this->sendCommand('exit');
-        
-        // Configure PON side
-        $this->sendCommand("pon-onu-mng gpon-onu_{$fsp}:{$onuId}");
-        $this->sendCommand('service 1 gemport 1 vlan ' . $vlan);
-        $this->sendCommand('exit');
+        $parts = explode('/', $fsp);
+        $f = (int) ($parts[0] ?? 0);
+        $s = (int) ($parts[1] ?? 0);
+        $p = (int) ($parts[2] ?? 0);
+
+        return [
+            "service-port {$spid} vport 1 user-vlan {$vlan} vlan {$vlan}",
+            "service-port {$spid} vlan {$vlan} gpon {$f}/{$s}/{$p} onu {$onuId} gemport 1 multi-service user-vlan {$vlan} tag-transform translate",
+            "service-port {$spid} vlan {$vlan} gpon {$f}/{$s}/{$p} onu {$onuId} gemport 1 multi-service user-vlan {$vlan}",
+            "service-port {$spid} vlan {$vlan} gpon {$f}/{$s}/{$p} onu {$onuId} gemport 1 multi-service",
+        ];
+    }
+
+    private function applyServicePortWithFallback(string $fsp, int $onuId, int $spid, int $vlan): void
+    {
+        $lastOut = '';
+        $lastCmd = 'service-port';
+        foreach ($this->buildServicePortCommandVariants($fsp, $onuId, $spid, $vlan) as $cmd) {
+            $out = $this->sendCommand($cmd, 25);
+            if (!$this->outputHasError($out)) {
+                return;
+            }
+            $lastCmd = $cmd;
+            $lastOut = $out;
+        }
+        throw $this->commandException($lastCmd, $lastOut);
     }
 
     /**
