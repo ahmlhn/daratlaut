@@ -751,14 +751,27 @@ class SettingsController extends Controller
             }
         }
 
-        $dup = DB::table('noci_public_redirect_links')
-            ->where('tenant_id', $tid)
-            ->where('code', $code);
-        if ($id > 0) {
-            $dup->where('id', '!=', $id);
-        }
-        if ($dup->exists()) {
-            return response()->json(['status' => 'error', 'message' => 'Kode link sudah digunakan.'], 422);
+        $dup = DB::table('noci_public_redirect_links as l')
+            ->leftJoin('tenants as t', 't.id', '=', 'l.tenant_id')
+            ->where('l.code', $code)
+            ->when($id > 0, fn ($q) => $q->where('l.id', '!=', $id))
+            ->select('l.id', 'l.tenant_id', 't.name as tenant_name')
+            ->first();
+        if ($dup) {
+            $dupTenantId = (int) ($dup->tenant_id ?? 0);
+            $dupTenantName = trim((string) ($dup->tenant_name ?? ''));
+            if ($dupTenantId > 0 && $dupTenantId !== $tid) {
+                $tenantLabel = $dupTenantName !== '' ? $dupTenantName : ('ID ' . $dupTenantId);
+                return response()->json([
+                    'status' => 'error',
+                    'message' => "Kode link sudah dipakai tenant lain ({$tenantLabel}). Gunakan kode lain.",
+                ], 422);
+            }
+
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Kode link sudah digunakan. Gunakan kode lain.',
+            ], 422);
         }
 
         $actorId = (int) ($request->user()?->id ?? 0);
