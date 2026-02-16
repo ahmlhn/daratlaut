@@ -1027,7 +1027,7 @@ onMounted(() => {
 
                                     <div>
                                         <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Base URL Link Detail Reminder</label>
-                                        <input v-model="cronSettings.reminder_base_url" type="url" class="input w-full" placeholder="https://my.daratlaut.com">
+                                        <input v-model="cronSettings.reminder_base_url" type="url" class="input w-full" placeholder="https://panel.example.com">
                                         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Dipakai untuk link DETAIL/AMBIL yang ikut dikirim ke grup WA saat reminder.</p>
                                     </div>
 

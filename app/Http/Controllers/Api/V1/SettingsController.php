@@ -47,7 +47,7 @@ class SettingsController extends Controller
         $feeSettings = $this->getFeeSettingsData($tid);
         $mapsConfig = $this->getMapsConfigData($tid);
         $cronSettings = $this->getCronSettingsData($tid);
-        $publicUrl = $this->getPublicUrl($tid);
+        $publicUrl = $this->getPublicUrl($tid, $request);
         $gatewayStatus = $this->getGatewayStatusData($tid);
 
         return response()->json([
@@ -568,12 +568,12 @@ class SettingsController extends Controller
 
     // ========== Public URL ==========
 
-    private function getPublicUrl(int $tid): string
+    private function getPublicUrl(int $tid, ?Request $request = null): string
     {
         try {
             $tenant = DB::table('tenants')->where('id', $tid)->first();
             if ($tenant && !empty($tenant->public_token)) {
-                return rtrim(config('app.url', ''), '/') . '/direct?t=' . $tenant->public_token;
+                return $this->resolvePublicBaseUrl($request) . '/direct?t=' . $tenant->public_token;
             }
         } catch (\Exception $e) {}
         return '';
@@ -581,7 +581,23 @@ class SettingsController extends Controller
 
     public function getPublicUrlEndpoint(Request $request): JsonResponse
     {
-        return response()->json(['data' => ['url' => $this->getPublicUrl($this->tenantId($request))]]);
+        return response()->json(['data' => ['url' => $this->getPublicUrl($this->tenantId($request), $request)]]);
+    }
+
+    private function resolvePublicBaseUrl(?Request $request = null): string
+    {
+        $baseUrl = trim((string) config('direct.public_base_url', ''));
+        if ($baseUrl === '' && $request !== null) {
+            $baseUrl = trim((string) ($request->getSchemeAndHttpHost() ?? ''));
+        }
+        if ($baseUrl === '') {
+            $baseUrl = trim((string) config('app.url', ''));
+        }
+        if ($baseUrl !== '' && !preg_match('#^https?://#i', $baseUrl)) {
+            $baseUrl = 'https://' . ltrim($baseUrl, '/');
+        }
+
+        return rtrim($baseUrl, '/');
     }
 
     // ========== Test Endpoints ==========

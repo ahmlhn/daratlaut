@@ -26,7 +26,8 @@ class DirectApiController extends Controller
     public function handle(Request $request): JsonResponse
     {
         if ($request->isMethod('options')) {
-            return response()->json([], 204, $this->corsHeaders($request));
+            $preflightTenantId = $this->resolveTenantIdByToken($request);
+            return response()->json([], 204, $this->corsHeaders($request, $preflightTenantId > 0 ? $preflightTenantId : null));
         }
 
         // Direct uses Asia/Jakarta timestamps and time comparisons (scheduled mode).
@@ -46,6 +47,7 @@ class DirectApiController extends Controller
         if ($tenantId <= 0) {
             return $this->json(['status' => 'error', 'msg' => 'Tenant tidak valid'], $request);
         }
+        $request->attributes->set('direct_tenant_id', $tenantId);
 
         $action = (string) ($request->input('action') ?? $request->query('action') ?? '');
 
@@ -421,9 +423,8 @@ class DirectApiController extends Controller
             } catch (\Throwable) {
             }
 
-            $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-            $adminHost = 'my.daratlaut.com';
-            $adminLink = $protocol . "://{$adminHost}/chat/index.php?id={$visitId}";
+            $adminBaseUrl = $this->resolveAdminBaseUrl($tenantId, $request);
+            $adminLink = rtrim($adminBaseUrl, '/') . "/chat/index.php?id={$visitId}";
 
             $name = (string) ($dCust->customer_name ?? 'User');
             $phone = (string) ($dCust->customer_phone ?? '-');
@@ -545,37 +546,89 @@ class DirectApiController extends Controller
                 return ['sent' => false, 'status' => 'failed', 'reason' => 'target_number_empty'];
             }
 
-            $root = dirname(base_path());
-            $gatewayPath = $root . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'wa_gateway.php';
-            if (!is_file($gatewayPath)) {
-                $this->logNotif($tenantId, 'WA Chat', $target, $message, 'failed', 'File gateway WA tidak ditemukan');
-                return ['sent' => false, 'status' => 'failed', 'reason' => 'wa_gateway_file_missing'];
-            }
-            require_once $gatewayPath;
-
-            if (!function_exists('wa_gateway_send_personal')) {
-                $this->logNotif($tenantId, 'WA Chat', $target, $message, 'failed', 'Function gateway WA tidak tersedia');
-                return ['sent' => false, 'status' => 'failed', 'reason' => 'wa_gateway_function_missing'];
+            $gatewayPath = $this->resolveWaGatewayFilePath();
+            if ($gatewayPath !== '') {
+                require_once $gatewayPath;
             }
 
-            $host = (string) (config('database.connections.mysql.host') ?? '127.0.0.1');
-            $port = (int) (config('database.connections.mysql.port') ?? 3306);
-            $db = (string) (config('database.connections.mysql.database') ?? '');
-            $user = (string) (config('database.connections.mysql.username') ?? '');
-            $pass = (string) (config('database.connections.mysql.password') ?? '');
+            if (function_exists('wa_gateway_send_personal')) {
+                $host = (string) (config('database.connections.mysql.host') ?? '127.0.0.1');
+                $port = (int) (config('database.connections.mysql.port') ?? 3306);
+                $db = (string) (config('database.connections.mysql.database') ?? '');
+                $user = (string) (config('database.connections.mysql.username') ?? '');
+                $pass = (string) (config('database.connections.mysql.password') ?? '');
 
-            // Use MySQLi persistent connection to reduce churn on shared hosting.
-            $mysqliHost = (str_starts_with($host, 'p:') ? $host : ('p:' . $host));
-            $conn = @mysqli_connect($mysqliHost, $user, $pass, $db, $port);
-            if (!$conn) {
-                $this->logNotif($tenantId, 'WA Chat', $target, $message, 'failed', 'Koneksi DB gateway WA gagal');
-                return ['sent' => false, 'status' => 'failed', 'reason' => 'db_connect_failed'];
+                // Use MySQLi persistent connection to reduce churn on shared hosting.
+                $mysqliHost = (str_starts_with($host, 'p:') ? $host : ('p:' . $host));
+                $conn = @mysqli_connect($mysqliHost, $user, $pass, $db, $port);
+                if (!$conn) {
+                    $this->logNotif($tenantId, 'WA Chat', $target, $message, 'failed', 'Koneksi DB gateway WA gagal');
+                    return ['sent' => false, 'status' => 'failed', 'reason' => 'db_connect_failed'];
+                }
+                @mysqli_set_charset($conn, 'utf8mb4');
+                @mysqli_query($conn, "SET time_zone = '+07:00'");
+
+                $resp = wa_gateway_send_personal($conn, $tenantId, $target, $message, ['log_platform' => 'WA Chat']);
+                @mysqli_close($conn);
+
+                if (($resp['status'] ?? '') === 'sent') {
+                    return ['sent' => true, 'status' => 'sent'];
+                }
+
+                return [
+                    'sent' => false,
+                    'status' => 'failed',
+                    'reason' => (string) ($resp['error'] ?? 'wa_send_failed'),
+                ];
             }
-            @mysqli_set_charset($conn, 'utf8mb4');
-            @mysqli_query($conn, "SET time_zone = '+07:00'");
 
-            $resp = wa_gateway_send_personal($conn, $tenantId, $target, $message, ['log_platform' => 'WA Chat']);
-            @mysqli_close($conn);
+            $fallback = $this->sendViaInternalGateway($tenantId, $target, $message);
+            if (!($fallback['sent'] ?? false)) {
+                \Log::warning('WA gateway helper unavailable and fallback failed', [
+                    'tenant_id' => $tenantId,
+                    'reason' => (string) ($fallback['reason'] ?? 'unknown'),
+                ]);
+            }
+            return $fallback;
+        } catch (\Throwable $e) {
+            $this->logNotif($tenantId, 'WA Chat', '', $message, 'failed', $e->getMessage());
+            return [
+                'sent' => false,
+                'status' => 'failed',
+                'reason' => $e->getMessage(),
+            ];
+        }
+    }
+
+    private function resolveWaGatewayFilePath(): string
+    {
+        $configured = trim((string) env('WA_GATEWAY_PATH', ''));
+        $candidates = [
+            $configured,
+            base_path('lib' . DIRECTORY_SEPARATOR . 'wa_gateway.php'),
+            base_path('..' . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'wa_gateway.php'),
+            dirname(base_path()) . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'wa_gateway.php',
+        ];
+
+        foreach ($candidates as $candidate) {
+            $path = trim((string) $candidate);
+            if ($path === '') {
+                continue;
+            }
+            if (is_file($path)) {
+                return $path;
+            }
+        }
+
+        return '';
+    }
+
+    private function sendViaInternalGateway(int $tenantId, string $target, string $message): array
+    {
+        try {
+            /** @var \App\Support\WaGatewaySender $sender */
+            $sender = app(\App\Support\WaGatewaySender::class);
+            $resp = $sender->sendPersonal($tenantId, $target, $message, ['log_platform' => 'WA Chat']);
 
             if (($resp['status'] ?? '') === 'sent') {
                 return ['sent' => true, 'status' => 'sent'];
@@ -587,7 +640,6 @@ class DirectApiController extends Controller
                 'reason' => (string) ($resp['error'] ?? 'wa_send_failed'),
             ];
         } catch (\Throwable $e) {
-            $this->logNotif($tenantId, 'WA Chat', '', $message, 'failed', $e->getMessage());
             return [
                 'sent' => false,
                 'status' => 'failed',
@@ -674,33 +726,43 @@ class DirectApiController extends Controller
 
     private function json(array $payload, Request $request, int $status = 200): JsonResponse
     {
+        $tenantId = (int) ($request->attributes->get('direct_tenant_id') ?? 0);
         return response()->json(
             $payload,
             $status,
-            $this->corsHeaders($request),
+            $this->corsHeaders($request, $tenantId > 0 ? $tenantId : null),
             JSON_UNESCAPED_UNICODE
         );
     }
 
-    private function corsHeaders(Request $request): array
+    private function corsHeaders(Request $request, ?int $tenantId = null): array
     {
         $origin = (string) ($request->headers->get('Origin') ?? '');
-
-        $allowed = [
-            'https://isolir.daratlaut.com',
-            'https://my.daratlaut.com',
-            'https://daratlaut.com',
-            // Non-SSL variants (requested).
-            'http://isolir.daratlaut.com',
-            'http://my.daratlaut.com',
-            'http://daratlaut.com',
-        ];
-
         $headers = [
             'Content-Type' => 'application/json; charset=utf-8',
         ];
 
-        if ($origin !== '' && in_array($origin, $allowed, true)) {
+        if ($origin === '') {
+            return $headers;
+        }
+
+        $allowAll = (bool) config('direct.allow_all_origins', false);
+        if ($allowAll) {
+            $headers['Access-Control-Allow-Origin'] = $origin;
+            $headers['Vary'] = 'Origin';
+            $headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
+            $headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
+            return $headers;
+        }
+
+        $origin = $this->normalizeOrigin($origin);
+        if ($origin === '') {
+            return $headers;
+        }
+
+        $effectiveTenantId = $tenantId ?? (int) ($request->attributes->get('direct_tenant_id') ?? 0);
+        $allowed = $this->allowedOrigins($request, $effectiveTenantId);
+        if (in_array($origin, $allowed, true)) {
             $headers['Access-Control-Allow-Origin'] = $origin;
             $headers['Vary'] = 'Origin';
             $headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
@@ -708,5 +770,145 @@ class DirectApiController extends Controller
         }
 
         return $headers;
+    }
+
+    private function resolveTenantIdByToken(Request $request): int
+    {
+        $token = trim((string) ($request->query('t') ?? $request->input('t') ?? ''));
+        if ($token === '') {
+            return 0;
+        }
+
+        try {
+            return (int) (DB::table('tenants')
+                ->where('public_token', $token)
+                ->where('status', 'active')
+                ->value('id') ?? 0);
+        } catch (\Throwable) {
+            return 0;
+        }
+    }
+
+    private function resolveAdminBaseUrl(int $tenantId, Request $request): string
+    {
+        $baseUrl = '';
+
+        try {
+            if (Schema::hasTable('noci_cron_settings') && Schema::hasColumn('noci_cron_settings', 'reminder_base_url')) {
+                $baseUrl = trim((string) (DB::table('noci_cron_settings')
+                    ->where('tenant_id', $tenantId)
+                    ->value('reminder_base_url') ?? ''));
+            }
+        } catch (\Throwable) {
+            $baseUrl = '';
+        }
+
+        if ($baseUrl === '') {
+            $baseUrl = trim((string) config('direct.admin_base_url', ''));
+        }
+
+        if ($baseUrl === '') {
+            $baseUrl = trim((string) ($request->getSchemeAndHttpHost() ?? ''));
+        }
+
+        if ($baseUrl === '') {
+            $baseUrl = trim((string) config('app.url', ''));
+        }
+
+        if ($baseUrl !== '' && !preg_match('#^https?://#i', $baseUrl)) {
+            $baseUrl = 'https://' . ltrim($baseUrl, '/');
+        }
+
+        $normalized = $this->normalizeOrigin($baseUrl);
+        if ($normalized !== '') {
+            return $normalized;
+        }
+
+        return rtrim((string) config('app.url', ''), '/');
+    }
+
+    private function allowedOrigins(Request $request, int $tenantId = 0): array
+    {
+        $allowed = [];
+
+        $this->appendOrigin($allowed, (string) config('app.url', ''));
+        $this->appendOrigin($allowed, (string) config('direct.public_base_url', ''));
+        $this->appendOrigin($allowed, (string) config('direct.admin_base_url', ''));
+
+        $csv = trim((string) config('direct.allowed_origins', ''));
+        if ($csv !== '') {
+            foreach (explode(',', $csv) as $entry) {
+                $this->appendOrigin($allowed, $entry);
+            }
+        }
+
+        if ($tenantId > 0) {
+            try {
+                if (Schema::hasTable('noci_cron_settings') && Schema::hasColumn('noci_cron_settings', 'reminder_base_url')) {
+                    $tenantUrl = trim((string) (DB::table('noci_cron_settings')
+                        ->where('tenant_id', $tenantId)
+                        ->value('reminder_base_url') ?? ''));
+                    $this->appendOrigin($allowed, $tenantUrl);
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        $this->appendOrigin($allowed, (string) ($request->getSchemeAndHttpHost() ?? ''));
+        $host = strtolower(trim((string) $request->getHost()));
+        if ($host !== '') {
+            $this->appendOrigin($allowed, 'https://' . $host);
+            $this->appendOrigin($allowed, 'http://' . $host);
+        }
+
+        return array_values(array_unique($allowed));
+    }
+
+    private function appendOrigin(array &$allowed, string $entry): void
+    {
+        $entry = trim($entry);
+        if ($entry === '') {
+            return;
+        }
+
+        if (preg_match('#^https?://#i', $entry)) {
+            $origin = $this->normalizeOrigin($entry);
+            if ($origin !== '') {
+                $allowed[] = $origin;
+            }
+            return;
+        }
+
+        $domain = strtolower(trim($entry));
+        $domain = preg_replace('#^//+#', '', $domain);
+        $domain = trim($domain, '/');
+        if ($domain === '') {
+            return;
+        }
+
+        $allowed[] = 'https://' . $domain;
+        $allowed[] = 'http://' . $domain;
+    }
+
+    private function normalizeOrigin(string $url): string
+    {
+        $url = trim($url);
+        if ($url === '') {
+            return '';
+        }
+
+        $parts = parse_url($url);
+        if (!is_array($parts)) {
+            return '';
+        }
+
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        if ($scheme === '' || $host === '' || !in_array($scheme, ['http', 'https'], true)) {
+            return '';
+        }
+
+        $port = isset($parts['port']) ? ':' . (int) $parts['port'] : '';
+        return $scheme . '://' . $host . $port;
     }
 }
