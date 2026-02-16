@@ -19,6 +19,11 @@ class PublicRedirectController extends Controller
 
         $tenantId = $this->resolveTenantIdByHost($request);
         if ($tenantId <= 0) {
+            // Fallback for main-domain usage (no tenant token in URL):
+            // resolve by unique active code across tenants.
+            $tenantId = $this->resolveTenantIdByUniqueCode($code);
+        }
+        if ($tenantId <= 0) {
             abort(404);
         }
 
@@ -151,6 +156,39 @@ class PublicRedirectController extends Controller
             ->first(['id']);
 
         return (int) ($tenant->id ?? 0);
+    }
+
+    private function resolveTenantIdByUniqueCode(string $code): int
+    {
+        $code = PublicRedirectLink::normalizeCode($code);
+        if ($code === '') {
+            return 0;
+        }
+
+        try {
+            $tenantIds = DB::table('noci_public_redirect_links as l')
+                ->join('tenants as t', 't.id', '=', 'l.tenant_id')
+                ->where('t.status', 'active')
+                ->where('l.code', $code)
+                ->where('l.is_active', 1)
+                ->where(function ($q) {
+                    $q->whereNull('l.expires_at')->orWhere('l.expires_at', '>', now());
+                })
+                ->distinct()
+                ->pluck('l.tenant_id')
+                ->map(fn ($id) => (int) $id)
+                ->filter(fn ($id) => $id > 0)
+                ->values()
+                ->all();
+
+            if (count($tenantIds) === 1) {
+                return (int) $tenantIds[0];
+            }
+        } catch (\Throwable) {
+            return 0;
+        }
+
+        return 0;
     }
 
     private function redirectByTenantAndCode(Request $request, int $tenantId, string $code): RedirectResponse
