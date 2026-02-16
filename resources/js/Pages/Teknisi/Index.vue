@@ -1,6 +1,6 @@
 
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick, watch, inject } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, inject } from 'vue'
 import { Head, usePage } from '@inertiajs/vue3'
 import AdminLayout from '@/Layouts/AdminLayout.vue'
 
@@ -14,7 +14,12 @@ const props = defineProps({
 const toast = inject('toast', null)
 const API_TEKNISI = '/api/v1/teknisi'
 const API_INSTALL = '/api/v1/installations'
+const API_MAPS = '/api/v1/maps'
 const MANAGER_ROLES = new Set(['admin', 'cs', 'svp lapangan', 'svp_lapangan'])
+const LOCATION_TRACKING_ROLES = new Set(['teknisi', 'svp lapangan', 'svp_lapangan'])
+const LOCATION_SEND_MIN_INTERVAL_MS = 15000
+const LOCATION_HEARTBEAT_INTERVAL_MS = 60000
+const LOCATION_MIN_MOVE_METERS = 20
 
 const loading = ref(false)
 const allData = ref([])
@@ -47,6 +52,46 @@ const canPrivilegedTeknisi = computed(() =>
     || hasPermission('approve installations')
   )
 )
+const canTrackLocation = computed(() => LOCATION_TRACKING_ROLES.has(currentTechRole.value))
+const locationTracking = reactive({
+  enabled: false,
+  supported: true,
+  secureContextOk: true,
+  statusText: 'Lokasi belum aktif',
+  tone: 'muted',
+  lastSyncedAt: '',
+})
+const locationStatusClass = computed(() => {
+  if (locationTracking.tone === 'success') {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200'
+  }
+  if (locationTracking.tone === 'warning') {
+    return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
+  }
+  if (locationTracking.tone === 'error') {
+    return 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'
+  }
+  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300'
+})
+const locationStatusDotClass = computed(() => {
+  if (locationTracking.tone === 'success') return 'bg-emerald-500'
+  if (locationTracking.tone === 'warning') return 'bg-amber-500'
+  if (locationTracking.tone === 'error') return 'bg-red-500'
+  return 'bg-slate-400'
+})
+const canRetryLocationTracking = computed(() =>
+  canTrackLocation.value
+  && locationTracking.supported
+  && locationTracking.secureContextOk
+  && !locationTracking.enabled
+)
+
+let locationWatchId = null
+let locationHeartbeatTimer = null
+let locationLastPosition = null
+let locationLastSent = null
+let locationSending = false
+let locationFailedCount = 0
 
 const statusColors = {
   Baru: 'bg-emerald-50 text-emerald-700 border border-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-500/30',
@@ -153,6 +198,184 @@ async function fetchJson(url, options = {}) {
   const ok = res.ok && (json.success === true || json.status === 'success')
   if (!ok) throw new Error(extractMessage(json))
   return json
+}
+
+function setLocationStatus(text, tone = 'muted') {
+  locationTracking.statusText = String(text || '').trim() || 'Lokasi belum aktif'
+  locationTracking.tone = tone
+}
+
+function isLocalHostForGeo() {
+  if (typeof window === 'undefined') return false
+  const host = String(window.location?.hostname || '').toLowerCase()
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+}
+
+function canUseGeolocationContext() {
+  if (typeof window === 'undefined') return false
+  return window.isSecureContext || isLocalHostForGeo()
+}
+
+function formatClockTime(dateObj) {
+  if (!(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) return ''
+  return dateObj.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function toNumber(raw, digits = 6) {
+  const num = Number(raw)
+  if (!Number.isFinite(num)) return null
+  return Number(num.toFixed(digits))
+}
+
+function distanceInMeters(aLat, aLng, bLat, bLng) {
+  const toRad = (deg) => (deg * Math.PI) / 180
+  const r = 6371000
+  const dLat = toRad(bLat - aLat)
+  const dLng = toRad(bLng - aLng)
+  const aa = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2
+  return 2 * r * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa))
+}
+
+function buildLocationPayload(position, eventName = 'live_tracking') {
+  const lat = toNumber(position?.coords?.latitude, 6)
+  const lng = toNumber(position?.coords?.longitude, 6)
+  if (lat == null || lng == null) return null
+
+  const accuracyRaw = Number(position?.coords?.accuracy)
+  const speedRaw = Number(position?.coords?.speed)
+  const headingRaw = Number(position?.coords?.heading)
+
+  return {
+    latitude: lat,
+    longitude: lng,
+    accuracy: Number.isFinite(accuracyRaw) ? Math.round(accuracyRaw) : null,
+    speed: Number.isFinite(speedRaw) ? Number(speedRaw.toFixed(2)) : null,
+    heading: Number.isFinite(headingRaw) ? Number(headingRaw.toFixed(2)) : null,
+    event_name: String(eventName || 'live_tracking').slice(0, 80),
+  }
+}
+
+function shouldSendLocation(payload, { force = false } = {}) {
+  if (!locationLastSent) return true
+
+  const nowMs = Date.now()
+  const elapsed = nowMs - locationLastSent.sentAt
+  if (force) return elapsed >= 5000
+  if (elapsed < LOCATION_SEND_MIN_INTERVAL_MS) return false
+  if (elapsed >= LOCATION_HEARTBEAT_INTERVAL_MS) return true
+
+  const moved = distanceInMeters(
+    locationLastSent.latitude,
+    locationLastSent.longitude,
+    payload.latitude,
+    payload.longitude
+  )
+  return moved >= LOCATION_MIN_MOVE_METERS
+}
+
+async function sendLocationPosition(position, { eventName = 'live_tracking', force = false } = {}) {
+  if (!canTrackLocation.value) return
+  const payload = buildLocationPayload(position, eventName)
+  if (!payload || !shouldSendLocation(payload, { force }) || locationSending) return
+
+  locationSending = true
+  try {
+    await fetchJson(`${API_MAPS}/location`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    locationLastSent = {
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      sentAt: Date.now(),
+    }
+    locationFailedCount = 0
+    locationTracking.lastSyncedAt = formatClockTime(new Date())
+    setLocationStatus(`Lokasi aktif • sinkron ${locationTracking.lastSyncedAt}`, 'success')
+  } catch (e) {
+    locationFailedCount += 1
+    setLocationStatus(`Gagal kirim lokasi (${locationFailedCount})`, locationFailedCount >= 3 ? 'error' : 'warning')
+    console.warn('Teknisi location tracking error:', e)
+  } finally {
+    locationSending = false
+  }
+}
+
+function parseLocationError(err) {
+  const code = Number(err?.code || 0)
+  if (code === 1) return 'Izin lokasi ditolak browser'
+  if (code === 2) return 'Lokasi tidak tersedia saat ini'
+  if (code === 3) return 'Timeout saat mengambil lokasi'
+  return 'Gagal membaca lokasi perangkat'
+}
+
+function stopLocationTracking() {
+  if (typeof navigator !== 'undefined' && navigator.geolocation && locationWatchId !== null) {
+    navigator.geolocation.clearWatch(locationWatchId)
+  }
+  locationWatchId = null
+  if (locationHeartbeatTimer) clearInterval(locationHeartbeatTimer)
+  locationHeartbeatTimer = null
+  locationLastPosition = null
+  locationSending = false
+  locationTracking.enabled = false
+}
+
+function handleLocationSuccess(position) {
+  locationLastPosition = position
+  if (!locationTracking.lastSyncedAt) setLocationStatus('Lokasi terdeteksi, sinkronisasi...', 'muted')
+  sendLocationPosition(position, { eventName: 'live_tracking' })
+}
+
+function handleLocationError(err) {
+  setLocationStatus(parseLocationError(err), Number(err?.code || 0) === 1 ? 'warning' : 'error')
+  if (Number(err?.code || 0) === 1) stopLocationTracking()
+}
+
+function startLocationTracking() {
+  if (!canTrackLocation.value) return
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return
+  if (!navigator.geolocation) {
+    locationTracking.supported = false
+    setLocationStatus('Browser tidak mendukung geolocation', 'warning')
+    return
+  }
+
+  locationTracking.supported = true
+  locationTracking.secureContextOk = canUseGeolocationContext()
+  if (!locationTracking.secureContextOk) {
+    setLocationStatus('Aktifkan HTTPS/localhost untuk izin lokasi', 'warning')
+    return
+  }
+  if (locationWatchId !== null) return
+
+  setLocationStatus('Meminta izin lokasi...', 'muted')
+  locationTracking.enabled = true
+
+  navigator.geolocation.getCurrentPosition(
+    handleLocationSuccess,
+    handleLocationError,
+    { enableHighAccuracy: true, timeout: 25000, maximumAge: 10000 }
+  )
+
+  locationWatchId = navigator.geolocation.watchPosition(
+    handleLocationSuccess,
+    handleLocationError,
+    { enableHighAccuracy: true, timeout: 25000, maximumAge: 10000 }
+  )
+
+  if (locationHeartbeatTimer) clearInterval(locationHeartbeatTimer)
+  locationHeartbeatTimer = setInterval(() => {
+    if (!locationLastPosition) return
+    sendLocationPosition(locationLastPosition, { eventName: 'heartbeat', force: true })
+  }, LOCATION_HEARTBEAT_INTERVAL_MS)
+}
+
+function retryLocationTracking() {
+  locationLastSent = null
+  locationFailedCount = 0
+  stopLocationTracking()
+  startLocationTracking()
 }
 
 function mapTask(raw) {
@@ -908,6 +1131,7 @@ onMounted(async () => {
   if (activeTab.value === 'all') filters.pop = filters.pop || defaultPop.value || ''
   else filters.pop = ''
 
+  startLocationTracking()
   await loadDropdowns()
   await loadTasks()
 
@@ -917,6 +1141,10 @@ onMounted(async () => {
     await nextTick()
     openDetail(deepId)
   }
+})
+
+onUnmounted(() => {
+  stopLocationTracking()
 })
 </script>
 
@@ -977,6 +1205,20 @@ onMounted(async () => {
               </button>
               <button @click="refreshTasks()" class="h-12 w-12 flex items-center justify-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-slate-600 dark:text-slate-300 shadow-sm hover:bg-blue-50 dark:hover:bg-slate-800 transition active:scale-95" title="Refresh">
                 <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+              </button>
+            </div>
+
+            <div v-if="canTrackLocation" :class="['flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-[11px] font-semibold', locationStatusClass]">
+              <div class="flex items-center gap-2 min-w-0">
+                <span :class="['inline-block h-2.5 w-2.5 rounded-full flex-shrink-0', locationStatusDotClass]"></span>
+                <span class="truncate">{{ locationTracking.statusText }}</span>
+              </div>
+              <button
+                v-if="canRetryLocationTracking"
+                @click="retryLocationTracking"
+                class="h-7 px-2 rounded-lg border border-current/30 text-[10px] font-bold hover:bg-white/40 dark:hover:bg-white/10 transition"
+              >
+                Coba Lagi
               </button>
             </div>
           </div>
