@@ -401,6 +401,11 @@ class DirectApiController extends Controller
         $countUserMsgs = (int) $qCount->count('id');
 
         $shouldNotify = ($prevStatus === 'Selesai') || ($countUserMsgs === 1);
+        $waNotif = [
+            'triggered' => false,
+            'sent' => false,
+            'status' => 'not_triggered',
+        ];
         if ($shouldNotify) {
             $cust = DB::table('noci_customers')->where('visit_id', $visitId);
             if ($this->hasColumn('noci_customers', 'tenant_id')) $cust->where('tenant_id', $tenantId);
@@ -438,10 +443,27 @@ class DirectApiController extends Controller
                 $waText = str_replace($k, (string) $v, $waText);
             }
 
-            $this->safeSendWa($tenantId, $waText);
+            $waResult = $this->safeSendWa($tenantId, $waText);
+            $waNotif = [
+                'triggered' => true,
+                'sent' => (bool) ($waResult['sent'] ?? false),
+                'status' => (string) ($waResult['status'] ?? 'failed'),
+            ];
+
+            if (!$waNotif['sent']) {
+                \Log::warning('WA chat notification not sent', [
+                    'tenant_id' => $tenantId,
+                    'visit_id' => $visitId,
+                    'wa_status' => $waNotif['status'],
+                    'reason' => (string) ($waResult['reason'] ?? 'unknown'),
+                ]);
+            }
         }
 
-        return $this->json(['status' => 'success'], $request);
+        return $this->json([
+            'status' => 'success',
+            'wa_notification' => $waNotif,
+        ], $request);
     }
 
     private function autoDetectInfo(int $tenantId, string $msg, string $visitId): void
@@ -505,24 +527,36 @@ class DirectApiController extends Controller
         }
     }
 
-    private function safeSendWa(int $tenantId, string $message): bool
+    private function safeSendWa(int $tenantId, string $message): array
     {
         try {
             $conf = DB::table('noci_conf_wa')
                 ->where('tenant_id', $tenantId)
                 ->first();
+            $target = trim((string) ($conf?->target_number ?? ''));
 
-            if (!$conf || (int) ($conf->is_active ?? 0) !== 1) return false;
+            if (!$conf || (int) ($conf->is_active ?? 0) !== 1) {
+                $this->logNotif($tenantId, 'WA Chat', $target, $message, 'skipped', 'Gateway WA tidak aktif');
+                return ['sent' => false, 'status' => 'skipped', 'reason' => 'wa_inactive'];
+            }
 
-            $target = trim((string) ($conf->target_number ?? ''));
-            if ($target === '') return false;
+            if ($target === '') {
+                $this->logNotif($tenantId, 'WA Chat', $target, $message, 'failed', 'Target WA kosong');
+                return ['sent' => false, 'status' => 'failed', 'reason' => 'target_number_empty'];
+            }
 
             $root = dirname(base_path());
             $gatewayPath = $root . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'wa_gateway.php';
-            if (!is_file($gatewayPath)) return false;
+            if (!is_file($gatewayPath)) {
+                $this->logNotif($tenantId, 'WA Chat', $target, $message, 'failed', 'File gateway WA tidak ditemukan');
+                return ['sent' => false, 'status' => 'failed', 'reason' => 'wa_gateway_file_missing'];
+            }
             require_once $gatewayPath;
 
-            if (!function_exists('wa_gateway_send_personal')) return false;
+            if (!function_exists('wa_gateway_send_personal')) {
+                $this->logNotif($tenantId, 'WA Chat', $target, $message, 'failed', 'Function gateway WA tidak tersedia');
+                return ['sent' => false, 'status' => 'failed', 'reason' => 'wa_gateway_function_missing'];
+            }
 
             $host = (string) (config('database.connections.mysql.host') ?? '127.0.0.1');
             $port = (int) (config('database.connections.mysql.port') ?? 3306);
@@ -533,16 +567,73 @@ class DirectApiController extends Controller
             // Use MySQLi persistent connection to reduce churn on shared hosting.
             $mysqliHost = (str_starts_with($host, 'p:') ? $host : ('p:' . $host));
             $conn = @mysqli_connect($mysqliHost, $user, $pass, $db, $port);
-            if (!$conn) return false;
+            if (!$conn) {
+                $this->logNotif($tenantId, 'WA Chat', $target, $message, 'failed', 'Koneksi DB gateway WA gagal');
+                return ['sent' => false, 'status' => 'failed', 'reason' => 'db_connect_failed'];
+            }
             @mysqli_set_charset($conn, 'utf8mb4');
             @mysqli_query($conn, "SET time_zone = '+07:00'");
 
             $resp = wa_gateway_send_personal($conn, $tenantId, $target, $message, ['log_platform' => 'WA Chat']);
             @mysqli_close($conn);
 
-            return (($resp['status'] ?? '') === 'sent');
+            if (($resp['status'] ?? '') === 'sent') {
+                return ['sent' => true, 'status' => 'sent'];
+            }
+
+            return [
+                'sent' => false,
+                'status' => 'failed',
+                'reason' => (string) ($resp['error'] ?? 'wa_send_failed'),
+            ];
+        } catch (\Throwable $e) {
+            $this->logNotif($tenantId, 'WA Chat', '', $message, 'failed', $e->getMessage());
+            return [
+                'sent' => false,
+                'status' => 'failed',
+                'reason' => $e->getMessage(),
+            ];
+        }
+    }
+
+    private function logNotif(
+        int $tenantId,
+        string $platform,
+        string $target,
+        string $message,
+        string $status,
+        string $response
+    ): void {
+        if ($tenantId <= 0) {
+            return;
+        }
+
+        try {
+            if (!Schema::hasTable('noci_notif_logs')) {
+                return;
+            }
+
+            $payload = [];
+            if ($this->hasColumn('noci_notif_logs', 'tenant_id')) $payload['tenant_id'] = $tenantId;
+            if ($this->hasColumn('noci_notif_logs', 'platform')) $payload['platform'] = $platform;
+            if ($this->hasColumn('noci_notif_logs', 'channel')) $payload['channel'] = $platform;
+            if ($this->hasColumn('noci_notif_logs', 'target')) $payload['target'] = $target;
+            if ($this->hasColumn('noci_notif_logs', 'message')) $payload['message'] = substr($message, 0, 100);
+            if ($this->hasColumn('noci_notif_logs', 'status')) $payload['status'] = $status;
+            if ($this->hasColumn('noci_notif_logs', 'response_log')) $payload['response_log'] = substr($response, 0, 255);
+            if ($this->hasColumn('noci_notif_logs', 'response')) $payload['response'] = substr($response, 0, 255);
+            if ($this->hasColumn('noci_notif_logs', 'error') && $status !== 'sent') $payload['error'] = substr($response, 0, 255);
+
+            $now = now();
+            if ($this->hasColumn('noci_notif_logs', 'timestamp')) $payload['timestamp'] = $now;
+            if ($this->hasColumn('noci_notif_logs', 'created_at')) $payload['created_at'] = $now;
+            if ($this->hasColumn('noci_notif_logs', 'updated_at')) $payload['updated_at'] = $now;
+
+            if (!empty($payload)) {
+                DB::table('noci_notif_logs')->insert($payload);
+            }
         } catch (\Throwable) {
-            return false;
+            // Best-effort logging.
         }
     }
 

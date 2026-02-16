@@ -63,7 +63,7 @@ const cronSettings = reactive({
 const publicUrl = ref('');
 
 const notifLogs = ref([]);
-const notifStats = ref({ total: 0, sent: 0, failed: 0 });
+const notifStats = ref({ total: 0, sent: 0, failed: 0, skipped: 0 });
 const logFilter = reactive({ search: '', status: '', range: '' });
 
 const activeSection = ref('status');
@@ -479,6 +479,7 @@ function statusColor(s) {
     s = (s || '').toLowerCase();
     if (['success', 'sent', 'ok'].includes(s)) return 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-400';
     if (['failed', 'error', 'fail'].includes(s)) return 'bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-400';
+    if (['skipped', 'skip', 'ignored'].includes(s)) return 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-400';
     return 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300';
 }
 
@@ -1139,7 +1140,7 @@ onMounted(() => {
 
                             <div class="px-6 py-6 sm:px-8 space-y-6">
                                 <!-- Stats -->
-                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                                     <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 text-center">
                                         <div class="text-3xl font-black text-gray-900 dark:text-white">{{ notifStats.total }}</div>
                                         <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">Total</div>
@@ -1151,6 +1152,10 @@ onMounted(() => {
                                     <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 text-center">
                                         <div class="text-3xl font-black text-red-600 dark:text-red-300">{{ notifStats.failed }}</div>
                                         <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">Gagal</div>
+                                    </div>
+                                    <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 text-center">
+                                        <div class="text-3xl font-black text-amber-600 dark:text-amber-300">{{ notifStats.skipped }}</div>
+                                        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">Skipped</div>
                                     </div>
                                 </div>
 
@@ -1167,6 +1172,7 @@ onMounted(() => {
                                             <option value="">All Status</option>
                                             <option value="success">Success</option>
                                             <option value="failed">Failed</option>
+                                            <option value="skipped">Skipped</option>
                                         </select>
                                         <input v-model="logFilter.search" @input="loadLogs" type="text" class="input text-sm w-56 !rounded-xl" placeholder="Cari...">
                                     </div>

@@ -676,26 +676,43 @@ class SettingsController extends Controller
         $range = strtolower(trim($request->input('range', '')));
 
         $query = DB::table('noci_notif_logs')->where('tenant_id', $tid);
-        if ($search) $query->where(fn ($q) => $q->where('target', 'like', "%{$search}%")->orWhere('message', 'like', "%{$search}%"));
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('target', 'like', "%{$search}%")
+                    ->orWhere('message', 'like', "%{$search}%")
+                    ->orWhere('platform', 'like', "%{$search}%")
+                    ->orWhere('response_log', 'like', "%{$search}%");
+            });
+        }
         if ($status === 'success') $query->whereIn('status', ['success', 'sent', 'ok']);
         elseif ($status === 'failed') $query->whereIn('status', ['failed', 'error', 'fail']);
+        elseif ($status === 'skipped') $query->whereIn('status', ['skipped', 'skip', 'ignored']);
         if ($range === '24h') $query->where('timestamp', '>=', now()->subDay());
         elseif ($range === '7d') $query->where('timestamp', '>=', now()->subDays(7));
         elseif ($range === '30d') $query->where('timestamp', '>=', now()->subDays(30));
 
         $logs = $query->orderByDesc('timestamp')->limit(50)->get()->map(function ($log) {
             $s = strtolower(trim($log->status ?? ''));
-            $log->normalized_status = in_array($s, ['success', 'sent', 'ok']) ? 'success' : (in_array($s, ['failed', 'error', 'fail']) ? 'failed' : $s);
+            $log->normalized_status = in_array($s, ['success', 'sent', 'ok'])
+                ? 'success'
+                : (in_array($s, ['failed', 'error', 'fail'])
+                    ? 'failed'
+                    : (in_array($s, ['skipped', 'skip', 'ignored']) ? 'skipped' : $s));
             return $log;
         });
 
         $stats = DB::table('noci_notif_logs')->where('tenant_id', $tid)
-            ->selectRaw("COUNT(*) as total, SUM(CASE WHEN status IN ('success','sent','ok') THEN 1 ELSE 0 END) as sent, SUM(CASE WHEN status IN ('failed','error','fail') THEN 1 ELSE 0 END) as failed")
+            ->selectRaw("COUNT(*) as total, SUM(CASE WHEN status IN ('success','sent','ok') THEN 1 ELSE 0 END) as sent, SUM(CASE WHEN status IN ('failed','error','fail') THEN 1 ELSE 0 END) as failed, SUM(CASE WHEN status IN ('skipped','skip','ignored') THEN 1 ELSE 0 END) as skipped")
             ->first();
 
         return response()->json([
             'data' => $logs,
-            'stats' => ['total' => (int) ($stats->total ?? 0), 'sent' => (int) ($stats->sent ?? 0), 'failed' => (int) ($stats->failed ?? 0)],
+            'stats' => [
+                'total' => (int) ($stats->total ?? 0),
+                'sent' => (int) ($stats->sent ?? 0),
+                'failed' => (int) ($stats->failed ?? 0),
+                'skipped' => (int) ($stats->skipped ?? 0),
+            ],
         ]);
     }
 
@@ -703,9 +720,14 @@ class SettingsController extends Controller
     {
         $tid = $this->tenantId($request);
         $stats = DB::table('noci_notif_logs')->where('tenant_id', $tid)
-            ->selectRaw("COUNT(*) as total, SUM(CASE WHEN status IN ('success','sent','ok') THEN 1 ELSE 0 END) as sent, SUM(CASE WHEN status IN ('failed','error','fail') THEN 1 ELSE 0 END) as failed")
+            ->selectRaw("COUNT(*) as total, SUM(CASE WHEN status IN ('success','sent','ok') THEN 1 ELSE 0 END) as sent, SUM(CASE WHEN status IN ('failed','error','fail') THEN 1 ELSE 0 END) as failed, SUM(CASE WHEN status IN ('skipped','skip','ignored') THEN 1 ELSE 0 END) as skipped")
             ->first();
-        return response()->json(['total' => (int) ($stats->total ?? 0), 'sent' => (int) ($stats->sent ?? 0), 'failed' => (int) ($stats->failed ?? 0)]);
+        return response()->json([
+            'total' => (int) ($stats->total ?? 0),
+            'sent' => (int) ($stats->sent ?? 0),
+            'failed' => (int) ($stats->failed ?? 0),
+            'skipped' => (int) ($stats->skipped ?? 0),
+        ]);
     }
 
     // ========== Install Variables ==========
