@@ -35,7 +35,18 @@ Route::get('/', fn () => redirect('/dashboard'));
 // Public payment portal (no auth required)
 Route::get('/pay/{token}', [PaymentPortalController::class, 'show'])->name('payment.portal');
 
-// Public redirect links: domain-owned short links that can route to WhatsApp or custom URLs.
+// Public redirect links:
+// - Pretty URL (tenant resolved from host/subdomain): /link/{code}
+// - Fallback with explicit tenant token: /link/{tenantToken}/{code}
+// - Legacy compatibility path: /go/{tenantToken}/{code}
+Route::get('/link/{code}', [PublicRedirectController::class, 'link'])
+    ->where(['code' => '[A-Za-z0-9\-_]+'])
+    ->name('public.redirect.link');
+
+Route::get('/link/{tenantToken}/{code}', [PublicRedirectController::class, 'linkWithToken'])
+    ->where(['tenantToken' => '[A-Za-z0-9\-_]+', 'code' => '[A-Za-z0-9\-_]+'])
+    ->name('public.redirect.link_token');
+
 Route::get('/go/{tenantToken}/{code}', [PublicRedirectController::class, 'go'])
     ->where(['tenantToken' => '[A-Za-z0-9\-_]+', 'code' => '[A-Za-z0-9\-_]+'])
     ->name('public.redirect.go');

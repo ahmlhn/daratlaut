@@ -11,16 +11,50 @@ use Illuminate\Support\Facades\Schema;
 
 class PublicRedirectController extends Controller
 {
-    public function go(Request $request, string $tenantToken, string $code): RedirectResponse
+    public function link(Request $request, string $code): RedirectResponse
     {
-        if (!Schema::hasTable('tenants') || !Schema::hasTable('noci_public_redirect_links')) {
+        if (!$this->canUseRedirectTables()) {
             abort(404);
         }
 
-        $tenantToken = trim($tenantToken);
-        $code = PublicRedirectLink::normalizeCode($code);
-        if ($tenantToken === '' || $code === '') {
+        $tenantId = $this->resolveTenantIdByHost($request);
+        if ($tenantId <= 0) {
             abort(404);
+        }
+
+        return $this->redirectByTenantAndCode($request, $tenantId, $code);
+    }
+
+    public function linkWithToken(Request $request, string $tenantToken, string $code): RedirectResponse
+    {
+        if (!$this->canUseRedirectTables()) {
+            abort(404);
+        }
+
+        $tenantId = $this->resolveTenantIdByToken($tenantToken);
+        if ($tenantId <= 0) {
+            abort(404);
+        }
+
+        return $this->redirectByTenantAndCode($request, $tenantId, $code);
+    }
+
+    // Legacy path support: /go/{tenantToken}/{code}
+    public function go(Request $request, string $tenantToken, string $code): RedirectResponse
+    {
+        return $this->linkWithToken($request, $tenantToken, $code);
+    }
+
+    private function canUseRedirectTables(): bool
+    {
+        return Schema::hasTable('tenants') && Schema::hasTable('noci_public_redirect_links');
+    }
+
+    private function resolveTenantIdByToken(string $tenantToken): int
+    {
+        $tenantToken = trim($tenantToken);
+        if ($tenantToken === '') {
+            return 0;
         }
 
         $tenant = DB::table('tenants')
@@ -28,8 +62,56 @@ class PublicRedirectController extends Controller
             ->where('status', 'active')
             ->first(['id']);
 
-        $tenantId = (int) ($tenant->id ?? 0);
-        if ($tenantId <= 0) {
+        return (int) ($tenant->id ?? 0);
+    }
+
+    private function resolveTenantIdByHost(Request $request): int
+    {
+        $host = strtolower(trim((string) ($request->getHost() ?? '')));
+        if ($host === '') {
+            return 0;
+        }
+        if (str_starts_with($host, 'www.')) {
+            $host = substr($host, 4);
+        }
+
+        if (Schema::hasColumn('tenants', 'domain')) {
+            $tenant = DB::table('tenants')
+                ->where('status', 'active')
+                ->whereRaw('LOWER(domain) = ?', [$host])
+                ->first(['id']);
+            $tenantId = (int) ($tenant->id ?? 0);
+            if ($tenantId > 0) {
+                return $tenantId;
+            }
+        }
+
+        if (!Schema::hasColumn('tenants', 'slug')) {
+            return 0;
+        }
+
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            return 0;
+        }
+
+        $parts = explode('.', $host);
+        $slug = strtolower(trim((string) ($parts[0] ?? '')));
+        if ($slug === '' || in_array($slug, ['www', 'localhost'], true)) {
+            return 0;
+        }
+
+        $tenant = DB::table('tenants')
+            ->where('status', 'active')
+            ->whereRaw('LOWER(slug) = ?', [$slug])
+            ->first(['id']);
+
+        return (int) ($tenant->id ?? 0);
+    }
+
+    private function redirectByTenantAndCode(Request $request, int $tenantId, string $code): RedirectResponse
+    {
+        $code = PublicRedirectLink::normalizeCode($code);
+        if ($tenantId <= 0 || $code === '') {
             abort(404);
         }
 

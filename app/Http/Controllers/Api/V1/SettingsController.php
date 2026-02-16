@@ -619,9 +619,8 @@ class SettingsController extends Controller
 
     private function buildRedirectShareUrl(?Request $request, string $publicToken, string $code): string
     {
-        $publicToken = trim($publicToken);
         $code = PublicRedirectLink::normalizeCode($code);
-        if ($publicToken === '' || $code === '') {
+        if ($code === '') {
             return '';
         }
 
@@ -630,7 +629,8 @@ class SettingsController extends Controller
             return '';
         }
 
-        return $base . '/go/' . rawurlencode($publicToken) . '/' . rawurlencode($code);
+        // Pretty URL format requested by product: /link/{code}
+        return $base . '/link/' . rawurlencode($code);
     }
 
     private function mapRedirectLinkRow(object $row, string $publicToken, ?Request $request = null): array
@@ -684,6 +684,7 @@ class SettingsController extends Controller
         return response()->json([
             'data' => $this->getRedirectLinksData($tid, $request),
             'public_token' => $this->getTenantPublicToken($tid),
+            'share_url_format' => '/link/{code}',
         ]);
     }
 
