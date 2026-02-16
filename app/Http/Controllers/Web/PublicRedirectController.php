@@ -75,6 +75,51 @@ class PublicRedirectController extends Controller
             $host = substr($host, 4);
         }
 
+        // Per-tenant URL mapping from cron settings (already used for reminder links).
+        // This works for setups like my.daratlaut.com where subdomain doesn't match tenant slug.
+        if (Schema::hasTable('noci_cron_settings') && Schema::hasColumn('noci_cron_settings', 'reminder_base_url')) {
+            try {
+                $rows = DB::table('noci_cron_settings')
+                    ->whereNotNull('reminder_base_url')
+                    ->get(['tenant_id', 'reminder_base_url']);
+
+                foreach ($rows as $row) {
+                    $base = trim((string) ($row->reminder_base_url ?? ''));
+                    if ($base === '') {
+                        continue;
+                    }
+                    if (!preg_match('#^https?://#i', $base)) {
+                        $base = 'https://' . ltrim($base, '/');
+                    }
+                    $baseHost = strtolower(trim((string) (parse_url($base, PHP_URL_HOST) ?? '')));
+                    if ($baseHost === '') {
+                        continue;
+                    }
+                    if (str_starts_with($baseHost, 'www.')) {
+                        $baseHost = substr($baseHost, 4);
+                    }
+                    if ($baseHost !== $host) {
+                        continue;
+                    }
+
+                    $tenantId = (int) ($row->tenant_id ?? 0);
+                    if ($tenantId <= 0) {
+                        continue;
+                    }
+
+                    $active = DB::table('tenants')
+                        ->where('id', $tenantId)
+                        ->where('status', 'active')
+                        ->exists();
+                    if ($active) {
+                        return $tenantId;
+                    }
+                }
+            } catch (\Throwable) {
+                // Ignore DB parsing issues and continue to other host-resolution strategies.
+            }
+        }
+
         if (Schema::hasColumn('tenants', 'domain')) {
             $tenant = DB::table('tenants')
                 ->where('status', 'active')
