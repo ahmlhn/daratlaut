@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Pop;
 use App\Models\RecapGroup;
+use App\Support\PublicRedirectLink;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -49,6 +50,7 @@ class SettingsController extends Controller
         $cronSettings = $this->getCronSettingsData($tid);
         $publicUrl = $this->getPublicUrl($tid, $request);
         $gatewayStatus = $this->getGatewayStatusData($tid);
+        $redirectLinks = $this->getRedirectLinksData($tid, $request);
 
         return response()->json([
             'wa_config' => $waConfig,
@@ -63,6 +65,7 @@ class SettingsController extends Controller
             'cron_settings' => $cronSettings,
             'public_url' => $publicUrl,
             'gateway_status' => $gatewayStatus,
+            'redirect_links' => $redirectLinks,
         ]);
     }
 
@@ -598,6 +601,304 @@ class SettingsController extends Controller
         }
 
         return rtrim($baseUrl, '/');
+    }
+
+    // ========== Public Redirect Links ==========
+
+    private function getTenantPublicToken(int $tid): string
+    {
+        try {
+            if (!Schema::hasTable('tenants')) {
+                return '';
+            }
+            return (string) (DB::table('tenants')->where('id', $tid)->value('public_token') ?? '');
+        } catch (\Throwable) {
+            return '';
+        }
+    }
+
+    private function buildRedirectShareUrl(?Request $request, string $publicToken, string $code): string
+    {
+        $publicToken = trim($publicToken);
+        $code = PublicRedirectLink::normalizeCode($code);
+        if ($publicToken === '' || $code === '') {
+            return '';
+        }
+
+        $base = $this->resolvePublicBaseUrl($request);
+        if ($base === '') {
+            return '';
+        }
+
+        return $base . '/go/' . rawurlencode($publicToken) . '/' . rawurlencode($code);
+    }
+
+    private function mapRedirectLinkRow(object $row, string $publicToken, ?Request $request = null): array
+    {
+        $code = PublicRedirectLink::normalizeCode((string) ($row->code ?? ''));
+        return [
+            'id' => (int) ($row->id ?? 0),
+            'tenant_id' => (int) ($row->tenant_id ?? 0),
+            'code' => $code,
+            'type' => (string) ($row->type ?? PublicRedirectLink::TYPE_WHATSAPP),
+            'wa_number' => (string) ($row->wa_number ?? ''),
+            'wa_message' => (string) ($row->wa_message ?? ''),
+            'target_url' => (string) ($row->target_url ?? ''),
+            'is_active' => (int) ($row->is_active ?? 0),
+            'click_count' => (int) ($row->click_count ?? 0),
+            'redirect_success_count' => (int) ($row->redirect_success_count ?? 0),
+            'last_clicked_at' => $row->last_clicked_at ?? null,
+            'last_redirect_success_at' => $row->last_redirect_success_at ?? null,
+            'expires_at' => $row->expires_at ?? null,
+            'created_at' => $row->created_at ?? null,
+            'updated_at' => $row->updated_at ?? null,
+            'share_url' => $this->buildRedirectShareUrl($request, $publicToken, $code),
+            'target_preview' => PublicRedirectLink::buildTargetUrl(
+                (string) ($row->type ?? ''),
+                (string) ($row->wa_number ?? ''),
+                (string) ($row->wa_message ?? ''),
+                (string) ($row->target_url ?? '')
+            ),
+        ];
+    }
+
+    private function getRedirectLinksData(int $tid, ?Request $request = null): array
+    {
+        if (!Schema::hasTable('noci_public_redirect_links')) {
+            return [];
+        }
+
+        $publicToken = $this->getTenantPublicToken($tid);
+        return DB::table('noci_public_redirect_links')
+            ->where('tenant_id', $tid)
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn ($row) => $this->mapRedirectLinkRow($row, $publicToken, $request))
+            ->values()
+            ->all();
+    }
+
+    public function getRedirectLinks(Request $request): JsonResponse
+    {
+        $tid = $this->tenantId($request);
+        return response()->json([
+            'data' => $this->getRedirectLinksData($tid, $request),
+            'public_token' => $this->getTenantPublicToken($tid),
+        ]);
+    }
+
+    public function saveRedirectLink(Request $request): JsonResponse
+    {
+        if (!Schema::hasTable('noci_public_redirect_links')) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Tabel noci_public_redirect_links tidak ditemukan. Jalankan migration terbaru.',
+            ], 500);
+        }
+
+        $tid = $this->tenantId($request);
+        $validated = $request->validate([
+            'id' => ['nullable', 'integer', 'min:1'],
+            'code' => ['required', 'string', 'max:120'],
+            'type' => ['required', 'string', 'in:whatsapp,custom'],
+            'wa_number' => ['nullable', 'string', 'max:50'],
+            'wa_message' => ['nullable', 'string'],
+            'target_url' => ['nullable', 'string', 'max:2000'],
+            'is_active' => ['nullable', 'boolean'],
+            'expires_at' => ['nullable', 'date'],
+        ]);
+
+        $id = (int) ($validated['id'] ?? 0);
+        $code = PublicRedirectLink::normalizeCode((string) ($validated['code'] ?? ''));
+        $type = strtolower(trim((string) ($validated['type'] ?? PublicRedirectLink::TYPE_WHATSAPP)));
+        $existingLink = null;
+        if ($id > 0) {
+            $existingLink = DB::table('noci_public_redirect_links')
+                ->where('tenant_id', $tid)
+                ->where('id', $id)
+                ->first();
+            if (!$existingLink) {
+                return response()->json(['status' => 'error', 'message' => 'Link tidak ditemukan.'], 404);
+            }
+        }
+
+        $isActive = array_key_exists('is_active', $validated)
+            ? (int) ((bool) $validated['is_active'])
+            : (int) ($existingLink->is_active ?? 1);
+        $expiresAt = array_key_exists('expires_at', $validated)
+            ? $validated['expires_at']
+            : ($existingLink->expires_at ?? null);
+
+        if ($code === '') {
+            return response()->json(['status' => 'error', 'message' => 'Kode link tidak valid.'], 422);
+        }
+
+        $waNumber = null;
+        $waMessage = null;
+        $targetUrl = null;
+
+        if ($type === PublicRedirectLink::TYPE_WHATSAPP) {
+            $waNumber = PublicRedirectLink::normalizePhone((string) ($validated['wa_number'] ?? ''));
+            $waMessage = trim((string) ($validated['wa_message'] ?? ''));
+            if ($waNumber === '') {
+                return response()->json(['status' => 'error', 'message' => 'Nomor WhatsApp wajib diisi.'], 422);
+            }
+        } else {
+            $targetUrl = PublicRedirectLink::normalizeCustomUrl((string) ($validated['target_url'] ?? ''));
+            if ($targetUrl === '') {
+                return response()->json(['status' => 'error', 'message' => 'Target URL tidak valid. Gunakan http:// atau https://'], 422);
+            }
+        }
+
+        $dup = DB::table('noci_public_redirect_links')
+            ->where('tenant_id', $tid)
+            ->where('code', $code);
+        if ($id > 0) {
+            $dup->where('id', '!=', $id);
+        }
+        if ($dup->exists()) {
+            return response()->json(['status' => 'error', 'message' => 'Kode link sudah digunakan.'], 422);
+        }
+
+        $actorId = (int) ($request->user()?->id ?? 0);
+        $payload = [
+            'code' => $code,
+            'type' => $type,
+            'wa_number' => $waNumber,
+            'wa_message' => $waMessage === '' ? null : $waMessage,
+            'target_url' => $targetUrl,
+            'is_active' => $isActive,
+            'expires_at' => $expiresAt,
+            'updated_at' => now(),
+            'updated_by' => $actorId > 0 ? $actorId : null,
+        ];
+
+        if ($id > 0) {
+            DB::table('noci_public_redirect_links')
+                ->where('tenant_id', $tid)
+                ->where('id', $id)
+                ->update($payload);
+            $linkId = $id;
+        } else {
+            $payload['tenant_id'] = $tid;
+            $payload['click_count'] = 0;
+            $payload['redirect_success_count'] = 0;
+            $payload['created_at'] = now();
+            $payload['created_by'] = $actorId > 0 ? $actorId : null;
+            $linkId = (int) DB::table('noci_public_redirect_links')->insertGetId($payload);
+        }
+
+        $row = DB::table('noci_public_redirect_links')
+            ->where('tenant_id', $tid)
+            ->where('id', $linkId)
+            ->first();
+
+        $publicToken = $this->getTenantPublicToken($tid);
+        return response()->json([
+            'status' => 'success',
+            'message' => $id > 0 ? 'Link redirect berhasil diperbarui.' : 'Link redirect berhasil dibuat.',
+            'data' => $row ? $this->mapRedirectLinkRow($row, $publicToken, $request) : null,
+        ]);
+    }
+
+    public function deleteRedirectLink(Request $request, int $id): JsonResponse
+    {
+        if (!Schema::hasTable('noci_public_redirect_links')) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Tabel noci_public_redirect_links tidak ditemukan.',
+            ], 500);
+        }
+
+        $tid = $this->tenantId($request);
+        $deleted = DB::table('noci_public_redirect_links')
+            ->where('tenant_id', $tid)
+            ->where('id', $id)
+            ->delete();
+
+        if (!$deleted) {
+            return response()->json(['status' => 'error', 'message' => 'Link tidak ditemukan.'], 404);
+        }
+
+        return response()->json(['status' => 'success']);
+    }
+
+    private function applyRedirectEventRangeFilter($query, string $range): void
+    {
+        if ($range === '24h') {
+            $query->where('created_at', '>=', now()->subDay());
+        } elseif ($range === '7d') {
+            $query->where('created_at', '>=', now()->subDays(7));
+        } elseif ($range === '30d') {
+            $query->where('created_at', '>=', now()->subDays(30));
+        }
+    }
+
+    public function getRedirectEvents(Request $request): JsonResponse
+    {
+        if (!Schema::hasTable('noci_public_redirect_events')) {
+            return response()->json([
+                'data' => [],
+                'stats' => ['click' => 0, 'redirect_success' => 0, 'redirect_failed' => 0],
+            ]);
+        }
+
+        $tid = $this->tenantId($request);
+        $linkId = (int) $request->query('link_id', 0);
+        $code = PublicRedirectLink::normalizeCode((string) $request->query('code', ''));
+        $eventType = strtolower(trim((string) $request->query('event_type', '')));
+        $range = strtolower(trim((string) $request->query('range', '')));
+        $limit = (int) $request->query('limit', 100);
+        if ($limit < 1) $limit = 1;
+        if ($limit > 500) $limit = 500;
+
+        $baseQuery = DB::table('noci_public_redirect_events')->where('tenant_id', $tid);
+        if ($linkId > 0) {
+            $baseQuery->where('redirect_link_id', $linkId);
+        }
+        if ($code !== '') {
+            $baseQuery->where('code', $code);
+        }
+        $this->applyRedirectEventRangeFilter($baseQuery, $range);
+
+        $logsQuery = clone $baseQuery;
+        if (in_array($eventType, ['click', 'redirect_success', 'redirect_failed'], true)) {
+            $logsQuery->where('event_type', $eventType);
+        }
+
+        $logs = $logsQuery->orderByDesc('id')->limit($limit)->get()->map(function ($row) {
+            return [
+                'id' => (int) ($row->id ?? 0),
+                'tenant_id' => (int) ($row->tenant_id ?? 0),
+                'redirect_link_id' => is_null($row->redirect_link_id ?? null) ? null : (int) $row->redirect_link_id,
+                'code' => (string) ($row->code ?? ''),
+                'event_type' => (string) ($row->event_type ?? ''),
+                'target_url' => (string) ($row->target_url ?? ''),
+                'http_status' => is_null($row->http_status ?? null) ? null : (int) $row->http_status,
+                'error_message' => (string) ($row->error_message ?? ''),
+                'ip_address' => (string) ($row->ip_address ?? ''),
+                'user_agent' => (string) ($row->user_agent ?? ''),
+                'referer' => (string) ($row->referer ?? ''),
+                'created_at' => $row->created_at ?? null,
+            ];
+        });
+
+        $statsRows = (clone $baseQuery)
+            ->selectRaw('event_type, COUNT(*) as total')
+            ->groupBy('event_type')
+            ->get();
+        $stats = ['click' => 0, 'redirect_success' => 0, 'redirect_failed' => 0];
+        foreach ($statsRows as $row) {
+            $k = (string) ($row->event_type ?? '');
+            if (array_key_exists($k, $stats)) {
+                $stats[$k] = (int) ($row->total ?? 0);
+            }
+        }
+
+        return response()->json([
+            'data' => $logs,
+            'stats' => $stats,
+        ]);
     }
 
     // ========== Test Endpoints ==========

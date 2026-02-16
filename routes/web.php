@@ -20,6 +20,7 @@ use App\Http\Controllers\Web\PaymentController;
 use App\Http\Controllers\Web\PaymentPortalController;
 use App\Http\Controllers\Web\PlanController;
 use App\Http\Controllers\Web\PopController;
+use App\Http\Controllers\Web\PublicRedirectController;
 use App\Http\Controllers\Web\ReportController;
 use App\Http\Controllers\Web\SettingsController;
 use App\Http\Controllers\Web\SuperAdminTenantController;
@@ -33,6 +34,11 @@ Route::get('/', fn () => redirect('/dashboard'));
 
 // Public payment portal (no auth required)
 Route::get('/pay/{token}', [PaymentPortalController::class, 'show'])->name('payment.portal');
+
+// Public redirect links: domain-owned short links that can route to WhatsApp or custom URLs.
+Route::get('/go/{tenantToken}/{code}', [PublicRedirectController::class, 'go'])
+    ->where(['tenantToken' => '[A-Za-z0-9\-_]+', 'code' => '[A-Za-z0-9\-_]+'])
+    ->name('public.redirect.go');
 
 // Shared-hosting fallback: serve files from storage/app/public when symlink
 // public/storage is unavailable (common on restricted cPanel environments).

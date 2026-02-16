@@ -66,6 +66,25 @@ const notifLogs = ref([]);
 const notifStats = ref({ total: 0, sent: 0, failed: 0, skipped: 0 });
 const logFilter = reactive({ search: '', status: '', range: '' });
 
+const redirectLinks = ref([]);
+const redirectPublicToken = ref('');
+const redirectEvents = ref([]);
+const redirectEventStats = ref({ click: 0, redirect_success: 0, redirect_failed: 0 });
+const redirectFilter = reactive({ link_id: '', code: '', event_type: '', range: '7d', limit: 100 });
+const redirectForm = reactive({
+    id: 0,
+    code: '',
+    type: 'whatsapp',
+    wa_number: '',
+    wa_message: '',
+    target_url: '',
+    is_active: 1,
+    expires_at: '',
+});
+const redirectSaving = ref(false);
+const redirectLoading = ref(false);
+const editingRedirect = ref(false);
+
 const activeSection = ref('status');
 const sections = [
     { id: 'status', name: 'Gateway Status', icon: 'wifi' },
@@ -78,6 +97,7 @@ const sections = [
     { id: 'fee', name: 'Fee Teknisi', icon: 'cash' },
     { id: 'maps', name: 'Google Maps', icon: 'map' },
     { id: 'cron', name: 'Cron Scheduler', icon: 'clock' },
+    { id: 'redirect_links', name: 'Redirect Link', icon: 'link' },
     { id: 'public_url', name: 'Link Isolir', icon: 'link' },
     { id: 'logs', name: 'Log Notifikasi', icon: 'clock' },
     { id: 'roles', name: 'Kelola Role', icon: 'cog' },
@@ -89,7 +109,7 @@ const tabs = [
     { id: 'gateway', title: 'Gateway', items: ['status', 'wa', 'mpwa', 'tg'] },
     { id: 'pesan', title: 'Pesan', items: ['templates', 'logs'] },
     { id: 'operasional', title: 'Operasional', items: ['pops', 'recap_groups', 'fee'] },
-    { id: 'system', title: 'System', items: ['public_url', 'maps', 'cron', 'roles', 'system_update'] },
+    { id: 'system', title: 'System', items: ['redirect_links', 'public_url', 'maps', 'cron', 'roles', 'system_update'] },
 ];
 
 const sectionById = computed(() => Object.fromEntries(sections.map((s) => [s.id, s])));
@@ -108,7 +128,7 @@ const lastSectionByTab = reactive({
     gateway: 'status',
     pesan: 'templates',
     operasional: 'pops',
-    system: 'public_url',
+    system: 'redirect_links',
 });
 
 const activeTab = ref('gateway');
@@ -245,6 +265,9 @@ async function loadAll(opts = {}) {
         }
         // Public URL
         publicUrl.value = data.public_url || '';
+        if (Array.isArray(data.redirect_links)) {
+            redirectLinks.value = data.redirect_links;
+        }
     } catch (e) {
         console.error('Load settings error:', e);
     } finally {
@@ -255,6 +278,8 @@ async function loadAll(opts = {}) {
     // Load logs separately
     loadLogs();
     loadInstallVars();
+    loadRedirectLinks();
+    loadRedirectEvents();
 }
 
 async function loadLogs() {
@@ -270,6 +295,49 @@ async function loadLogs() {
 async function loadInstallVars() {
     const data = await api('/install-variables');
     installVars.value = data.data || [];
+}
+
+async function loadRedirectLinks() {
+    redirectLoading.value = true;
+    try {
+        const data = await api('/redirect-links');
+        redirectLinks.value = Array.isArray(data.data) ? data.data : [];
+        redirectPublicToken.value = data.public_token || '';
+        if (redirectFilter.link_id && !redirectLinks.value.some((it) => String(it.id) === String(redirectFilter.link_id))) {
+            redirectFilter.link_id = '';
+        }
+    } catch (e) {
+        console.error('Load redirect links error:', e);
+        redirectLinks.value = [];
+    } finally {
+        redirectLoading.value = false;
+    }
+}
+
+async function loadRedirectEvents() {
+    const params = new URLSearchParams();
+    if (redirectFilter.link_id) params.set('link_id', String(redirectFilter.link_id));
+    if (redirectFilter.code) params.set('code', String(redirectFilter.code));
+    if (redirectFilter.event_type) params.set('event_type', String(redirectFilter.event_type));
+    if (redirectFilter.range) params.set('range', String(redirectFilter.range));
+    if (redirectFilter.limit) params.set('limit', String(redirectFilter.limit));
+
+    try {
+        const data = await api(`/redirect-events?${params.toString()}`);
+        redirectEvents.value = Array.isArray(data.data) ? data.data : [];
+        if (data.stats && typeof data.stats === 'object') {
+            redirectEventStats.value = {
+                click: Number(data.stats.click || 0),
+                redirect_success: Number(data.stats.redirect_success || 0),
+                redirect_failed: Number(data.stats.redirect_failed || 0),
+            };
+        } else {
+            redirectEventStats.value = { click: 0, redirect_success: 0, redirect_failed: 0 };
+        }
+    } catch (e) {
+        console.error('Load redirect events error:', e);
+        redirectEvents.value = [];
+    }
 }
 
 // ===== Save WA =====
@@ -470,6 +538,152 @@ async function copyText(text, successMsg = 'Disalin!') {
 }
 function copyUrl() {
     copyText(publicUrl.value, 'URL disalin!');
+}
+
+function normalizeRedirectCode(raw) {
+    return String(raw || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\-_]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^[-_]+|[-_]+$/g, '')
+        .slice(0, 120);
+}
+
+function toDatetimeLocalValue(value) {
+    if (!value) return '';
+    const safe = String(value).replace(' ', 'T');
+    const d = new Date(safe);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function clearRedirectFormByType() {
+    if (redirectForm.type === 'whatsapp') {
+        redirectForm.target_url = '';
+    } else {
+        redirectForm.wa_number = '';
+        redirectForm.wa_message = '';
+    }
+}
+
+function resetRedirectForm() {
+    Object.assign(redirectForm, {
+        id: 0,
+        code: '',
+        type: 'whatsapp',
+        wa_number: '',
+        wa_message: '',
+        target_url: '',
+        is_active: 1,
+        expires_at: '',
+    });
+    editingRedirect.value = false;
+}
+
+function editRedirectLink(link) {
+    if (!link) return;
+    Object.assign(redirectForm, {
+        id: Number(link.id || 0),
+        code: String(link.code || ''),
+        type: String(link.type || 'whatsapp'),
+        wa_number: String(link.wa_number || ''),
+        wa_message: String(link.wa_message || ''),
+        target_url: String(link.target_url || ''),
+        is_active: link.is_active ? 1 : 0,
+        expires_at: toDatetimeLocalValue(link.expires_at),
+    });
+    editingRedirect.value = true;
+}
+
+function cancelRedirectEdit() {
+    resetRedirectForm();
+}
+
+async function saveRedirectLink() {
+    redirectSaving.value = true;
+    try {
+        const code = normalizeRedirectCode(redirectForm.code);
+        if (!code) {
+            alert('Kode link wajib diisi.');
+            return;
+        }
+
+        const payload = {
+            id: redirectForm.id || undefined,
+            code,
+            type: redirectForm.type === 'custom' ? 'custom' : 'whatsapp',
+            is_active: !!redirectForm.is_active,
+            expires_at: redirectForm.expires_at || null,
+        };
+
+        if (payload.type === 'whatsapp') {
+            payload.wa_number = String(redirectForm.wa_number || '').trim();
+            payload.wa_message = String(redirectForm.wa_message || '');
+        } else {
+            payload.target_url = String(redirectForm.target_url || '').trim();
+        }
+
+        const res = await api('/redirect-links', { method: 'POST', body: JSON.stringify(payload) });
+        if (res.status === 'error') {
+            alert(res.message || 'Gagal menyimpan redirect link.');
+            return;
+        }
+
+        alert(res.message || 'Redirect link tersimpan.');
+        resetRedirectForm();
+        await loadRedirectLinks();
+        await loadRedirectEvents();
+    } catch (e) {
+        alert(`Gagal menyimpan redirect link: ${e.message}`);
+    } finally {
+        redirectSaving.value = false;
+    }
+}
+
+async function deleteRedirectLink(link) {
+    if (!link?.id) return;
+    if (!confirm(`Hapus redirect link "${link.code}"?`)) return;
+    try {
+        const res = await api(`/redirect-links/${link.id}`, { method: 'DELETE' });
+        if (res.status === 'error') {
+            alert(res.message || 'Gagal menghapus link.');
+            return;
+        }
+        await loadRedirectLinks();
+        await loadRedirectEvents();
+    } catch (e) {
+        alert(`Gagal menghapus redirect link: ${e.message}`);
+    }
+}
+
+function copyRedirectShare(link) {
+    if (!link?.share_url) {
+        alert('Share URL belum tersedia.');
+        return;
+    }
+    copyText(link.share_url, 'Share URL disalin!');
+}
+
+function copyRedirectTarget(link) {
+    if (!link?.target_preview) {
+        alert('Target URL belum tersedia.');
+        return;
+    }
+    copyText(link.target_preview, 'Target URL disalin!');
+}
+
+function redirectTypeClass(type) {
+    const t = String(type || '').toLowerCase();
+    if (t === 'custom') return 'bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300';
+    return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300';
+}
+
+function redirectEventClass(type) {
+    const t = String(type || '').toLowerCase();
+    if (t === 'redirect_success') return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300';
+    if (t === 'redirect_failed') return 'bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300';
+    return 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300';
 }
 
 // ===== Helpers =====
@@ -1089,6 +1303,217 @@ onMounted(() => {
                                 <button @click="copyUrl" class="btn btn-primary shrink-0">Copy</button>
                             </div>
                             <p class="text-sm text-gray-500 dark:text-gray-400">Bagikan link ini ke pelanggan agar masuk ke halaman isolir/chat.</p>
+                        </div>
+                    </div>
+
+                    <!-- ===== PUBLIC REDIRECT LINKS ===== -->
+                    <div v-if="activeSection === 'redirect_links'" class="space-y-6">
+                        <div class="card p-0 overflow-hidden rounded-2xl">
+                            <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                                <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Redirect Link</h2>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Buat link domain sendiri yang mengarah ke WhatsApp atau URL custom.</p>
+                            </div>
+
+                            <div class="px-6 py-6 sm:px-8 space-y-6">
+                                <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 space-y-5">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                        <div>
+                                            <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Kode Link</label>
+                                            <input v-model="redirectForm.code" @blur="redirectForm.code = normalizeRedirectCode(redirectForm.code)" type="text" class="input w-full font-mono" placeholder="promo-feb-2026">
+                                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Karakter yang dipakai: huruf, angka, `-`, `_`.</p>
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Tipe Target</label>
+                                            <select v-model="redirectForm.type" @change="clearRedirectFormByType" class="input w-full">
+                                                <option value="whatsapp">WhatsApp</option>
+                                                <option value="custom">Custom URL</option>
+                                            </select>
+                                        </div>
+
+                                        <div v-if="redirectForm.type === 'whatsapp'">
+                                            <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Nomor WhatsApp</label>
+                                            <input v-model="redirectForm.wa_number" type="text" class="input w-full" placeholder="0812xxxx atau 62812xxxx">
+                                        </div>
+                                        <div v-if="redirectForm.type === 'whatsapp'">
+                                            <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Pesan Awal (Opsional)</label>
+                                            <textarea v-model="redirectForm.wa_message" rows="2" class="input w-full" placeholder="Halo admin, saya mau tanya..."></textarea>
+                                        </div>
+
+                                        <div v-if="redirectForm.type === 'custom'" class="md:col-span-2">
+                                            <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Target URL</label>
+                                            <input v-model="redirectForm.target_url" type="url" class="input w-full font-mono" placeholder="https://example.com/landing">
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Expired At (Opsional)</label>
+                                            <input v-model="redirectForm.expires_at" type="datetime-local" class="input w-full">
+                                        </div>
+                                        <div class="flex items-center gap-3">
+                                            <input id="redirect-active" v-model="redirectForm.is_active" :true-value="1" :false-value="0" type="checkbox" class="h-5 w-5 rounded-md text-primary-600 dark:bg-gray-700">
+                                            <label for="redirect-active" class="text-sm font-semibold text-gray-700 dark:text-gray-300">Link aktif</label>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex flex-wrap gap-2 pt-3 border-t border-gray-200/70 dark:border-white/10">
+                                        <button @click="saveRedirectLink" :disabled="redirectSaving" class="btn btn-primary">
+                                            {{ redirectSaving ? 'Menyimpan...' : (editingRedirect ? 'Update Link' : 'Simpan Link') }}
+                                        </button>
+                                        <button v-if="editingRedirect" @click="cancelRedirectEdit" class="btn btn-secondary">Batal</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card p-0 overflow-hidden rounded-2xl">
+                            <div class="px-6 py-4 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-gray-50/80 dark:bg-dark-900/40 backdrop-blur flex items-center justify-between gap-4">
+                                <div>
+                                    <h3 class="text-sm font-black tracking-tight text-gray-900 dark:text-white">Daftar Redirect Link</h3>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400">Total {{ redirectLinks.length }} link • token tenant: <span class="font-mono">{{ redirectPublicToken || '-' }}</span></p>
+                                </div>
+                                <button @click="loadRedirectLinks" :disabled="redirectLoading" class="btn btn-secondary shrink-0">
+                                    {{ redirectLoading ? 'Loading...' : 'Refresh' }}
+                                </button>
+                            </div>
+
+                            <div class="overflow-x-auto max-h-[28rem]">
+                                <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+                                    <thead class="bg-white/70 dark:bg-dark-950/60 sticky top-0">
+                                        <tr class="text-[11px] uppercase font-black tracking-widest text-gray-500 dark:text-gray-400">
+                                            <th class="px-4 py-3 text-left">Kode</th>
+                                            <th class="px-4 py-3 text-left">Type</th>
+                                            <th class="px-4 py-3 text-left">Share URL</th>
+                                            <th class="px-4 py-3 text-left">Target</th>
+                                            <th class="px-4 py-3 text-left">Stat</th>
+                                            <th class="px-4 py-3 text-left">Status</th>
+                                            <th class="px-4 py-3 text-left">Expired</th>
+                                            <th class="px-4 py-3 text-right">Aksi</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="bg-white dark:bg-dark-950 divide-y divide-gray-200 dark:divide-white/10">
+                                        <tr v-for="link in redirectLinks" :key="link.id" class="hover:bg-gray-50/80 dark:hover:bg-white/5">
+                                            <td class="px-4 py-3">
+                                                <div class="font-mono text-xs text-gray-900 dark:text-gray-100">{{ link.code }}</div>
+                                            </td>
+                                            <td class="px-4 py-3">
+                                                <span :class="[redirectTypeClass(link.type), 'px-2 py-1 text-xs rounded-full font-bold uppercase']">{{ link.type }}</span>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs">
+                                                <div class="max-w-[260px] truncate font-mono text-gray-700 dark:text-gray-300">{{ link.share_url || '-' }}</div>
+                                                <div class="mt-1 flex flex-wrap gap-2">
+                                                    <button @click="copyRedirectShare(link)" class="text-xs font-semibold text-primary-600 hover:text-primary-800">Copy</button>
+                                                    <a v-if="link.share_url" :href="link.share_url" target="_blank" rel="noopener" class="text-xs font-semibold text-emerald-600 hover:text-emerald-700">Open</a>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs">
+                                                <div class="max-w-[260px] truncate font-mono text-gray-500 dark:text-gray-400">{{ link.target_preview || '-' }}</div>
+                                                <button v-if="link.target_preview" @click="copyRedirectTarget(link)" class="mt-1 text-xs font-semibold text-primary-600 hover:text-primary-800">Copy Target</button>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                                                <div>Click: <span class="font-bold">{{ fmtNum(link.click_count) }}</span></div>
+                                                <div>Success: <span class="font-bold">{{ fmtNum(link.redirect_success_count) }}</span></div>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs">
+                                                <span :class="[link.is_active ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-600 dark:text-gray-300', 'px-2 py-1 rounded-full font-bold uppercase']">
+                                                    {{ link.is_active ? 'active' : 'inactive' }}
+                                                </span>
+                                            </td>
+                                            <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{{ fmtDate(link.expires_at) }}</td>
+                                            <td class="px-4 py-3 text-right space-x-3 whitespace-nowrap">
+                                                <button @click="editRedirectLink(link)" class="text-sm font-semibold text-primary-600 hover:text-primary-800">Edit</button>
+                                                <button @click="deleteRedirectLink(link)" class="text-sm font-semibold text-red-600 hover:text-red-800">Hapus</button>
+                                            </td>
+                                        </tr>
+                                        <tr v-if="redirectLinks.length === 0">
+                                            <td colspan="8" class="px-4 py-12 text-center text-gray-500 dark:text-gray-400">Belum ada redirect link.</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="card p-0 overflow-hidden rounded-2xl">
+                            <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                                <h3 class="text-base sm:text-lg font-bold tracking-tight text-gray-900 dark:text-white">Event Redirect</h3>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Klik dan hasil redirect dicatat terpisah.</p>
+                            </div>
+
+                            <div class="px-6 py-6 sm:px-8 space-y-6">
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 text-center">
+                                        <div class="text-3xl font-black text-gray-900 dark:text-white">{{ fmtNum(redirectEventStats.click) }}</div>
+                                        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">Click</div>
+                                    </div>
+                                    <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 text-center">
+                                        <div class="text-3xl font-black text-emerald-600 dark:text-emerald-300">{{ fmtNum(redirectEventStats.redirect_success) }}</div>
+                                        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">Redirect Success</div>
+                                    </div>
+                                    <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 text-center">
+                                        <div class="text-3xl font-black text-red-600 dark:text-red-300">{{ fmtNum(redirectEventStats.redirect_failed) }}</div>
+                                        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">Redirect Failed</div>
+                                    </div>
+                                </div>
+
+                                <div class="flex flex-col lg:flex-row lg:items-end gap-3">
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 flex-1">
+                                        <select v-model="redirectFilter.link_id" @change="loadRedirectEvents" class="input text-sm !rounded-xl">
+                                            <option value="">Semua Link</option>
+                                            <option v-for="link in redirectLinks" :key="`ev-link-${link.id}`" :value="String(link.id)">{{ link.code }}</option>
+                                        </select>
+                                        <input v-model="redirectFilter.code" @change="loadRedirectEvents" @blur="redirectFilter.code = normalizeRedirectCode(redirectFilter.code)" type="text" class="input text-sm !rounded-xl" placeholder="Filter code">
+                                        <select v-model="redirectFilter.event_type" @change="loadRedirectEvents" class="input text-sm !rounded-xl">
+                                            <option value="">Semua Event</option>
+                                            <option value="click">click</option>
+                                            <option value="redirect_success">redirect_success</option>
+                                            <option value="redirect_failed">redirect_failed</option>
+                                        </select>
+                                        <select v-model="redirectFilter.range" @change="loadRedirectEvents" class="input text-sm !rounded-xl">
+                                            <option value="">All Time</option>
+                                            <option value="24h">24 Jam</option>
+                                            <option value="7d">7 Hari</option>
+                                            <option value="30d">30 Hari</option>
+                                        </select>
+                                        <select v-model="redirectFilter.limit" @change="loadRedirectEvents" class="input text-sm !rounded-xl">
+                                            <option :value="50">50</option>
+                                            <option :value="100">100</option>
+                                            <option :value="200">200</option>
+                                            <option :value="500">500</option>
+                                        </select>
+                                    </div>
+                                    <button @click="loadRedirectEvents" class="btn btn-secondary lg:shrink-0">Refresh Event</button>
+                                </div>
+
+                                <div class="overflow-x-auto max-h-[28rem] rounded-2xl border border-gray-200/70 dark:border-white/10">
+                                    <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+                                        <thead class="bg-white/70 dark:bg-dark-950/60 sticky top-0">
+                                            <tr class="text-[11px] uppercase font-black tracking-widest text-gray-500 dark:text-gray-400">
+                                                <th class="px-4 py-3 text-left">Waktu</th>
+                                                <th class="px-4 py-3 text-left">Event</th>
+                                                <th class="px-4 py-3 text-left">Code</th>
+                                                <th class="px-4 py-3 text-left">HTTP</th>
+                                                <th class="px-4 py-3 text-left">Target</th>
+                                                <th class="px-4 py-3 text-left">IP</th>
+                                                <th class="px-4 py-3 text-left">Referer</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="bg-white dark:bg-dark-950 divide-y divide-gray-200 dark:divide-white/10">
+                                            <tr v-for="ev in redirectEvents" :key="ev.id" class="hover:bg-gray-50/80 dark:hover:bg-white/5">
+                                                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{{ fmtDate(ev.created_at) }}</td>
+                                                <td class="px-4 py-3">
+                                                    <span :class="[redirectEventClass(ev.event_type), 'px-2 py-1 text-xs rounded-full font-bold']">{{ ev.event_type }}</span>
+                                                </td>
+                                                <td class="px-4 py-3 text-xs font-mono text-gray-800 dark:text-gray-200">{{ ev.code || '-' }}</td>
+                                                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{{ ev.http_status || '-' }}</td>
+                                                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 max-w-[260px] truncate">{{ ev.target_url || ev.error_message || '-' }}</td>
+                                                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{{ ev.ip_address || '-' }}</td>
+                                                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 max-w-[220px] truncate">{{ ev.referer || '-' }}</td>
+                                            </tr>
+                                            <tr v-if="redirectEvents.length === 0">
+                                                <td colspan="7" class="px-4 py-12 text-center text-gray-500 dark:text-gray-400">Belum ada event redirect.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
                     </div>
 

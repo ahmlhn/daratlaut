@@ -172,6 +172,10 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->prefix('v1')->n
     Route::post('/settings/cron', [SettingsController::class, 'saveCronSettings']);
     Route::get('/settings/gateway-status', [SettingsController::class, 'getGatewayStatus']);
     Route::get('/settings/public-url', [SettingsController::class, 'getPublicUrlEndpoint']);
+    Route::get('/settings/redirect-links', [SettingsController::class, 'getRedirectLinks']);
+    Route::post('/settings/redirect-links', [SettingsController::class, 'saveRedirectLink']);
+    Route::delete('/settings/redirect-links/{id}', [SettingsController::class, 'deleteRedirectLink']);
+    Route::get('/settings/redirect-events', [SettingsController::class, 'getRedirectEvents']);
     Route::get('/settings/install-variables', [SettingsController::class, 'getInstallVariables']);
     Route::post('/settings/test-wa', [SettingsController::class, 'testWa']);
     Route::post('/settings/test-mpwa', [SettingsController::class, 'testMpwa']);
