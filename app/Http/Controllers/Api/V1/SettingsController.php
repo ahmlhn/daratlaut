@@ -439,13 +439,13 @@ class SettingsController extends Controller
             $basePath = base_path();
             $artisanPath = base_path('artisan');
             $quotedBase = '"' . str_replace('"', '\"', $basePath) . '"';
-            $quotedArtisan = '"' . str_replace('"', '\"', $artisanPath) . '"';
 
             return array_merge($defaults, [
                 'project_path' => $basePath,
                 'artisan_path' => $artisanPath,
                 'cron_line_linux' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >> /dev/null 2>&1',
-                'cron_line_cpanel' => '* * * * * php ' . $quotedArtisan . ' schedule:run >/dev/null 2>&1',
+                // cPanel wrappers can mis-parse absolute artisan path; use project dir + artisan command.
+                'cron_line_cpanel' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >/dev/null 2>&1',
                 'windows_task_command' => 'php "' . $artisanPath . '" schedule:run',
             ]);
         }
@@ -455,7 +455,6 @@ class SettingsController extends Controller
         $basePath = base_path();
         $artisanPath = base_path('artisan');
         $quotedBase = '"' . str_replace('"', '\"', $basePath) . '"';
-        $quotedArtisan = '"' . str_replace('"', '\"', $artisanPath) . '"';
 
         return [
             'nightly_enabled' => (bool) ($row->nightly_enabled ?? $defaults['nightly_enabled']),
@@ -466,7 +465,7 @@ class SettingsController extends Controller
             'project_path' => $basePath,
             'artisan_path' => $artisanPath,
             'cron_line_linux' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >> /dev/null 2>&1',
-            'cron_line_cpanel' => '* * * * * php ' . $quotedArtisan . ' schedule:run >/dev/null 2>&1',
+            'cron_line_cpanel' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >/dev/null 2>&1',
             'windows_task_command' => 'php "' . $artisanPath . '" schedule:run',
         ];
     }

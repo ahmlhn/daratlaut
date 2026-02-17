@@ -1276,8 +1276,8 @@ onMounted(() => {
 
                                     <div>
                                         <p class="text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Cron cPanel</p>
-                                        <code class="block text-xs sm:text-sm break-all text-gray-800 dark:text-gray-200">{{ cronSettings.cron_line_cpanel || '* * * * * php /home/USER/path/backend-laravel/artisan schedule:run >/dev/null 2>&1' }}</code>
-                                        <button @click="copyText(cronSettings.cron_line_cpanel || '* * * * * php /home/USER/path/backend-laravel/artisan schedule:run >/dev/null 2>&1', 'Cron cPanel disalin!')" class="btn btn-secondary mt-2">Copy</button>
+                                        <code class="block text-xs sm:text-sm break-all text-gray-800 dark:text-gray-200">{{ cronSettings.cron_line_cpanel || '* * * * * cd /home/USER/path/backend-laravel && php artisan schedule:run >/dev/null 2>&1' }}</code>
+                                        <button @click="copyText(cronSettings.cron_line_cpanel || '* * * * * cd /home/USER/path/backend-laravel && php artisan schedule:run >/dev/null 2>&1', 'Cron cPanel disalin!')" class="btn btn-secondary mt-2">Copy</button>
                                     </div>
 
                                     <div>
