@@ -54,30 +54,6 @@ Schedule::command('billing:send-reminders --type=overdue')
 
 /*
 |--------------------------------------------------------------------------
-| OLT Daily Sync Scheduler
-|--------------------------------------------------------------------------
-|
-| Sinkronisasi ONU OLT dijalankan via scheduler (cron `schedule:run`) 1x/hari.
-| Kompatibilitas transisi:
-| - OLT_DAILY_SYNC_SCHEDULE_ENABLED=true => aktif eksplisit.
-| - Jika env lama OLT_DAILY_SYNC_ON_ACCESS=true, scheduler tetap diaktifkan.
-| Jam default 02:15, bisa diubah via env OLT_DAILY_SYNC_TIME (HH:MM).
-|
-*/
-$oltDailySyncEnabled = filter_var((string) env('OLT_DAILY_SYNC_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
-$oltDailySyncLegacyEnabled = filter_var((string) env('OLT_DAILY_SYNC_ON_ACCESS', 'true'), FILTER_VALIDATE_BOOL);
-
-if ($oltDailySyncEnabled || $oltDailySyncLegacyEnabled) {
-    $oltDailySyncTime = env('OLT_DAILY_SYNC_TIME', '02:15');
-
-    Schedule::command('olt:queue-daily-sync')
-        ->dailyAt($oltDailySyncTime)
-        ->withoutOverlapping()
-        ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
-}
-
-/*
-|--------------------------------------------------------------------------
 | Ops Daily Scheduler (Native Cron Parity)
 |--------------------------------------------------------------------------
 |
@@ -112,14 +88,18 @@ if ($opsRemindersEnabled) {
 
 /*
 |--------------------------------------------------------------------------
-| Ops Tenant Scheduler (From Settings Page)
+| Tenant Scheduler (From Settings Page)
 |--------------------------------------------------------------------------
 |
-| Reads per-tenant schedules from table `noci_cron_settings`.
+| Reads per-tenant schedules from table `noci_cron_settings`:
+| - ops:nightly-closing
+| - ops:send-reminders
+| - olt:queue-daily-sync
 | Enable/disable via env OPS_TENANT_SCHEDULE_ENABLED (default: true).
 |
 */
 $opsTenantScheduleEnabled = filter_var((string) env('OPS_TENANT_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
+$tenantOltScheduled = 0;
 
 if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
     $normalizeClock = static function (?string $value, string $fallback): string {
@@ -131,12 +111,27 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
     };
 
     try {
+        $hasOltEnabledColumn = Schema::hasColumn('noci_cron_settings', 'olt_enabled');
+        $hasOltTimeColumn = Schema::hasColumn('noci_cron_settings', 'olt_time');
+
+        $selectColumns = ['tenant_id', 'nightly_enabled', 'nightly_time', 'reminders_enabled', 'reminders_time', 'reminder_base_url'];
+        if ($hasOltEnabledColumn) {
+            $selectColumns[] = 'olt_enabled';
+        }
+        if ($hasOltTimeColumn) {
+            $selectColumns[] = 'olt_time';
+        }
+
         $rows = DB::table('noci_cron_settings')
-            ->where(function ($q) {
-                $q->where('nightly_enabled', 1)->orWhere('reminders_enabled', 1);
+            ->where(function ($q) use ($hasOltEnabledColumn) {
+                $q->where('nightly_enabled', 1)
+                    ->orWhere('reminders_enabled', 1);
+                if ($hasOltEnabledColumn) {
+                    $q->orWhere('olt_enabled', 1);
+                }
             })
             ->orderBy('tenant_id')
-            ->get(['tenant_id', 'nightly_enabled', 'nightly_time', 'reminders_enabled', 'reminders_time', 'reminder_base_url']);
+            ->get($selectColumns);
 
         foreach ($rows as $row) {
             $tenantId = (int) ($row->tenant_id ?? 0);
@@ -165,8 +160,43 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
                     ->withoutOverlapping()
                     ->appendOutputTo(storage_path('logs/ops-reminders.log'));
             }
+
+            if ($hasOltEnabledColumn && (int) ($row->olt_enabled ?? 0) === 1) {
+                $oltTime = $normalizeClock(
+                    $hasOltTimeColumn ? (string) ($row->olt_time ?? '') : '',
+                    '02:15'
+                );
+
+                Schedule::command('olt:queue-daily-sync', ['--tenant' => (string) $tenantId])
+                    ->dailyAt($oltTime)
+                    ->withoutOverlapping()
+                    ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
+                $tenantOltScheduled++;
+            }
         }
     } catch (\Throwable $e) {
         Log::warning('Failed loading tenant cron schedules', ['error' => $e->getMessage()]);
     }
+}
+
+/*
+|--------------------------------------------------------------------------
+| OLT Daily Sync Scheduler
+|--------------------------------------------------------------------------
+|
+| Prioritas utama: jadwal per-tenant dari `noci_cron_settings`.
+| Fallback global (env) tetap disediakan untuk kompatibilitas deployment lama
+| atau saat jadwal tenant belum dikonfigurasi.
+|
+*/
+$oltDailySyncEnabled = filter_var((string) env('OLT_DAILY_SYNC_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
+$oltDailySyncLegacyEnabled = filter_var((string) env('OLT_DAILY_SYNC_ON_ACCESS', 'true'), FILTER_VALIDATE_BOOL);
+
+if (($oltDailySyncEnabled || $oltDailySyncLegacyEnabled) && $tenantOltScheduled === 0) {
+    $oltDailySyncTime = env('OLT_DAILY_SYNC_TIME', '02:15');
+
+    Schedule::command('olt:queue-daily-sync')
+        ->dailyAt($oltDailySyncTime)
+        ->withoutOverlapping()
+        ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
 }

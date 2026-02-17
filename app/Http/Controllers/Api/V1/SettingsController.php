@@ -433,6 +433,8 @@ class SettingsController extends Controller
             'reminders_enabled' => false,
             'reminders_time' => '07:00',
             'reminder_base_url' => '',
+            'olt_enabled' => false,
+            'olt_time' => '02:15',
         ];
 
         if (!Schema::hasTable('noci_cron_settings')) {
@@ -451,6 +453,8 @@ class SettingsController extends Controller
         }
 
         $row = DB::table('noci_cron_settings')->where('tenant_id', $tid)->first();
+        $hasOltEnabled = Schema::hasColumn('noci_cron_settings', 'olt_enabled');
+        $hasOltTime = Schema::hasColumn('noci_cron_settings', 'olt_time');
 
         $basePath = base_path();
         $artisanPath = base_path('artisan');
@@ -462,6 +466,10 @@ class SettingsController extends Controller
             'reminders_enabled' => (bool) ($row->reminders_enabled ?? $defaults['reminders_enabled']),
             'reminders_time' => $this->normalizeClockValue((string) ($row->reminders_time ?? ''), $defaults['reminders_time']),
             'reminder_base_url' => trim((string) ($row->reminder_base_url ?? $defaults['reminder_base_url'])),
+            'olt_enabled' => $hasOltEnabled ? (bool) ($row->olt_enabled ?? $defaults['olt_enabled']) : $defaults['olt_enabled'],
+            'olt_time' => $hasOltTime
+                ? $this->normalizeClockValue((string) ($row->olt_time ?? ''), $defaults['olt_time'])
+                : $defaults['olt_time'],
             'project_path' => $basePath,
             'artisan_path' => $artisanPath,
             'cron_line_linux' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >> /dev/null 2>&1',
@@ -492,13 +500,17 @@ class SettingsController extends Controller
             'reminders_enabled' => ['nullable', 'boolean'],
             'reminders_time' => ['nullable', 'string', 'max:5'],
             'reminder_base_url' => ['nullable', 'string', 'max:255'],
+            'olt_enabled' => ['nullable', 'boolean'],
+            'olt_time' => ['nullable', 'string', 'max:5'],
         ]);
 
         $nightlyEnabled = (int) ((bool) ($validated['nightly_enabled'] ?? false));
         $remindersEnabled = (int) ((bool) ($validated['reminders_enabled'] ?? false));
+        $oltEnabled = (int) ((bool) ($validated['olt_enabled'] ?? false));
 
         $nightlyTime = $this->normalizeClockValue((string) ($validated['nightly_time'] ?? ''), '21:30');
         $remindersTime = $this->normalizeClockValue((string) ($validated['reminders_time'] ?? ''), '07:00');
+        $oltTime = $this->normalizeClockValue((string) ($validated['olt_time'] ?? ''), '02:15');
 
         $baseUrl = trim((string) ($validated['reminder_base_url'] ?? ''));
         if ($baseUrl !== '') {
@@ -511,6 +523,9 @@ class SettingsController extends Controller
             }
         }
 
+        $hasOltEnabled = Schema::hasColumn('noci_cron_settings', 'olt_enabled');
+        $hasOltTime = Schema::hasColumn('noci_cron_settings', 'olt_time');
+
         $payload = [
             'nightly_enabled' => $nightlyEnabled,
             'nightly_time' => $nightlyTime,
@@ -519,6 +534,12 @@ class SettingsController extends Controller
             'reminder_base_url' => $baseUrl,
             'updated_at' => now(),
         ];
+        if ($hasOltEnabled) {
+            $payload['olt_enabled'] = $oltEnabled;
+        }
+        if ($hasOltTime) {
+            $payload['olt_time'] = $oltTime;
+        }
 
         $exists = DB::table('noci_cron_settings')->where('tenant_id', $tid)->exists();
         if ($exists) {

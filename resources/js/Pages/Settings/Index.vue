@@ -53,6 +53,8 @@ const cronSettings = reactive({
     reminders_enabled: 0,
     reminders_time: '07:00',
     reminder_base_url: '',
+    olt_enabled: 0,
+    olt_time: '02:15',
     project_path: '',
     artisan_path: '',
     cron_line_linux: '',
@@ -256,6 +258,8 @@ async function loadAll(opts = {}) {
                 reminders_enabled: data.cron_settings.reminders_enabled ? 1 : 0,
                 reminders_time: data.cron_settings.reminders_time || '07:00',
                 reminder_base_url: data.cron_settings.reminder_base_url || '',
+                olt_enabled: data.cron_settings.olt_enabled ? 1 : 0,
+                olt_time: data.cron_settings.olt_time || '02:15',
                 project_path: data.cron_settings.project_path || '',
                 artisan_path: data.cron_settings.artisan_path || '',
                 cron_line_linux: data.cron_settings.cron_line_linux || '',
@@ -499,6 +503,8 @@ async function saveCron() {
             reminders_enabled: !!cronSettings.reminders_enabled,
             reminders_time: cronSettings.reminders_time || '07:00',
             reminder_base_url: cronSettings.reminder_base_url || '',
+            olt_enabled: !!cronSettings.olt_enabled,
+            olt_time: cronSettings.olt_time || '02:15',
         };
         const res = await api('/cron', { method: 'POST', body: JSON.stringify(payload) });
         if (res.status === 'error') {
@@ -512,6 +518,8 @@ async function saveCron() {
                 reminders_enabled: res.data.reminders_enabled ? 1 : 0,
                 reminders_time: res.data.reminders_time || '07:00',
                 reminder_base_url: res.data.reminder_base_url || '',
+                olt_enabled: res.data.olt_enabled ? 1 : 0,
+                olt_time: res.data.olt_time || '02:15',
                 project_path: res.data.project_path || cronSettings.project_path,
                 artisan_path: res.data.artisan_path || cronSettings.artisan_path,
                 cron_line_linux: res.data.cron_line_linux || cronSettings.cron_line_linux,
@@ -1214,12 +1222,12 @@ onMounted(() => {
                         <div class="card p-0 overflow-hidden rounded-2xl">
                             <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
                                 <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">Cron Scheduler</h2>
-                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Atur jadwal eksekusi otomatis untuk closing malam dan reminder operasional.</p>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Atur jadwal eksekusi otomatis untuk closing malam, reminder operasional, dan sinkronisasi ONU OLT.</p>
                             </div>
 
                             <div class="px-6 py-6 sm:px-8 space-y-6">
                                 <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-5 space-y-5">
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                                         <div class="space-y-2">
                                             <label class="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
                                                 <input v-model="cronSettings.nightly_enabled" :true-value="1" :false-value="0" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
@@ -1236,6 +1244,15 @@ onMounted(() => {
                                             </label>
                                             <input v-model="cronSettings.reminders_time" type="time" class="input w-full md:w-48">
                                             <p class="text-xs text-gray-500 dark:text-gray-400">Rekomendasi: 07:00 WIB sebelum briefing tim lapangan.</p>
+                                        </div>
+
+                                        <div class="space-y-2">
+                                            <label class="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
+                                                <input v-model="cronSettings.olt_enabled" :true-value="1" :false-value="0" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                                Aktifkan Sinkron OLT (`olt:queue-daily-sync`)
+                                            </label>
+                                            <input v-model="cronSettings.olt_time" type="time" class="input w-full md:w-48">
+                                            <p class="text-xs text-gray-500 dark:text-gray-400">Rekomendasi: 02:15 WIB saat trafik rendah.</p>
                                         </div>
                                     </div>
 
