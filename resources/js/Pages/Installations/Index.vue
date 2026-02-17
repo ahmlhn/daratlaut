@@ -529,6 +529,7 @@ function parseSmartInput(raw) {
     'nama',
     'name',
     'wa',
+    'nomor',
     'whatsapp',
     'hp',
     'telp',
@@ -571,21 +572,93 @@ function parseSmartInput(raw) {
   }
 
   const lines = []
+  const hasStrongFieldSignal = (parts) => {
+    return parts.some((part) => {
+      const token = String(part || '').trim()
+      if (!token) return false
+      const digits = token.replace(/\D/g, '')
+      if (normalizeCoords(token)) return true
+      if (digits.length >= 8) return true
+      if (/^\d{3,}$/.test(token)) return true
+      if (normalizeDateInput(token)) return true
+      return false
+    })
+  }
+
+  const pushSyntheticCsvFields = (parts) => {
+    const map = [
+      'Nama',
+      'WA',
+      'Alamat',
+      'Sales',
+      'POP',
+      'Paket',
+      'Harga',
+    ]
+    parts.forEach((val, idx) => {
+      if (idx < map.length) lines.push(`${map[idx]}: ${val}`)
+      else lines.push(val)
+    })
+  }
+
   String(raw || '')
     .split(/\\r?\\n/)
     .forEach((line) => {
       const l = String(line || '').trim()
       if (!l) return
+
+      // Keep full line if it is already a valid label-value pair.
+      // This prevents value truncation for cases like: "Alamat: Jl A, RT 02".
+      if (parseLabel(l)) {
+        lines.push(l)
+        return
+      }
+
       if (l.includes(',')) {
         const parts = l
           .split(',')
           .map((p) => p.trim())
           .filter(Boolean)
-        const hasLabel = parts.some((p) => parseLabel(p))
-        if (hasLabel) {
+
+        if (!parts.length) return
+
+        const parsedParts = parts.map((p) => parseLabel(p))
+        const labelledCount = parsedParts.filter(Boolean).length
+
+        // Multiple labelled pairs in one line: split and parse each pair.
+        if (labelledCount >= 2) {
           parts.forEach((p) => {
             if (p) lines.push(p)
           })
+          return
+        }
+
+        // Special case: "Teknisi DARWIN, MAKMUR" / "Sales A, B" (without ":")
+        // Merge trailing comma parts into the same field value.
+        if (labelledCount === 1 && parsedParts[0] && parts.slice(1).every((p) => !parseLabel(p))) {
+          const parsedHead = parsedParts[0]
+          const extra = parts.slice(1).join(', ')
+          const key = parsedHead.keyClean.startsWith('teknisi') || parsedHead.keyClean.startsWith('psb')
+            ? 'Teknisi'
+            : parsedHead.keyClean.startsWith('sales')
+              ? 'Sales'
+              : ''
+          if (key) {
+            lines.push(`${key}: ${[parsedHead.val, extra].filter(Boolean).join(', ')}`)
+            return
+          }
+        }
+
+        // Unlabelled CSV mode (documented in UI): Name, WA, Address, Sales, POP, Plan, Price.
+        // Only activate when we see strong numeric/date/coord signal to avoid splitting plain addresses.
+        if (parts.length >= 3 && hasStrongFieldSignal(parts) && !normalizeCoords(l)) {
+          pushSyntheticCsvFields(parts)
+          return
+        }
+
+        // Two-part CSV shortcut for "Name, 08xxxx" or similar.
+        if (parts.length === 2 && hasStrongFieldSignal(parts) && !normalizeCoords(l)) {
+          parts.forEach((p) => lines.push(p))
           return
         }
       }
@@ -612,6 +685,7 @@ function parseSmartInput(raw) {
       else if (keyClean === 'nama' || keyClean === 'name') result.name = val
       else if (
         keyClean === 'wa' ||
+        keyClean === 'nomor' ||
         keyClean === 'whatsapp' ||
         keyClean === 'hp' ||
         keyClean === 'telp' ||
@@ -1534,7 +1608,7 @@ onBeforeUnmount(() => {
                             </div>
                             <div class="text-[10px] text-slate-400 dark:text-slate-500">
                                 Tempel data bebas (per baris atau dipisah koma). Bisa pakai label "Nama:", "WA:", "Alamat:" dll, atau tanpa label
-                                (urutan: Nama, WA, Alamat, Sales, POP).
+                                (urutan CSV: Nama, WA, Alamat, Sales, POP, Paket, Harga).
                             </div>
                         </div>
                         <div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-white/10 p-3 space-y-2">
