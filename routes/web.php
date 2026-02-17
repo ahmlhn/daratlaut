@@ -32,6 +32,21 @@ use Illuminate\Http\Request;
 
 Route::get('/', fn () => redirect('/dashboard'));
 
+// CSRF refresh endpoint for stale tabs (e.g. page left open for long time).
+// Frontend calls this when a request gets 419 so it can retry once with fresh token cookie.
+Route::get('/csrf-token', function (Request $request) {
+    $request->session()->regenerateToken();
+
+    return response()->json([
+        'status' => 'ok',
+        'token' => csrf_token(),
+    ], 200, [
+        'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+        'Pragma' => 'no-cache',
+        'Expires' => '0',
+    ]);
+})->name('csrf.token');
+
 // Public payment portal (no auth required)
 Route::get('/pay/{token}', [PaymentPortalController::class, 'show'])->name('payment.portal');
 
