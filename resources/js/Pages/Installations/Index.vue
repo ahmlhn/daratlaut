@@ -464,12 +464,12 @@ function normalizeName(value) {
 function splitNames(raw) {
   return String(raw || '')
     .split(',')
-    .map((s) => s.replace(/\\(.*?\\)/g, '').trim())
+    .map((s) => s.replace(/\(.*?\)/g, '').trim())
     .filter(Boolean)
 }
 
 function normalizePriceValue(raw) {
-  const digits = String(raw || '').replace(/\\D/g, '')
+  const digits = String(raw || '').replace(/\D/g, '')
   if (!digits) return ''
   let num = parseInt(digits, 10)
   if (Number.isNaN(num) || num <= 0) return ''
@@ -480,8 +480,8 @@ function normalizePriceValue(raw) {
 function normalizeDateInput(raw) {
   const s = String(raw || '').trim()
   if (!s) return ''
-  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return s
-  const m = s.match(/^(\\d{2})[\\/.\\-](\\d{2})[\\/.\\-](\\d{4})$/)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  const m = s.match(/^(\d{2})[\/.\-](\d{2})[\/.\-](\d{4})$/)
   if (m) return `${m[3]}-${m[2]}-${m[1]}`
   return ''
 }
@@ -559,11 +559,11 @@ function parseSmartInput(raw) {
   }
 
   const parseLabel = (text) => {
-    let m = String(text || '').match(/^([^:=]{1,30})\\s*[:=]\\s*(.+)$/)
-    if (!m) m = String(text || '').match(/^([a-zA-Z0-9.\\s]{2,30})\\s+(.+)$/)
+    let m = String(text || '').match(/^([^:=]{1,30})\s*[:=]\s*(.+)$/)
+    if (!m) m = String(text || '').match(/^([a-zA-Z0-9.\s]{2,30})\s+(.+)$/)
     if (!m) return null
     const keyRaw = String(m[1] || '').trim().toLowerCase()
-    const key = keyRaw.replace(/\\s+/g, '')
+    const key = keyRaw.replace(/\s+/g, '')
     const keyClean = key.replace(/[^a-z0-9]/g, '')
     if (!isLabelKey(keyClean)) return null
     const val = String(m[2] || '').trim()
@@ -602,7 +602,7 @@ function parseSmartInput(raw) {
   }
 
   String(raw || '')
-    .split(/\\r?\\n/)
+    .split(/\r?\n/)
     .forEach((line) => {
       const l = String(line || '').trim()
       if (!l) return
@@ -718,7 +718,7 @@ function parseSmartInput(raw) {
       leftovers.splice(i, 1)
       continue
     }
-    const digits = String(line || '').replace(/\\D/g, '')
+    const digits = String(line || '').replace(/\D/g, '')
     const hasLetters = /[a-zA-Z]/.test(String(line || ''))
     if (!result.phone && digits.length >= 8) {
       result.phone = String(line || '')
@@ -792,7 +792,7 @@ function applyProgressSmartInput(options = {}) {
   const filled = []
   const applied = []
   const warnings = []
-  const phoneDigits = String(parsed.phone || '').replace(/\\D/g, '')
+  const phoneDigits = String(parsed.phone || '').replace(/\D/g, '')
   const coordParsed = parsed.coords ? normalizeCoords(parsed.coords) : null
   const coordsValue = coordParsed ? `${coordParsed.lat},${coordParsed.lng}` : ''
   const dateValue = parsed.date ? normalizeDateInput(parsed.date) : ''
