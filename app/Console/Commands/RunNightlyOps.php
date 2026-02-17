@@ -18,7 +18,7 @@ class RunNightlyOps extends Command
                             {--tenant= : Tenant ID (single/comma separated)}
                             {--force : Paksa kirim ulang walau lock harian ada}
                             {--dry-run : Simulasi tanpa kirim WA/delete file}
-                            {--sleep=2 : Delay detik antar pesan}
+                            {--sleep=10 : Delay detik antar pesan}
                             {--date= : Override tanggal acuan (YYYY-MM-DD)}';
 
     protected $description = 'Paritas cron_night.php: closing report + cleanup attachment keuangan';

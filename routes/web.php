@@ -197,9 +197,7 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->group(function 
     Route::post('/system-update/github/token/clear', [SystemUpdateController::class, 'githubClearToken'])->name('system_update.github_token_clear');
 
     // OLT Management
-    Route::get('/olts', [OltController::class, 'index'])
-        ->middleware('olt.daily.sync')
-        ->name('olts.index');
+    Route::get('/olts', [OltController::class, 'index'])->name('olts.index');
 
     // Fiber / Kabel FO
     Route::get('/fiber', [FiberController::class, 'index'])->name('fiber.index');
@@ -213,11 +211,9 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->group(function 
     Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');
     
     // Teknisi Module
-    Route::middleware('olt.daily.sync')->group(function () {
-        Route::get('/teknisi', [TeknisiController::class, 'index'])->name('teknisi.index');
-        Route::get('/teknisi/riwayat', [TeknisiController::class, 'riwayat'])->name('teknisi.riwayat');
-        Route::get('/teknisi/rekap', [TeknisiController::class, 'rekap'])->name('teknisi.rekap');
-    });
+    Route::get('/teknisi', [TeknisiController::class, 'index'])->name('teknisi.index');
+    Route::get('/teknisi/riwayat', [TeknisiController::class, 'riwayat'])->name('teknisi.riwayat');
+    Route::get('/teknisi/rekap', [TeknisiController::class, 'rekap'])->name('teknisi.rekap');
     
     // Maps
     Route::get('/maps', [MapsController::class, 'index'])->name('maps.index');

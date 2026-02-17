@@ -17,7 +17,7 @@ class RunOpsReminders extends Command
                             {--tenant= : Tenant ID (single/comma separated)}
                             {--base-url= : Base URL dashboard legacy (contoh: https://my.daratlaut.com)}
                             {--dry-run : Simulasi tanpa kirim WA}
-                            {--sleep=2 : Delay detik antar pesan}
+                            {--sleep=10 : Delay detik antar pesan}
                             {--date= : Override tanggal acuan (YYYY-MM-DD)}';
 
     protected $description = 'Paritas cron_reminders.php: reminder POP + reminder teknisi + rekap kinerja H-1';

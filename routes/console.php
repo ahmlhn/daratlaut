@@ -57,15 +57,17 @@ Schedule::command('billing:send-reminders --type=overdue')
 | OLT Daily Sync Scheduler
 |--------------------------------------------------------------------------
 |
-| Fallback scheduler untuk dispatch sinkronisasi ONU OLT sekali sehari.
-| Mode utama saat ini adalah trigger dari akses halaman (on-access).
-| Aktifkan fallback ini dengan OLT_DAILY_SYNC_SCHEDULE_ENABLED=true.
+| Sinkronisasi ONU OLT dijalankan via scheduler (cron `schedule:run`) 1x/hari.
+| Kompatibilitas transisi:
+| - OLT_DAILY_SYNC_SCHEDULE_ENABLED=true => aktif eksplisit.
+| - Jika env lama OLT_DAILY_SYNC_ON_ACCESS=true, scheduler tetap diaktifkan.
 | Jam default 02:15, bisa diubah via env OLT_DAILY_SYNC_TIME (HH:MM).
 |
 */
-$oltDailySyncEnabled = filter_var((string) env('OLT_DAILY_SYNC_SCHEDULE_ENABLED', 'false'), FILTER_VALIDATE_BOOL);
+$oltDailySyncEnabled = filter_var((string) env('OLT_DAILY_SYNC_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
+$oltDailySyncLegacyEnabled = filter_var((string) env('OLT_DAILY_SYNC_ON_ACCESS', 'true'), FILTER_VALIDATE_BOOL);
 
-if ($oltDailySyncEnabled) {
+if ($oltDailySyncEnabled || $oltDailySyncLegacyEnabled) {
     $oltDailySyncTime = env('OLT_DAILY_SYNC_TIME', '02:15');
 
     Schedule::command('olt:queue-daily-sync')
