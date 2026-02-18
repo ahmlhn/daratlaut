@@ -171,7 +171,7 @@ async function fetchJson(url, options = {}) {
   const opts = {
     credentials: 'same-origin',
     ...options,
-    headers: { ...(options.headers || {}) },
+    headers: { Accept: 'application/json', ...(options.headers || {}) },
   }
   if (opts.body && !(opts.body instanceof FormData) && !opts.headers['Content-Type']) {
     opts.headers['Content-Type'] = 'application/json'

@@ -162,6 +162,51 @@ class TeknisiController extends Controller
                 $table->unsignedInteger('tenant_id')->default(0)->after('id');
             });
         }
+        if (!Schema::hasColumn('noci_rekap_attachments', 'rekap_date')) {
+            Schema::table('noci_rekap_attachments', function (Blueprint $table) {
+                $table->date('rekap_date')->nullable()->after('tenant_id');
+            });
+        }
+        if (!Schema::hasColumn('noci_rekap_attachments', 'technician_name')) {
+            Schema::table('noci_rekap_attachments', function (Blueprint $table) {
+                $table->string('technician_name', 100)->nullable()->after('rekap_date');
+            });
+        }
+        if (!Schema::hasColumn('noci_rekap_attachments', 'file_name')) {
+            Schema::table('noci_rekap_attachments', function (Blueprint $table) {
+                $table->string('file_name', 255)->nullable()->after('technician_name');
+            });
+        }
+        if (!Schema::hasColumn('noci_rekap_attachments', 'file_path')) {
+            Schema::table('noci_rekap_attachments', function (Blueprint $table) {
+                $table->string('file_path', 255)->nullable()->after('file_name');
+            });
+        }
+        if (!Schema::hasColumn('noci_rekap_attachments', 'file_ext')) {
+            Schema::table('noci_rekap_attachments', function (Blueprint $table) {
+                $table->string('file_ext', 10)->nullable()->after('file_path');
+            });
+        }
+        if (!Schema::hasColumn('noci_rekap_attachments', 'mime_type')) {
+            Schema::table('noci_rekap_attachments', function (Blueprint $table) {
+                $table->string('mime_type', 100)->nullable()->after('file_ext');
+            });
+        }
+        if (!Schema::hasColumn('noci_rekap_attachments', 'file_size')) {
+            Schema::table('noci_rekap_attachments', function (Blueprint $table) {
+                $table->unsignedBigInteger('file_size')->nullable()->after('mime_type');
+            });
+        }
+        if (!Schema::hasColumn('noci_rekap_attachments', 'created_by')) {
+            Schema::table('noci_rekap_attachments', function (Blueprint $table) {
+                $table->string('created_by', 100)->nullable()->after('file_size');
+            });
+        }
+        if (!Schema::hasColumn('noci_rekap_attachments', 'created_at')) {
+            Schema::table('noci_rekap_attachments', function (Blueprint $table) {
+                $table->timestamp('created_at')->nullable()->useCurrent()->after('created_by');
+            });
+        }
     }
 
     private function recapGroupsNameColumn(): ?string
@@ -294,7 +339,7 @@ class TeknisiController extends Controller
         if ($value === '') return '';
 
         if (preg_match('/^https?:\/\//i', $value)) return $value;
-        if (str_starts_with($value, '//')) {
+        if (substr($value, 0, 2) === '//') {
             return $request->getScheme() . ':' . $value;
         }
 
@@ -847,68 +892,79 @@ class TeknisiController extends Controller
      */
     public function uploadRekapProof(Request $request): JsonResponse
     {
-        $tenantId = $this->tenantId($request);
-        if ($tenantId <= 0) {
-            return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
+        try {
+            $tenantId = $this->tenantId($request);
+            if ($tenantId <= 0) {
+                return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
+            }
+            if ($resp = $this->requireAnyPermission($request, ['send teknisi recap', 'edit teknisi'])) {
+                return $resp;
+            }
+
+            $validated = $request->validate([
+                'file' => 'required|file|mimes:jpg,jpeg,png,pdf|max:10240',
+                'date' => 'nullable|date',
+                'tech_name' => 'nullable|string|max:100',
+            ]);
+
+            $this->ensureRekapAttachmentsTable();
+
+            $file = $request->file('file');
+            if (!$file) {
+                return response()->json(['success' => false, 'message' => 'File tidak ditemukan'], 422);
+            }
+
+            $rekapDate = (string) ($validated['date'] ?? now()->toDateString());
+            $techName = trim((string) ($validated['tech_name'] ?? $this->actorName($request)));
+            if ($techName === '') {
+                $techName = (string) ($request->user()?->name ?? 'Teknisi');
+            }
+
+            $safeTech = preg_replace('/[^a-z0-9]+/i', '_', strtolower($techName));
+            $dateKey = preg_replace('/[^0-9]/', '', $rekapDate);
+            $ext = strtolower((string) $file->getClientOriginalExtension());
+            $fileName = 'rekap_bukti_' . ($safeTech ?: 'teknisi') . '_' . ($dateKey ?: date('Ymd')) . '_' . date('His') . '_' . random_int(1000, 9999) . '.' . $ext;
+
+            $targetDir = public_path('uploads/rekap');
+            if (!is_dir($targetDir) && !@mkdir($targetDir, 0755, true) && !is_dir($targetDir)) {
+                throw new \RuntimeException('Folder upload bukti transfer tidak bisa dibuat');
+            }
+
+            $file->move($targetDir, $fileName);
+            $relativePath = 'uploads/rekap/' . $fileName;
+
+            $payload = [];
+            if (Schema::hasColumn('noci_rekap_attachments', 'tenant_id')) $payload['tenant_id'] = $tenantId;
+            if (Schema::hasColumn('noci_rekap_attachments', 'rekap_date')) $payload['rekap_date'] = $rekapDate;
+            if (Schema::hasColumn('noci_rekap_attachments', 'technician_name')) $payload['technician_name'] = $techName;
+            if (Schema::hasColumn('noci_rekap_attachments', 'file_name')) $payload['file_name'] = $fileName;
+            if (Schema::hasColumn('noci_rekap_attachments', 'file_path')) $payload['file_path'] = $relativePath;
+            if (Schema::hasColumn('noci_rekap_attachments', 'file_ext')) $payload['file_ext'] = $ext;
+            if (Schema::hasColumn('noci_rekap_attachments', 'mime_type')) $payload['mime_type'] = (string) $file->getClientMimeType();
+            if (Schema::hasColumn('noci_rekap_attachments', 'file_size')) $payload['file_size'] = (int) $file->getSize();
+            if (Schema::hasColumn('noci_rekap_attachments', 'created_by')) $payload['created_by'] = (string) ($request->user()?->name ?? '');
+            if (Schema::hasColumn('noci_rekap_attachments', 'created_at')) $payload['created_at'] = now();
+
+            if (!empty($payload)) {
+                DB::table('noci_rekap_attachments')->insert($payload);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Bukti transfer berhasil diupload',
+                'data' => [
+                    'file_name' => $fileName,
+                    'file_path' => $relativePath,
+                    'file_url' => $this->toAbsoluteUrl($request, $relativePath),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal upload bukti transfer',
+                'error' => (string) (config('app.debug') ? $e->getMessage() : 'Internal server error'),
+            ], 500);
         }
-        if ($resp = $this->requireAnyPermission($request, ['send teknisi recap', 'edit teknisi'])) {
-            return $resp;
-        }
-
-        $validated = $request->validate([
-            'file' => 'required|file|mimes:jpg,jpeg,png,pdf|max:10240',
-            'date' => 'nullable|date',
-            'tech_name' => 'nullable|string|max:100',
-        ]);
-
-        $this->ensureRekapAttachmentsTable();
-
-        $file = $request->file('file');
-        if (!$file) {
-            return response()->json(['success' => false, 'message' => 'File tidak ditemukan'], 422);
-        }
-
-        $rekapDate = (string) ($validated['date'] ?? now()->toDateString());
-        $techName = trim((string) ($validated['tech_name'] ?? $this->actorName($request)));
-        if ($techName === '') {
-            $techName = (string) ($request->user()?->name ?? 'Teknisi');
-        }
-
-        $safeTech = preg_replace('/[^a-z0-9]+/i', '_', strtolower($techName));
-        $dateKey = preg_replace('/[^0-9]/', '', $rekapDate);
-        $ext = strtolower((string) $file->getClientOriginalExtension());
-        $fileName = 'rekap_bukti_' . ($safeTech ?: 'teknisi') . '_' . ($dateKey ?: date('Ymd')) . '_' . date('His') . '_' . random_int(1000, 9999) . '.' . $ext;
-
-        $targetDir = public_path('uploads/rekap');
-        if (!is_dir($targetDir)) {
-            @mkdir($targetDir, 0755, true);
-        }
-
-        $file->move($targetDir, $fileName);
-        $relativePath = 'uploads/rekap/' . $fileName;
-
-        DB::table('noci_rekap_attachments')->insert([
-            'tenant_id' => $tenantId,
-            'rekap_date' => $rekapDate,
-            'technician_name' => $techName,
-            'file_name' => $fileName,
-            'file_path' => $relativePath,
-            'file_ext' => $ext,
-            'mime_type' => (string) $file->getClientMimeType(),
-            'file_size' => (int) $file->getSize(),
-            'created_by' => (string) ($request->user()?->name ?? ''),
-            'created_at' => now(),
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Bukti transfer berhasil diupload',
-            'data' => [
-                'file_name' => $fileName,
-                'file_path' => $relativePath,
-                'file_url' => $this->toAbsoluteUrl($request, $relativePath),
-            ],
-        ]);
     }
 
     /**
