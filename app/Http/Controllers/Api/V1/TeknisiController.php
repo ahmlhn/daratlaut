@@ -10,6 +10,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 class TeknisiController extends Controller
@@ -928,21 +929,25 @@ class TeknisiController extends Controller
             $dateKey = preg_replace('/[^0-9]/', '', $rekapDate);
             $ext = strtolower((string) $file->getClientOriginalExtension());
             $fileName = 'rekap_bukti_' . ($safeTech ?: 'teknisi') . '_' . ($dateKey ?: date('Ymd')) . '_' . date('His') . '_' . random_int(1000, 9999) . '.' . $ext;
-
-            $targetDir = public_path('uploads/rekap');
-            $relativeBase = 'uploads/rekap';
-            $publicReady = (is_dir($targetDir) || @mkdir($targetDir, 0755, true)) && is_writable($targetDir);
-            if (!$publicReady) {
-                // Fallback ke storage/public yang biasanya writable di shared hosting.
-                $targetDir = storage_path('app/public/rekap');
-                $relativeBase = 'storage/rekap';
-                if (!is_dir($targetDir) && !@mkdir($targetDir, 0755, true) && !is_dir($targetDir)) {
-                    throw new \RuntimeException('Folder upload bukti transfer tidak bisa dibuat');
-                }
+            $stored = $file->storeAs('rekap', $fileName, 'public');
+            if ($stored === false || $stored === null) {
+                throw new \RuntimeException('Penyimpanan file gagal di disk public');
             }
 
-            $file->move($targetDir, $fileName);
-            $relativePath = $relativeBase . '/' . $fileName;
+            $relativePath = 'storage/' . ltrim((string) $stored, '/');
+            $publicStorage = public_path('storage');
+            $storedAbs = storage_path('app/public/' . ltrim((string) $stored, '/'));
+
+            // If public/storage symlink is missing, mirror file to public/uploads for public access.
+            if (!is_dir($publicStorage) && !is_link($publicStorage)) {
+                $mirrorDir = public_path('uploads/rekap');
+                if ((is_dir($mirrorDir) || @mkdir($mirrorDir, 0755, true)) && is_writable($mirrorDir)) {
+                    $mirrorPath = $mirrorDir . DIRECTORY_SEPARATOR . $fileName;
+                    if (@copy($storedAbs, $mirrorPath)) {
+                        $relativePath = 'uploads/rekap/' . $fileName;
+                    }
+                }
+            }
 
             try {
                 if (Schema::hasTable('noci_rekap_attachments')) {
@@ -976,10 +981,14 @@ class TeknisiController extends Controller
                 ],
             ]);
         } catch (\Throwable $e) {
+            Log::error('uploadRekapProof failed', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal upload bukti transfer',
-                'error' => (string) (config('app.debug') ? $e->getMessage() : 'Internal server error'),
+                'error' => (string) $e->getMessage(),
             ], 500);
         }
     }

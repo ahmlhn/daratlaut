@@ -327,15 +327,7 @@ async function sendRekapToGroup() {
   }
   sendingGroup.value = true
   try {
-    let mediaUrl = ''
-    if (proofFile.value) {
-      try {
-        mediaUrl = await uploadRekapProofIfAny()
-      } catch (e) {
-        mediaUrl = ''
-        notify(`Upload bukti gagal, lanjut kirim tanpa bukti. ${e?.message || ''}`.trim(), 'error')
-      }
-    }
+    const mediaUrl = await uploadRekapProofIfAny()
     const payload = {
       group_id: selectedGroupId.value,
       message: rekapPreview.value,
