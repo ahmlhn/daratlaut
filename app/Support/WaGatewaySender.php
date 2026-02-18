@@ -310,7 +310,9 @@ class WaGatewaySender
             'message' => $message,
         ];
 
-        $groupEndpoints = $this->balesGroupMessageEndpoints($gateway, $groupUrl, $options);
+        $groupEndpoints = $this->balesGroupMessageEndpoints($gateway, $groupUrl, array_merge($options, [
+            'prefer_public' => true,
+        ]));
         if (empty($groupEndpoints)) {
             return ['ok' => false, 'error' => 'URL endpoint kirim gambar group tidak ditemukan'];
         }
@@ -802,14 +804,22 @@ class WaGatewaySender
     private function balesGroupMessageEndpoints(array $gateway, string $groupUrl, array $options = []): array
     {
         $endpoints = [];
-        $this->pushUniqueEndpoint($endpoints, trim((string) ($options['group_message_url'] ?? '')));
-        $this->pushUniqueEndpoint($endpoints, $groupUrl);
-
         $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
         $seed = $baseUrl !== '' ? $baseUrl : $groupUrl;
+        $override = trim((string) ($options['group_message_url'] ?? ''));
+        $preferPublic = !empty($options['prefer_public']);
 
-        $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_message'));
-        $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-message'));
+        $this->pushUniqueEndpoint($endpoints, $override);
+
+        if ($preferPublic) {
+            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_message'));
+            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-message'));
+            $this->pushUniqueEndpoint($endpoints, $groupUrl);
+        } else {
+            $this->pushUniqueEndpoint($endpoints, $groupUrl);
+            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_message'));
+            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-message'));
+        }
 
         return $endpoints;
     }
