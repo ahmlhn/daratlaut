@@ -1055,6 +1055,7 @@ class TeknisiController extends Controller
                 $mediaUrl,
                 [
                     'log_platform' => 'WA Group (Teknisi Rekap Media)',
+                    'force_failover' => true,
                     'media_kind' => $mediaKind,
                     'media_ext' => $mediaExt,
                     'media_mime' => $mediaMime,
