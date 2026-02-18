@@ -295,8 +295,8 @@ function openRekapGroupModal() {
   showGroupModal.value = true
 }
 
-function closeRekapGroupModal() {
-  if (sendingGroup.value) return
+function closeRekapGroupModal(force = false) {
+  if (sendingGroup.value && !force) return
   showGroupModal.value = false
   selectedGroupId.value = ''
   proofFile.value = null
@@ -350,8 +350,8 @@ async function sendRekapToGroup() {
       method: 'POST',
       body: JSON.stringify(payload),
     })
-    notify(data?.message || data?.msg || 'Laporan terkirim ke grup WhatsApp', 'success')
-    closeRekapGroupModal()
+    notify('Laporan selesai', 'success')
+    closeRekapGroupModal(true)
   } catch (e) {
     notify(e?.message || 'Gagal mengirim laporan', 'error')
   } finally {
