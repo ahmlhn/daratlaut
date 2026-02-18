@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\ActionLog;
 use App\Models\Installation;
+use App\Support\WaGatewaySender;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -285,6 +286,19 @@ class TeknisiController extends Controller
             'group_id' => $groupInput,
             'name' => '',
         ];
+    }
+
+    private function toAbsoluteUrl(Request $request, string $raw): string
+    {
+        $value = trim($raw);
+        if ($value === '') return '';
+
+        if (preg_match('/^https?:\/\//i', $value)) return $value;
+        if (str_starts_with($value, '//')) {
+            return $request->getScheme() . ':' . $value;
+        }
+
+        return rtrim($request->getSchemeAndHttpHost(), '/') . '/' . ltrim($value, '/');
     }
 
     /**
@@ -892,7 +906,7 @@ class TeknisiController extends Controller
             'data' => [
                 'file_name' => $fileName,
                 'file_path' => $relativePath,
-                'file_url' => '/' . $relativePath,
+                'file_url' => $this->toAbsoluteUrl($request, $relativePath),
             ],
         ]);
     }
@@ -929,23 +943,25 @@ class TeknisiController extends Controller
         }
 
         $message = trim((string) ($validated['message'] ?? ''));
-        $mediaUrl = trim((string) ($validated['media_url'] ?? ''));
+        if ($message === '') {
+            return response()->json(['success' => false, 'message' => 'Isi laporan tidak boleh kosong'], 422);
+        }
+
+        $mediaUrl = $this->toAbsoluteUrl($request, (string) ($validated['media_url'] ?? ''));
         if ($mediaUrl !== '') {
             $message .= "\n\nBukti Transfer: " . $mediaUrl;
         }
 
-        if (Schema::hasTable('noci_notif_logs')) {
-            $payload = [
-                'tenant_id' => $tenantId,
-                'platform' => 'WhatsApp',
-                'target' => $targetGroup,
-                'message' => $message,
-                'status' => 'PENDING',
-            ];
-            if (Schema::hasColumn('noci_notif_logs', 'created_at')) $payload['created_at'] = now();
-            if (Schema::hasColumn('noci_notif_logs', 'updated_at')) $payload['updated_at'] = now();
-            if (Schema::hasColumn('noci_notif_logs', 'timestamp')) $payload['timestamp'] = now();
-            DB::table('noci_notif_logs')->insert($payload);
+        $resp = app(WaGatewaySender::class)->sendGroup($tenantId, $targetGroup, $message, [
+            'log_platform' => 'WA Group (Teknisi Rekap)',
+        ]);
+        if (($resp['status'] ?? '') !== 'sent') {
+            $error = trim((string) ($resp['error'] ?? 'Gateway WA gagal mengirim pesan'));
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengirim laporan ke grup WhatsApp',
+                'error' => $error,
+            ], 422);
         }
 
         return response()->json([
