@@ -238,7 +238,15 @@ class WaGatewaySender
                 'group_id' => $target,
                 'message' => $message,
             ];
-            return $this->httpJson($groupUrl, $payload, $timeout, 'balesotomatis');
+            $endpoints = $this->balesGroupMessageEndpoints($gateway, $groupUrl);
+            $last = ['ok' => false, 'error' => 'Gagal kirim pesan group'];
+            foreach ($endpoints as $endpoint) {
+                $last = $this->httpJson($endpoint, $payload, $timeout, 'balesotomatis');
+                if (!empty($last['ok'])) {
+                    return $last;
+                }
+            }
+            return $last;
         }
 
         $endpoint = $this->balesPersonalEndpoint($gateway);
@@ -302,12 +310,35 @@ class WaGatewaySender
             'message' => $message,
         ];
 
-        $endpoint = $groupUrl;
+        $groupEndpoints = $this->balesGroupMessageEndpoints($gateway, $groupUrl, $options);
+        if (empty($groupEndpoints)) {
+            return ['ok' => false, 'error' => 'URL endpoint kirim gambar group tidak ditemukan'];
+        }
+
         if ($kind === 'image') {
-            $payload['image_url'] = $mediaUrl;
-            $payload['media_url'] = $mediaUrl;
-            $payload['send_as_caption'] = (string) $sendAsCaption;
-            return $this->httpJson($endpoint, $payload, $timeout, 'balesotomatis');
+            $last = ['ok' => false, 'error' => 'Gagal kirim gambar media'];
+
+            $payloadImage = $payload;
+            $payloadImage['image_url'] = $mediaUrl;
+            $payloadImage['send_as_caption'] = (string) $sendAsCaption;
+            foreach ($groupEndpoints as $endpoint) {
+                $last = $this->httpJson($endpoint, $payloadImage, $timeout, 'balesotomatis');
+                if (!empty($last['ok'])) {
+                    return $last;
+                }
+            }
+
+            $payloadMedia = $payload;
+            $payloadMedia['media_url'] = $mediaUrl;
+            $payloadMedia['send_as_caption'] = (string) $sendAsCaption;
+            foreach ($groupEndpoints as $endpoint) {
+                $last = $this->httpJson($endpoint, $payloadMedia, $timeout, 'balesotomatis');
+                if (!empty($last['ok'])) {
+                    return $last;
+                }
+            }
+
+            return $last;
         }
 
         $endpoints = $this->balesGroupFileEndpoints($gateway, $groupUrl, $options);
@@ -438,12 +469,7 @@ class WaGatewaySender
     private function httpJson(string $url, array $payload, int $timeoutSec, string $provider): array
     {
         try {
-            $client = Http::timeout($timeoutSec);
-            if ($provider === 'balesotomatis') {
-                $response = $client->asForm()->post($url, $payload);
-            } else {
-                $response = $client->post($url, $payload);
-            }
+            $response = Http::timeout($timeoutSec)->asJson()->post($url, $payload);
             $body = (string) $response->body();
             $httpCode = (int) $response->status();
             $trim = trim($body);
@@ -737,39 +763,6 @@ class WaGatewaySender
         return 'file';
     }
 
-    private function prefersBalesNonOfficial(array $gateway, string $groupUrl = '', string $baseUrl = ''): bool
-    {
-        $extra = is_array($gateway['extra'] ?? null) ? $gateway['extra'] : [];
-        $mode = strtolower(trim((string) ($extra['api_mode'] ?? $extra['mode'] ?? '')));
-        if (in_array($mode, ['non_official', 'nonofficial', 'non-official', 'legacy', 'v1'], true)) {
-            return true;
-        }
-        if (in_array($mode, ['official', 'public'], true)) {
-            return false;
-        }
-
-        $urls = [
-            $groupUrl,
-            $baseUrl,
-            trim((string) ($gateway['group_url'] ?? '')),
-            trim((string) ($gateway['base_url'] ?? '')),
-        ];
-        foreach ($urls as $url) {
-            $path = strtolower((string) (parse_url($url, PHP_URL_PATH) ?? ''));
-            if ($path === '') {
-                continue;
-            }
-            if (str_contains($path, '/public/v1/')) {
-                return false;
-            }
-            if (str_contains($path, '/v1/send-')) {
-                return true;
-            }
-        }
-
-        return true;
-    }
-
     private function balesPersonalEndpoint(array $gateway): string
     {
         $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
@@ -778,17 +771,14 @@ class WaGatewaySender
         }
 
         $groupUrl = trim((string) ($gateway['group_url'] ?? ''));
-        $preferNonOfficial = $this->prefersBalesNonOfficial($gateway, $groupUrl, $baseUrl);
         $seed = $groupUrl !== '' ? $groupUrl : $baseUrl;
-        $path = $preferNonOfficial ? '/v1/send-message' : '/public/v1/send_personal_message';
+        $path = '/public/v1/send_personal_message';
         $endpoint = $this->balesEndpointFromSeed($seed, $path);
         if ($endpoint !== '') {
             return $endpoint;
         }
 
-        return $preferNonOfficial
-            ? 'https://api.balesotomatis.id/v1/send-message'
-            : 'https://api.balesotomatis.id/public/v1/send_personal_message';
+        return 'https://api.balesotomatis.id/public/v1/send_personal_message';
     }
 
     private function balesGroupEndpoint(array $gateway): string
@@ -799,17 +789,29 @@ class WaGatewaySender
         }
 
         $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
-        $preferNonOfficial = $this->prefersBalesNonOfficial($gateway, $groupUrl, $baseUrl);
         $seed = $baseUrl !== '' ? $baseUrl : $groupUrl;
-        $path = $preferNonOfficial ? '/v1/send-group-message' : '/public/v1/send_group_message';
+        $path = '/public/v1/send_group_message';
         $endpoint = $this->balesEndpointFromSeed($seed, $path);
         if ($endpoint !== '') {
             return $endpoint;
         }
 
-        return $preferNonOfficial
-            ? 'https://api.balesotomatis.id/v1/send-group-message'
-            : 'https://api.balesotomatis.id/public/v1/send_group_message';
+        return 'https://api.balesotomatis.id/public/v1/send_group_message';
+    }
+
+    private function balesGroupMessageEndpoints(array $gateway, string $groupUrl, array $options = []): array
+    {
+        $endpoints = [];
+        $this->pushUniqueEndpoint($endpoints, trim((string) ($options['group_message_url'] ?? '')));
+        $this->pushUniqueEndpoint($endpoints, $groupUrl);
+
+        $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
+        $seed = $baseUrl !== '' ? $baseUrl : $groupUrl;
+
+        $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_message'));
+        $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-message'));
+
+        return $endpoints;
     }
 
     private function balesGroupFileEndpoints(array $gateway, string $groupUrl, array $options = []): array
@@ -818,6 +820,11 @@ class WaGatewaySender
 
         $this->pushUniqueEndpoint($endpoints, trim((string) ($options['group_file_url'] ?? '')));
 
+        $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
+        $seed = $baseUrl !== '' ? $baseUrl : $groupUrl;
+        $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_file'));
+        $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-file'));
+
         $replacedUnderscore = str_ireplace('send_group_message', 'send_group_file', $groupUrl);
         if ($replacedUnderscore !== $groupUrl) {
             $this->pushUniqueEndpoint($endpoints, $replacedUnderscore);
@@ -825,17 +832,6 @@ class WaGatewaySender
         $replacedHyphen = str_ireplace('send-group-message', 'send-group-file', $groupUrl);
         if ($replacedHyphen !== $groupUrl) {
             $this->pushUniqueEndpoint($endpoints, $replacedHyphen);
-        }
-
-        $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
-        $seed = $baseUrl !== '' ? $baseUrl : $groupUrl;
-        $preferNonOfficial = $this->prefersBalesNonOfficial($gateway, $groupUrl, $baseUrl);
-        if ($preferNonOfficial) {
-            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-file'));
-        }
-        $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_file'));
-        if (!$preferNonOfficial) {
-            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-file'));
         }
 
         // Fallback: beberapa deployment menerima file_url lewat endpoint send-group-message.
