@@ -176,7 +176,7 @@ class SettingsController extends Controller
         $gwData = [
             'label' => 'MPWA', 'base_url' => $baseUrl, 'group_url' => $baseUrl,
             'token' => $token, 'sender_number' => $sender, 'group_id' => $groupId,
-            'is_active' => $active, 'priority' => 2, 'failover_mode' => $failoverMode,
+            'is_active' => $active, 'priority' => 1, 'failover_mode' => $failoverMode,
             'extra_json' => $extra,
         ];
 
@@ -189,6 +189,30 @@ class SettingsController extends Controller
             DB::table('noci_wa_tenant_gateways')->insert(array_merge($gwData, [
                 'tenant_id' => $tid, 'provider_code' => 'mpwa',
             ]));
+        }
+
+        // Kebijakan single gateway: aktifkan MPWA sebagai satu-satunya provider WA tenant.
+        if (Schema::hasTable('noci_wa_tenant_gateways')) {
+            $disablePayload = [];
+            if (Schema::hasColumn('noci_wa_tenant_gateways', 'is_active')) {
+                $disablePayload['is_active'] = 0;
+            }
+            if (Schema::hasColumn('noci_wa_tenant_gateways', 'updated_at')) {
+                $disablePayload['updated_at'] = now();
+            }
+            if (!empty($disablePayload) && Schema::hasColumn('noci_wa_tenant_gateways', 'provider_code')) {
+                DB::table('noci_wa_tenant_gateways')
+                    ->where('tenant_id', $tid)
+                    ->where('provider_code', '!=', 'mpwa')
+                    ->update($disablePayload);
+            }
+
+            if (Schema::hasColumn('noci_wa_tenant_gateways', 'priority') && Schema::hasColumn('noci_wa_tenant_gateways', 'provider_code')) {
+                DB::table('noci_wa_tenant_gateways')
+                    ->where('tenant_id', $tid)
+                    ->where('provider_code', 'mpwa')
+                    ->update(['priority' => 1]);
+            }
         }
 
         return response()->json(['status' => 'success', 'message' => 'MPWA config saved']);

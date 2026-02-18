@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Schema;
 
 class WaGatewaySender
 {
+    private const PRIMARY_PROVIDER = 'mpwa';
+
     private array $hasTableCache = [];
     private array $hasColumnCache = [];
 
@@ -33,6 +35,9 @@ class WaGatewaySender
         $target = trim((string) $target);
         $message = (string) $message;
         $forceProvider = strtolower(trim((string) ($options['force_provider'] ?? '')));
+        if ($forceProvider === '') {
+            $forceProvider = self::PRIMARY_PROVIDER;
+        }
         $forceFailover = !empty($options['force_failover']);
         $platform = trim((string) ($options['log_platform'] ?? ($channel === 'group' ? 'WA Group' : 'WhatsApp')));
 
@@ -48,8 +53,8 @@ class WaGatewaySender
 
         $gateways = $this->activeGateways($tenantId, $forceProvider);
         if (empty($gateways)) {
-            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Gateway WA tidak aktif');
-            return ['status' => 'failed', 'error' => 'Gateway WA tidak aktif'];
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Gateway WA (MPWA) tidak aktif');
+            return ['status' => 'failed', 'error' => 'Gateway WA (MPWA) tidak aktif'];
         }
 
         $mode = strtolower(trim((string) ($gateways[0]['failover_mode'] ?? 'manual')));
@@ -81,6 +86,9 @@ class WaGatewaySender
         $message = (string) $message;
         $mediaUrl = trim((string) ($options['media_url'] ?? ''));
         $forceProvider = strtolower(trim((string) ($options['force_provider'] ?? '')));
+        if ($forceProvider === '') {
+            $forceProvider = self::PRIMARY_PROVIDER;
+        }
         $forceFailover = !empty($options['force_failover']);
         $platform = trim((string) ($options['log_platform'] ?? ($channel === 'group' ? 'WA Group Media' : 'WhatsApp Media')));
 
@@ -103,8 +111,8 @@ class WaGatewaySender
 
         $gateways = $this->activeGateways($tenantId, $forceProvider);
         if (empty($gateways)) {
-            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Gateway WA tidak aktif');
-            return ['status' => 'failed', 'error' => 'Gateway WA tidak aktif'];
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Gateway WA (MPWA) tidak aktif');
+            return ['status' => 'failed', 'error' => 'Gateway WA (MPWA) tidak aktif'];
         }
 
         $mode = strtolower(trim((string) ($gateways[0]['failover_mode'] ?? 'manual')));
@@ -476,6 +484,9 @@ class WaGatewaySender
     private function activeGateways(int $tenantId, string $forceProvider = ''): array
     {
         $forceProvider = strtolower(trim($forceProvider));
+        if ($forceProvider === '') {
+            $forceProvider = self::PRIMARY_PROVIDER;
+        }
         $legacy = $this->legacyConfig($tenantId);
         $rows = [];
 
@@ -532,17 +543,22 @@ class WaGatewaySender
             return $rows;
         }
 
-        if ($legacy === null) {
+        if ($legacy === null || $forceProvider !== self::PRIMARY_PROVIDER) {
+            return [];
+        }
+
+        $legacyBaseUrl = trim((string) ($legacy['base_url'] ?? ''));
+        if ($legacyBaseUrl === '' || stripos($legacyBaseUrl, 'mpwa') === false) {
             return [];
         }
 
         $fallback = [
             'id' => 0,
             'tenant_id' => $tenantId,
-            'provider_code' => 'balesotomatis',
-            'label' => 'Legacy',
-            'base_url' => trim((string) ($legacy['base_url'] ?? '')),
-            'group_url' => trim((string) ($legacy['group_url'] ?? '')),
+            'provider_code' => self::PRIMARY_PROVIDER,
+            'label' => 'MPWA Legacy',
+            'base_url' => $legacyBaseUrl,
+            'group_url' => trim((string) ($legacy['group_url'] ?? '')) !== '' ? trim((string) ($legacy['group_url'] ?? '')) : $legacyBaseUrl,
             'token' => trim((string) ($legacy['token'] ?? '')),
             'sender_number' => trim((string) ($legacy['sender_number'] ?? '')),
             'group_id' => trim((string) ($legacy['group_id'] ?? '')),
@@ -554,10 +570,6 @@ class WaGatewaySender
             'retry_delay_sec' => 0,
             'extra' => [],
         ];
-
-        if ($forceProvider !== '' && $forceProvider !== 'balesotomatis') {
-            return [];
-        }
 
         return [$fallback];
     }
@@ -577,7 +589,7 @@ class WaGatewaySender
 
         $provider = strtolower(trim((string) ($raw['provider_code'] ?? $raw['gw_code'] ?? $raw['gw_type'] ?? $raw['type'] ?? '')));
         if ($provider === '') {
-            $provider = 'balesotomatis';
+            $provider = self::PRIMARY_PROVIDER;
         }
 
         $baseUrl = trim((string) ($raw['base_url'] ?? $raw['gw_base_url'] ?? ''));

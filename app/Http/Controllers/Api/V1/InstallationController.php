@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\ActionLog;
 use App\Models\LegacyUser;
+use App\Support\WaGatewaySender;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -318,7 +319,11 @@ class InstallationController extends Controller
             }
         }
 
-        return $this->waSendFailover($tenantId, 'personal', $rawTarget, $message, $platform);
+        return app(WaGatewaySender::class)->sendPersonal($tenantId, $rawTarget, $message, [
+            'log_platform' => $platform,
+            'force_provider' => 'mpwa',
+            'force_failover' => true,
+        ]);
     }
 
     private function waSendWithRetry(array $gateway, string $type, string $target, string $message): array
@@ -563,12 +568,28 @@ class InstallationController extends Controller
 
     private function waSendGroup(int $tenantId, string $groupId, string $message, string $platform = 'WA Group'): array
     {
-        return $this->waSendFailover($tenantId, 'group', $groupId, $message, $platform);
+        return app(WaGatewaySender::class)->sendGroup($tenantId, $groupId, $message, [
+            'log_platform' => $platform,
+            'force_provider' => 'mpwa',
+            'force_failover' => true,
+        ]);
     }
 
     private function waSendBalesotomatis(int $tenantId, string $type, string $target, string $message, string $platform): array
     {
-        return $this->waSendFailover($tenantId, $type, $target, $message, $platform);
+        if ($type === 'group') {
+            return app(WaGatewaySender::class)->sendGroup($tenantId, $target, $message, [
+                'log_platform' => $platform,
+                'force_provider' => 'mpwa',
+                'force_failover' => true,
+            ]);
+        }
+
+        return app(WaGatewaySender::class)->sendPersonal($tenantId, $target, $message, [
+            'log_platform' => $platform,
+            'force_provider' => 'mpwa',
+            'force_failover' => true,
+        ]);
     }
 
     private function phoneNo62($raw): string
