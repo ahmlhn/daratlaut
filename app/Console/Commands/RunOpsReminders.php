@@ -153,9 +153,7 @@ class RunOpsReminders extends Command
                 $status = strtoupper(trim((string) ($item['status'] ?? '')));
                 $judul = $status === 'BARU' ? 'INFO PASANG BARU' : "STATUS: {$status}";
                 $btn = $status === 'BARU' ? 'AMBIL' : 'DETAIL';
-                $link = $baseUrl !== ''
-                    ? $baseUrl . '/dashboard.php?page=teknisi&id=' . (int) ($item['id'] ?? 0)
-                    : '-';
+                $link = $this->buildReminderTaskLink($baseUrl, (int) ($item['id'] ?? 0));
 
                 $msg = $judul . "\n";
                 $msg .= $today->format('d F Y') . "\n\n";
@@ -446,6 +444,64 @@ class RunOpsReminders extends Command
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function buildReminderTaskLink(string $baseUrl, int $taskId): string
+    {
+        $taskId = max(0, $taskId);
+        $baseUrl = trim($baseUrl);
+        if ($baseUrl === '') {
+            return '-';
+        }
+
+        if (!preg_match('#^https?://#i', $baseUrl)) {
+            $baseUrl = 'https://' . ltrim($baseUrl, '/');
+        }
+
+        $parts = parse_url($baseUrl);
+        if (!is_array($parts) || empty($parts['host'])) {
+            return '-';
+        }
+
+        $scheme = (string) ($parts['scheme'] ?? 'https');
+        $host = (string) ($parts['host'] ?? '');
+        $port = isset($parts['port']) ? ':' . (int) $parts['port'] : '';
+        $origin = $scheme . '://' . $host . $port;
+        $path = (string) ($parts['path'] ?? '/');
+        $path = $path !== '' ? $path : '/';
+
+        $query = [];
+        parse_str((string) ($parts['query'] ?? ''), $query);
+
+        $pathLower = strtolower($path);
+        $isLegacy = strpos($pathLower, 'dashboard.php') !== false
+            || (isset($query['page']) && strtolower((string) $query['page']) === 'teknisi');
+
+        if ($isLegacy) {
+            if (strpos($pathLower, 'dashboard.php') === false) {
+                $path = rtrim($path, '/') . '/dashboard.php';
+            }
+            $query['page'] = 'teknisi';
+            $query['id'] = $taskId;
+            unset($query['task_id']);
+
+            return $origin . $path . '?' . http_build_query($query);
+        }
+
+        if (!preg_match('#(^|/)teknisi/?$#i', $path)) {
+            $path = rtrim($path, '/');
+            $path = $path === '' ? '/teknisi' : $path . '/teknisi';
+        } else {
+            $path = rtrim($path, '/');
+            if ($path === '') {
+                $path = '/teknisi';
+            }
+        }
+
+        $query['task_id'] = $taskId;
+        unset($query['id']);
+
+        return $origin . $path . '?' . http_build_query($query);
     }
 
     private function orDash($value): string
