@@ -21,6 +21,12 @@ class WaGatewaySender
         return $this->send($tenantId, 'personal', $target, $message, $options);
     }
 
+    public function sendGroupMedia(int $tenantId, string $groupId, string $message, string $mediaUrl, array $options = []): array
+    {
+        $options['media_url'] = $mediaUrl;
+        return $this->sendMedia($tenantId, 'group', $groupId, $message, $options);
+    }
+
     private function send(int $tenantId, string $channel, string $target, string $message, array $options = []): array
     {
         $channel = $channel === 'group' ? 'group' : 'personal';
@@ -68,6 +74,61 @@ class WaGatewaySender
         return ['status' => 'failed', 'error' => $lastError];
     }
 
+    private function sendMedia(int $tenantId, string $channel, string $target, string $message, array $options = []): array
+    {
+        $channel = $channel === 'group' ? 'group' : 'personal';
+        $target = trim((string) $target);
+        $message = (string) $message;
+        $mediaUrl = trim((string) ($options['media_url'] ?? ''));
+        $forceProvider = strtolower(trim((string) ($options['force_provider'] ?? '')));
+        $forceFailover = !empty($options['force_failover']);
+        $platform = trim((string) ($options['log_platform'] ?? ($channel === 'group' ? 'WA Group Media' : 'WhatsApp Media')));
+
+        if ($channel !== 'group') {
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Media hanya didukung untuk group');
+            return ['status' => 'failed', 'error' => 'Media hanya didukung untuk group'];
+        }
+        if ($tenantId <= 0) {
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Tenant tidak valid');
+            return ['status' => 'failed', 'error' => 'Tenant tidak valid'];
+        }
+        if ($target === '') {
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Target kosong');
+            return ['status' => 'failed', 'error' => 'Target kosong'];
+        }
+        if ($mediaUrl === '') {
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Media URL kosong');
+            return ['status' => 'failed', 'error' => 'Media URL kosong'];
+        }
+
+        $gateways = $this->activeGateways($tenantId, $forceProvider);
+        if (empty($gateways)) {
+            $this->logNotif($tenantId, $platform, $target, $message, 'failed', 'Gateway WA tidak aktif');
+            return ['status' => 'failed', 'error' => 'Gateway WA tidak aktif'];
+        }
+
+        $mode = strtolower(trim((string) ($gateways[0]['failover_mode'] ?? 'manual')));
+        $mode = $mode === 'auto' ? 'auto' : 'manual';
+        $selected = ($mode === 'auto' || $forceFailover) ? $gateways : [$gateways[0]];
+
+        $lastError = 'Gagal kirim media WA';
+        foreach ($selected as $gateway) {
+            $result = $this->sendMediaWithRetry($gateway, $channel, $target, $message, $mediaUrl, $options);
+            if (!empty($result['ok'])) {
+                $this->logNotif($tenantId, $platform, $target, $message, 'sent', (string) ($result['raw'] ?? 'OK'), (string) ($gateway['provider_code'] ?? ''));
+                return [
+                    'status' => 'sent',
+                    'gateway' => $gateway,
+                    'raw' => (string) ($result['raw'] ?? ''),
+                ];
+            }
+            $lastError = (string) ($result['error'] ?? $lastError);
+        }
+
+        $this->logNotif($tenantId, $platform, $target, $message, 'failed', $lastError);
+        return ['status' => 'failed', 'error' => $lastError];
+    }
+
     private function sendWithRetry(array $gateway, string $channel, string $target, string $message): array
     {
         $retryMax = (int) ($gateway['retry_max'] ?? 2);
@@ -96,6 +157,39 @@ class WaGatewaySender
         return $last;
     }
 
+    private function sendMediaWithRetry(
+        array $gateway,
+        string $channel,
+        string $target,
+        string $message,
+        string $mediaUrl,
+        array $options = []
+    ): array {
+        $retryMax = (int) ($gateway['retry_max'] ?? 2);
+        $retryDelaySec = (int) ($gateway['retry_delay_sec'] ?? 0);
+        if ($retryMax < 0) $retryMax = 0;
+        if ($retryDelaySec < 0) $retryDelaySec = 0;
+
+        $mode = strtolower(trim((string) ($gateway['failover_mode'] ?? 'manual')));
+        if ($mode === 'auto') {
+            $retryMax = 0;
+        }
+
+        $attempts = $retryMax + 1;
+        $last = ['ok' => false, 'error' => 'Gagal kirim media WA'];
+        for ($i = 0; $i < $attempts; $i++) {
+            $last = $this->sendMediaOnce($gateway, $channel, $target, $message, $mediaUrl, $options);
+            if (!empty($last['ok'])) {
+                return $last;
+            }
+            if ($i < $attempts - 1 && $retryDelaySec > 0) {
+                usleep($retryDelaySec * 1000000);
+            }
+        }
+
+        return $last;
+    }
+
     private function sendOnce(array $gateway, string $channel, string $target, string $message): array
     {
         $provider = strtolower(trim((string) ($gateway['provider_code'] ?? '')));
@@ -104,6 +198,22 @@ class WaGatewaySender
         }
 
         return $this->sendBalesotomatis($gateway, $channel, $target, $message);
+    }
+
+    private function sendMediaOnce(
+        array $gateway,
+        string $channel,
+        string $target,
+        string $message,
+        string $mediaUrl,
+        array $options = []
+    ): array {
+        $provider = strtolower(trim((string) ($gateway['provider_code'] ?? '')));
+        if ($provider === 'mpwa') {
+            return $this->sendMpwaMedia($gateway, $channel, $target, $message, $mediaUrl, $options);
+        }
+
+        return $this->sendBalesotomatisMedia($gateway, $channel, $target, $message, $mediaUrl, $options);
     }
 
     private function sendBalesotomatis(array $gateway, string $channel, string $target, string $message): array
@@ -154,6 +264,71 @@ class WaGatewaySender
         return $this->httpJson($endpoint, $payload, $timeout, 'balesotomatis');
     }
 
+    private function sendBalesotomatisMedia(
+        array $gateway,
+        string $channel,
+        string $target,
+        string $message,
+        string $mediaUrl,
+        array $options = []
+    ): array {
+        $token = trim((string) ($gateway['token'] ?? ''));
+        $sender = trim((string) ($gateway['sender_number'] ?? ''));
+        if ($token === '' || $sender === '') {
+            return ['ok' => false, 'error' => 'Config WA tidak lengkap'];
+        }
+        if ($channel !== 'group') {
+            return ['ok' => false, 'error' => 'Media hanya didukung untuk group'];
+        }
+
+        $timeout = (int) ($gateway['timeout_sec'] ?? 10);
+        if ($timeout <= 0) $timeout = 10;
+
+        $groupUrl = trim((string) ($gateway['group_url'] ?? ''));
+        if ($groupUrl === '') {
+            return ['ok' => false, 'error' => 'Group URL kosong'];
+        }
+
+        $kind = $this->detectMediaKind($mediaUrl, $options);
+        $sendAsCaption = (int) ($options['send_as_caption'] ?? 1);
+        if ($sendAsCaption !== 0) $sendAsCaption = 1;
+
+        $payload = [
+            'api_key' => $token,
+            'number_id' => $sender,
+            'enable_typing' => '1',
+            'method_send' => 'async',
+            'group_id' => $target,
+            'message' => $message,
+        ];
+
+        $endpoint = $groupUrl;
+        if ($kind === 'image') {
+            $payload['image_url'] = $mediaUrl;
+            $payload['send_as_caption'] = (string) $sendAsCaption;
+            return $this->httpJson($endpoint, $payload, $timeout, 'balesotomatis');
+        }
+
+        $endpointFile = trim((string) ($options['group_file_url'] ?? ''));
+        if ($endpointFile === '') {
+            $replaced = str_ireplace('send_group_message', 'send_group_file', $groupUrl);
+            if ($replaced !== $groupUrl) {
+                $endpointFile = $replaced;
+            }
+        }
+        if ($endpointFile === '') {
+            $base = trim((string) ($gateway['base_url'] ?? ''));
+            $seed = $base !== '' ? $base : $groupUrl;
+            $endpointFile = $this->balesEndpointFromSeed($seed, '/public/v1/send_group_file');
+        }
+        if ($endpointFile === '') {
+            return ['ok' => false, 'error' => 'URL endpoint send_group_file tidak ditemukan'];
+        }
+
+        $payload['file_url'] = $mediaUrl;
+        return $this->httpJson($endpointFile, $payload, $timeout, 'balesotomatis');
+    }
+
     private function sendMpwa(array $gateway, string $channel, string $target, string $message): array
     {
         $token = trim((string) ($gateway['token'] ?? ''));
@@ -184,6 +359,61 @@ class WaGatewaySender
             'number' => $number,
             'message' => $message,
         ];
+
+        $extra = is_array($gateway['extra'] ?? null) ? $gateway['extra'] : [];
+        $footer = trim((string) ($extra['footer'] ?? ''));
+        if ($footer !== '') {
+            $payload['footer'] = $footer;
+        }
+
+        return $this->httpJson($endpoint, $payload, $timeout, 'mpwa');
+    }
+
+    private function sendMpwaMedia(
+        array $gateway,
+        string $channel,
+        string $target,
+        string $message,
+        string $mediaUrl,
+        array $options = []
+    ): array {
+        $token = trim((string) ($gateway['token'] ?? ''));
+        $sender = trim((string) ($gateway['sender_number'] ?? ''));
+        if ($token === '' || $sender === '') {
+            return ['ok' => false, 'error' => 'Config MPWA tidak lengkap'];
+        }
+        if ($channel !== 'group') {
+            return ['ok' => false, 'error' => 'Media hanya didukung untuk group'];
+        }
+
+        $timeout = (int) ($gateway['timeout_sec'] ?? 10);
+        if ($timeout <= 0) $timeout = 10;
+
+        $endpoint = trim((string) ($gateway['base_url'] ?? ''));
+        if ($endpoint === '') {
+            $endpoint = 'https://app.mpwa.net/send-message';
+        }
+
+        $payload = [
+            'api_key' => $token,
+            'sender' => $sender,
+            'number' => $target,
+            'message' => $message,
+            'is_group' => true,
+        ];
+
+        $kind = $this->detectMediaKind($mediaUrl, $options);
+        if ($kind === 'image') {
+            $payload['image_url'] = $mediaUrl;
+            $payload['media_url'] = $mediaUrl;
+            $payload['send_as_caption'] = 1;
+            $payload['messageType'] = 'image';
+        } else {
+            $payload['file_url'] = $mediaUrl;
+            $payload['document_url'] = $mediaUrl;
+            $payload['media_url'] = $mediaUrl;
+            $payload['messageType'] = 'document';
+        }
 
         $extra = is_array($gateway['extra'] ?? null) ? $gateway['extra'] : [];
         $footer = trim((string) ($extra['footer'] ?? ''));
@@ -431,6 +661,46 @@ class WaGatewaySender
         if (str_starts_with($clean, '62')) return $clean;
         if (str_starts_with($clean, '0')) return '62' . substr($clean, 1);
         return '62' . $clean;
+    }
+
+    private function detectMediaKind(string $mediaUrl, array $options = []): string
+    {
+        $kind = strtolower(trim((string) ($options['media_kind'] ?? '')));
+        if (in_array($kind, ['image', 'file'], true)) {
+            return $kind;
+        }
+
+        $mime = strtolower(trim((string) ($options['media_mime'] ?? '')));
+        if ($mime !== '' && str_starts_with($mime, 'image/')) {
+            return 'image';
+        }
+
+        $ext = strtolower(trim((string) ($options['media_ext'] ?? '')));
+        if ($ext === '') {
+            $path = (string) (parse_url($mediaUrl, PHP_URL_PATH) ?? '');
+            $ext = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
+        }
+
+        if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'], true)) {
+            return 'image';
+        }
+
+        return 'file';
+    }
+
+    private function balesEndpointFromSeed(string $seedUrl, string $path): string
+    {
+        $seedUrl = trim($seedUrl);
+        if ($seedUrl === '') return '';
+
+        if (preg_match('~^(https?://[^/]+)/public/v1/~i', $seedUrl, $m)) {
+            return rtrim((string) $m[1], '/') . $path;
+        }
+        if (preg_match('~^(https?://[^/]+)~i', $seedUrl, $m)) {
+            return rtrim((string) $m[1], '/') . $path;
+        }
+
+        return '';
     }
 
     private function logNotif(

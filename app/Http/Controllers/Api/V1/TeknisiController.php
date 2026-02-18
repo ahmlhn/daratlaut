@@ -977,6 +977,8 @@ class TeknisiController extends Controller
                 'data' => [
                     'file_name' => $fileName,
                     'file_path' => $relativePath,
+                    'file_ext' => $ext,
+                    'mime_type' => (string) $file->getClientMimeType(),
                     'file_url' => $this->toAbsoluteUrl($request, $relativePath),
                 ],
             ]);
@@ -1003,7 +1005,10 @@ class TeknisiController extends Controller
             'message' => 'required|string',
             'recap_date' => 'nullable|date',
             'tech_name' => 'nullable|string|max:100',
-            'media_url' => 'nullable|string|max:255',
+            'media_url' => 'nullable|string|max:2048',
+            'media_ext' => 'nullable|string|max:20',
+            'media_mime' => 'nullable|string|max:120',
+            'media_name' => 'nullable|string|max:255',
         ]);
 
         $tenantId = $this->tenantId($request);
@@ -1030,8 +1035,41 @@ class TeknisiController extends Controller
         }
 
         $mediaUrl = $this->toAbsoluteUrl($request, (string) ($validated['media_url'] ?? ''));
+        $mediaExt = strtolower(trim((string) ($validated['media_ext'] ?? '')));
+        $mediaMime = strtolower(trim((string) ($validated['media_mime'] ?? '')));
+
         if ($mediaUrl !== '') {
-            $message .= "\n\nBukti Transfer: " . $mediaUrl;
+            $mediaKind = 'file';
+            if (
+                str_starts_with($mediaMime, 'image/')
+                || in_array($mediaExt, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'], true)
+            ) {
+                $mediaKind = 'image';
+            }
+
+            $caption = 'Bukti Transfer';
+            $mediaResp = app(WaGatewaySender::class)->sendGroupMedia(
+                $tenantId,
+                $targetGroup,
+                $caption,
+                $mediaUrl,
+                [
+                    'log_platform' => 'WA Group (Teknisi Rekap Media)',
+                    'media_kind' => $mediaKind,
+                    'media_ext' => $mediaExt,
+                    'media_mime' => $mediaMime,
+                    'media_name' => trim((string) ($validated['media_name'] ?? '')),
+                ]
+            );
+
+            if (($mediaResp['status'] ?? '') !== 'sent') {
+                $error = trim((string) ($mediaResp['error'] ?? 'Gateway WA gagal mengirim media'));
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Bukti transfer (media) gagal dikirim',
+                    'error' => $error,
+                ], 422);
+            }
         }
 
         $resp = app(WaGatewaySender::class)->sendGroup($tenantId, $targetGroup, $message, [
@@ -1048,7 +1086,9 @@ class TeknisiController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Laporan terkirim ke grup WhatsApp',
+            'message' => $mediaUrl !== ''
+                ? 'Laporan dan bukti transfer terkirim ke grup WhatsApp'
+                : 'Laporan terkirim ke grup WhatsApp',
         ]);
     }
 

@@ -308,7 +308,9 @@ function onProofFileChange(event) {
 }
 
 async function uploadRekapProofIfAny() {
-  if (!proofFile.value) return ''
+  if (!proofFile.value) {
+    return { url: '', ext: '', mime: '', name: '' }
+  }
   const form = new FormData()
   form.append('file', proofFile.value)
   form.append('date', selectedDate.value)
@@ -317,7 +319,13 @@ async function uploadRekapProofIfAny() {
     method: 'POST',
     body: form,
   })
-  return String(data?.data?.file_url || data?.data?.file_path || '')
+  const item = data?.data || {}
+  return {
+    url: String(item.file_url || item.file_path || ''),
+    ext: String(item.file_ext || '').toLowerCase(),
+    mime: String(item.mime_type || '').toLowerCase(),
+    name: String(item.file_name || ''),
+  }
 }
 
 async function sendRekapToGroup() {
@@ -327,13 +335,16 @@ async function sendRekapToGroup() {
   }
   sendingGroup.value = true
   try {
-    const mediaUrl = await uploadRekapProofIfAny()
+    const proof = await uploadRekapProofIfAny()
     const payload = {
       group_id: selectedGroupId.value,
       message: rekapPreview.value,
       recap_date: selectedDate.value,
       tech_name: props.techName,
-      media_url: mediaUrl,
+      media_url: proof.url,
+      media_ext: proof.ext,
+      media_mime: proof.mime,
+      media_name: proof.name,
     }
     const data = await fetchJson(`${API_BASE}/teknisi/rekap/send`, {
       method: 'POST',
