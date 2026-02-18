@@ -62,16 +62,14 @@ class RunNightlyOps extends Command
                 continue;
             }
 
-            if (!$dryRun) {
-                $this->writeLock($tenantId, $today->format('Y-m-d'));
-            }
-
             $report = $this->buildReportData($tenantId, $today, $tomorrow);
             if (empty($report['pop_groups'])) {
                 $this->warn('Tidak ada POP dengan group_id aktif untuk tenant ini.');
             }
 
             $sentCount = 0;
+            $failedCount = 0;
+            $eligibleCount = 0;
             foreach ($report['report_data'] as $popName => $data) {
                 if (empty($data['has_activity'])) {
                     continue;
@@ -82,6 +80,7 @@ class RunNightlyOps extends Command
                     $this->line("- {$popName}: skip (group_id kosong)");
                     continue;
                 }
+                $eligibleCount++;
 
                 $message = $this->buildClosingMessage($popName, $data, $today);
                 if ($dryRun) {
@@ -92,6 +91,8 @@ class RunNightlyOps extends Command
 
                 $resp = $this->waSender->sendGroup($tenantId, $groupId, $message, [
                     'log_platform' => 'WA Group (Night)',
+                    // Nightly closing should always attempt all active gateways when one fails.
+                    'force_failover' => true,
                 ]);
 
                 if (($resp['status'] ?? '') === 'sent') {
@@ -100,6 +101,7 @@ class RunNightlyOps extends Command
                 } else {
                     $errorMsg = (string) ($resp['error'] ?? 'unknown');
                     $this->error("- {$popName}: gagal ({$errorMsg})");
+                    $failedCount++;
                 }
 
                 if ($sleepSec > 0) {
@@ -107,7 +109,15 @@ class RunNightlyOps extends Command
                 }
             }
 
-            $this->line("Total POP terkirim: {$sentCount}");
+            $this->line("Total POP: kandidat={$eligibleCount}, terkirim={$sentCount}, gagal={$failedCount}");
+
+            if (!$dryRun) {
+                if ($eligibleCount === 0 || $sentCount > 0) {
+                    $this->writeLock($tenantId, $today->format('Y-m-d'));
+                } else {
+                    $this->warn('Lock harian tidak ditulis karena semua kandidat gagal kirim. Boleh retry tanpa --force.');
+                }
+            }
 
             $cleanup = $this->cleanupFinanceAttachments($tenantId, $today, $dryRun);
             if (($cleanup['status'] ?? '') === 'success') {
