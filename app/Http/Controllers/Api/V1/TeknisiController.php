@@ -1052,6 +1052,7 @@ class TeknisiController extends Controller
                 $mediaUrl,
                 [
                     'log_platform' => 'WA Group (Teknisi Rekap Media)',
+                    'force_provider' => 'mpwa',
                     'force_failover' => true,
                     'media_kind' => $mediaKind,
                     'media_ext' => $mediaExt,
@@ -1077,6 +1078,7 @@ class TeknisiController extends Controller
 
         $resp = app(WaGatewaySender::class)->sendGroup($tenantId, $targetGroup, $message, [
             'log_platform' => 'WA Group (Teknisi Rekap)',
+            'force_provider' => 'mpwa',
         ]);
         if (($resp['status'] ?? '') !== 'sent') {
             $error = trim((string) ($resp['error'] ?? 'Gateway WA gagal mengirim pesan'));

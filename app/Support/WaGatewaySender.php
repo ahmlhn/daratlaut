@@ -392,30 +392,34 @@ class WaGatewaySender
         if ($endpoint === '') {
             $endpoint = 'https://app.mpwa.net/send-message';
         }
+        if (!str_contains($endpoint, 'send-media')) {
+            if (str_contains($endpoint, 'send-message')) {
+                $endpoint = str_replace('send-message', 'send-media', $endpoint);
+            } else {
+                $endpoint = rtrim($endpoint, '/') . '/send-media';
+            }
+        }
+
+        $kind = $this->detectMediaKind($mediaUrl, $options);
+        $mediaType = strtolower(trim((string) ($options['media_type'] ?? '')));
+        if ($mediaType === '') {
+            $mediaType = $kind === 'image' ? 'image' : 'file';
+        }
 
         $payload = [
             'api_key' => $token,
             'sender' => $sender,
             'number' => $target,
-            'message' => $message,
-            'is_group' => true,
+            'media_type' => $mediaType,
+            'caption' => $message,
+            'url' => $mediaUrl,
         ];
-
-        $kind = $this->detectMediaKind($mediaUrl, $options);
-        if ($kind === 'image') {
-            $payload['image_url'] = $mediaUrl;
-            $payload['media_url'] = $mediaUrl;
-            $payload['send_as_caption'] = 1;
-            $payload['messageType'] = 'image';
-        } else {
-            $payload['file_url'] = $mediaUrl;
-            $payload['document_url'] = $mediaUrl;
-            $payload['media_url'] = $mediaUrl;
-            $payload['messageType'] = 'document';
-        }
 
         $extra = is_array($gateway['extra'] ?? null) ? $gateway['extra'] : [];
         $footer = trim((string) ($extra['footer'] ?? ''));
+        if (!empty($options['footer'])) {
+            $footer = trim((string) $options['footer']);
+        }
         if ($footer !== '') {
             $payload['footer'] = $footer;
         }
