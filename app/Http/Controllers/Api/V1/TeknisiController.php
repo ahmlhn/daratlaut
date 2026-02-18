@@ -934,18 +934,15 @@ class TeknisiController extends Controller
                 throw new \RuntimeException('Penyimpanan file gagal di disk public');
             }
 
-            $relativePath = 'storage/' . ltrim((string) $stored, '/');
-            $publicStorage = public_path('storage');
             $storedAbs = storage_path('app/public/' . ltrim((string) $stored, '/'));
+            $relativePath = 'storage/' . ltrim((string) $stored, '/');
 
-            // If public/storage symlink is missing, mirror file to public/uploads for public access.
-            if (!is_dir($publicStorage) && !is_link($publicStorage)) {
-                $mirrorDir = public_path('uploads/rekap');
-                if ((is_dir($mirrorDir) || @mkdir($mirrorDir, 0755, true)) && is_writable($mirrorDir)) {
-                    $mirrorPath = $mirrorDir . DIRECTORY_SEPARATOR . $fileName;
-                    if (@copy($storedAbs, $mirrorPath)) {
-                        $relativePath = 'uploads/rekap/' . $fileName;
-                    }
+            // Native parity: prefer direct public path uploads/rekap for gateway media fetch.
+            $mirrorDir = public_path('uploads/rekap');
+            if (is_dir($mirrorDir) || @mkdir($mirrorDir, 0755, true)) {
+                $mirrorPath = $mirrorDir . DIRECTORY_SEPARATOR . $fileName;
+                if (@copy($storedAbs, $mirrorPath)) {
+                    $relativePath = 'uploads/rekap/' . $fileName;
                 }
             }
 
@@ -1047,7 +1044,7 @@ class TeknisiController extends Controller
                 $mediaKind = 'image';
             }
 
-            $caption = 'Bukti Transfer';
+            $caption = $message;
             $mediaResp = app(WaGatewaySender::class)->sendGroupMedia(
                 $tenantId,
                 $targetGroup,
@@ -1071,6 +1068,11 @@ class TeknisiController extends Controller
                     'error' => $error,
                 ], 422);
             }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Laporan dan bukti transfer terkirim ke grup WhatsApp',
+            ]);
         }
 
         $resp = app(WaGatewaySender::class)->sendGroup($tenantId, $targetGroup, $message, [

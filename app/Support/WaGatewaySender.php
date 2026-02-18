@@ -238,15 +238,7 @@ class WaGatewaySender
                 'group_id' => $target,
                 'message' => $message,
             ];
-            $endpoints = $this->balesGroupMessageEndpoints($gateway, $groupUrl);
-            $last = ['ok' => false, 'error' => 'Gagal kirim pesan group'];
-            foreach ($endpoints as $endpoint) {
-                $last = $this->httpJson($endpoint, $payload, $timeout, 'balesotomatis');
-                if (!empty($last['ok'])) {
-                    return $last;
-                }
-            }
-            return $last;
+            return $this->httpJson($groupUrl, $payload, $timeout, 'balesotomatis');
         }
 
         $endpoint = $this->balesPersonalEndpoint($gateway);
@@ -310,37 +302,10 @@ class WaGatewaySender
             'message' => $message,
         ];
 
-        $groupEndpoints = $this->balesGroupMessageEndpoints($gateway, $groupUrl, array_merge($options, [
-            'prefer_public' => true,
-        ]));
-        if (empty($groupEndpoints)) {
-            return ['ok' => false, 'error' => 'URL endpoint kirim gambar group tidak ditemukan'];
-        }
-
         if ($kind === 'image') {
-            $last = ['ok' => false, 'error' => 'Gagal kirim gambar media'];
-
-            $payloadImage = $payload;
-            $payloadImage['image_url'] = $mediaUrl;
-            $payloadImage['send_as_caption'] = (string) $sendAsCaption;
-            foreach ($groupEndpoints as $endpoint) {
-                $last = $this->httpJson($endpoint, $payloadImage, $timeout, 'balesotomatis');
-                if (!empty($last['ok'])) {
-                    return $last;
-                }
-            }
-
-            $payloadMedia = $payload;
-            $payloadMedia['media_url'] = $mediaUrl;
-            $payloadMedia['send_as_caption'] = (string) $sendAsCaption;
-            foreach ($groupEndpoints as $endpoint) {
-                $last = $this->httpJson($endpoint, $payloadMedia, $timeout, 'balesotomatis');
-                if (!empty($last['ok'])) {
-                    return $last;
-                }
-            }
-
-            return $last;
+            $payload['image_url'] = $mediaUrl;
+            $payload['send_as_caption'] = (string) $sendAsCaption;
+            return $this->httpJson($groupUrl, $payload, $timeout, 'balesotomatis');
         }
 
         $endpoints = $this->balesGroupFileEndpoints($gateway, $groupUrl, $options);
@@ -355,16 +320,6 @@ class WaGatewaySender
         $payloadFile['document_url'] = $mediaUrl;
         foreach ($endpoints as $endpointFile) {
             $last = $this->httpJson($endpointFile, $payloadFile, $timeout, 'balesotomatis');
-            if (!empty($last['ok'])) {
-                return $last;
-            }
-        }
-
-        // Beberapa endpoint non-official memakai media_url alih-alih file_url.
-        $payloadMedia = $payload;
-        $payloadMedia['media_url'] = $mediaUrl;
-        foreach ($endpoints as $endpointFile) {
-            $last = $this->httpJson($endpointFile, $payloadMedia, $timeout, 'balesotomatis');
             if (!empty($last['ok'])) {
                 return $last;
             }
@@ -478,49 +433,16 @@ class WaGatewaySender
             $decoded = $trim !== '' ? json_decode($trim, true) : null;
 
             if ($provider === 'balesotomatis') {
-                $ok = ($httpCode >= 200 && $httpCode < 300);
+                $ok = ($httpCode === 200);
                 if (is_array($decoded)) {
                     if (array_key_exists('status', $decoded)) {
-                        $statusVal = $decoded['status'];
-                        if (is_bool($statusVal)) {
-                            $ok = $ok && $statusVal;
-                        } else {
-                            $status = strtolower(trim((string) $statusVal));
-                            if ($status !== '') {
-                                $ok = $ok && in_array($status, ['1', 'true', 'ok', 'sent', 'success'], true);
-                            }
-                        }
-                    }
-                    if (array_key_exists('success', $decoded)) {
-                        $successVal = $decoded['success'];
-                        if (is_bool($successVal)) {
-                            $ok = $ok && $successVal;
-                        } else {
-                            $success = strtolower(trim((string) $successVal));
-                            if ($success !== '') {
-                                $ok = $ok && in_array($success, ['1', 'true', 'ok', 'sent', 'success'], true);
-                            }
-                        }
+                        $ok = $ok && (bool) $decoded['status'];
                     }
                     if (array_key_exists('code', $decoded)) {
-                        $codeRaw = trim((string) $decoded['code']);
-                        if ($codeRaw !== '') {
-                            if (is_numeric($codeRaw)) {
-                                $ok = $ok && in_array((int) $codeRaw, [1, 200, 201, 202], true);
-                            } else {
-                                $ok = $ok && in_array(strtolower($codeRaw), ['ok', 'sent', 'success'], true);
-                            }
-                        }
+                        $ok = $ok && ((int) $decoded['code'] === 200);
                     }
-                } elseif ($trim !== '' && preg_match('/"code"\s*:\s*"?([a-z0-9_-]+)"?/i', $trim, $m)) {
-                    $codeRaw = strtolower(trim((string) ($m[1] ?? '')));
-                    if ($codeRaw !== '') {
-                        if (is_numeric($codeRaw)) {
-                            $ok = $ok && in_array((int) $codeRaw, [1, 200, 201, 202], true);
-                        } else {
-                            $ok = $ok && in_array($codeRaw, ['ok', 'sent', 'success'], true);
-                        }
-                    }
+                } elseif ($trim !== '' && preg_match('/"code"\s*:\s*"?(\d{3})"?/i', $trim, $m)) {
+                    $ok = $ok && ((int) $m[1] === 200);
                 }
             } else {
                 $ok = $response->successful();
@@ -801,29 +723,6 @@ class WaGatewaySender
         return 'https://api.balesotomatis.id/public/v1/send_group_message';
     }
 
-    private function balesGroupMessageEndpoints(array $gateway, string $groupUrl, array $options = []): array
-    {
-        $endpoints = [];
-        $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
-        $seed = $baseUrl !== '' ? $baseUrl : $groupUrl;
-        $override = trim((string) ($options['group_message_url'] ?? ''));
-        $preferPublic = !empty($options['prefer_public']);
-
-        $this->pushUniqueEndpoint($endpoints, $override);
-
-        if ($preferPublic) {
-            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_message'));
-            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-message'));
-            $this->pushUniqueEndpoint($endpoints, $groupUrl);
-        } else {
-            $this->pushUniqueEndpoint($endpoints, $groupUrl);
-            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_message'));
-            $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-message'));
-        }
-
-        return $endpoints;
-    }
-
     private function balesGroupFileEndpoints(array $gateway, string $groupUrl, array $options = []): array
     {
         $endpoints = [];
@@ -833,7 +732,6 @@ class WaGatewaySender
         $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
         $seed = $baseUrl !== '' ? $baseUrl : $groupUrl;
         $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_file'));
-        $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/v1/send-group-file'));
 
         $replacedUnderscore = str_ireplace('send_group_message', 'send_group_file', $groupUrl);
         if ($replacedUnderscore !== $groupUrl) {
