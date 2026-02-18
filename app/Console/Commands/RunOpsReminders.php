@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Console\Concerns\ResolvesActiveTenants;
+use App\Support\CronExecutionLogger;
 use App\Support\WaGatewaySender;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
@@ -25,10 +26,12 @@ class RunOpsReminders extends Command
     private array $hasTableCache = [];
     private array $hasColumnCache = [];
     private WaGatewaySender $waSender;
+    private CronExecutionLogger $cronLogger;
 
     public function handle(): int
     {
         $this->waSender = app(WaGatewaySender::class);
+        $this->cronLogger = app(CronExecutionLogger::class);
 
         $tenantIds = $this->resolveActiveTenantIds((string) ($this->option('tenant') ?? ''));
         if (empty($tenantIds)) {
@@ -64,7 +67,60 @@ class RunOpsReminders extends Command
         foreach ($tenantIds as $tenantId) {
             $this->newLine();
             $this->line("=== TENANT #{$tenantId} ===");
-            $this->runForTenant($tenantId, $today, $yesterday, $baseUrl, $sleepSec, $dryRun);
+            $tenantStartedAt = now();
+            try {
+                $summary = $this->runForTenant($tenantId, $today, $yesterday, $baseUrl, $sleepSec, $dryRun);
+                $totals = $summary['totals'] ?? ['eligible' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 0];
+
+                $status = 'success';
+                $message = 'Reminder harian selesai.';
+                if ($dryRun) {
+                    $status = 'dry_run';
+                    $message = 'Simulasi reminder harian.';
+                } elseif ((int) ($totals['eligible'] ?? 0) <= 0) {
+                    $status = 'skipped';
+                    $message = 'Tidak ada kandidat reminder.';
+                } elseif ((int) ($totals['sent'] ?? 0) <= 0 && (int) ($totals['failed'] ?? 0) > 0) {
+                    $status = 'failed';
+                    $message = 'Semua kandidat reminder gagal.';
+                } elseif ((int) ($totals['failed'] ?? 0) > 0) {
+                    $status = 'partial';
+                    $message = 'Sebagian kandidat reminder gagal.';
+                }
+
+                $this->cronLogger->record(
+                    $tenantId,
+                    'ops_reminders',
+                    'ops:send-reminders',
+                    $status,
+                    $message,
+                    [
+                        'date' => $today->format('Y-m-d'),
+                        'totals' => $totals,
+                        'sections' => [
+                            'pop' => $summary['pop'] ?? [],
+                            'tech' => $summary['tech'] ?? [],
+                            'recap' => $summary['recap'] ?? [],
+                        ],
+                    ],
+                    $tenantStartedAt,
+                    now()
+                );
+            } catch (\Throwable $e) {
+                $this->error('Tenant error: ' . $e->getMessage());
+                $this->cronLogger->record(
+                    $tenantId,
+                    'ops_reminders',
+                    'ops:send-reminders',
+                    'failed',
+                    'Exception: ' . substr($e->getMessage(), 0, 180),
+                    [
+                        'date' => $today->format('Y-m-d'),
+                    ],
+                    $tenantStartedAt,
+                    now()
+                );
+            }
         }
 
         $this->newLine();
@@ -79,10 +135,15 @@ class RunOpsReminders extends Command
         string $baseUrl,
         int $sleepSec,
         bool $dryRun
-    ): void {
+    ): array {
         if (!$this->hasTable('noci_installations')) {
             $this->warn('Skip tenant: tabel noci_installations tidak ada.');
-            return;
+            return [
+                'pop' => ['eligible' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 0],
+                'tech' => ['eligible' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 0],
+                'recap' => ['eligible' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 1],
+                'totals' => ['eligible' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 1],
+            ];
         }
 
         $defaultGroupId = $this->defaultGroupId($tenantId);
@@ -93,9 +154,21 @@ class RunOpsReminders extends Command
 
         $this->line('Data POP: ' . count($popRows) . ', teknisi: ' . count($techRows));
 
-        $this->sendPopUpdates($tenantId, $popRows, $defaultGroupId, $today, $baseUrl, $sleepSec, $dryRun);
-        $this->sendTechnicianReminders($tenantId, $techRows, $today, $sleepSec, $dryRun);
-        $this->sendYesterdayRecap($tenantId, $defaultGroupId, $stats, $topTech, $yesterday, $dryRun);
+        $popSummary = $this->sendPopUpdates($tenantId, $popRows, $defaultGroupId, $today, $baseUrl, $sleepSec, $dryRun);
+        $techSummary = $this->sendTechnicianReminders($tenantId, $techRows, $today, $sleepSec, $dryRun);
+        $recapSummary = $this->sendYesterdayRecap($tenantId, $defaultGroupId, $stats, $topTech, $yesterday, $dryRun);
+
+        return [
+            'pop' => $popSummary,
+            'tech' => $techSummary,
+            'recap' => $recapSummary,
+            'totals' => [
+                'eligible' => (int) ($popSummary['eligible'] ?? 0) + (int) ($techSummary['eligible'] ?? 0) + (int) ($recapSummary['eligible'] ?? 0),
+                'sent' => (int) ($popSummary['sent'] ?? 0) + (int) ($techSummary['sent'] ?? 0) + (int) ($recapSummary['sent'] ?? 0),
+                'failed' => (int) ($popSummary['failed'] ?? 0) + (int) ($techSummary['failed'] ?? 0) + (int) ($recapSummary['failed'] ?? 0),
+                'skipped' => (int) ($popSummary['skipped'] ?? 0) + (int) ($techSummary['skipped'] ?? 0) + (int) ($recapSummary['skipped'] ?? 0),
+            ],
+        ];
     }
 
     private function sendPopUpdates(
@@ -106,11 +179,13 @@ class RunOpsReminders extends Command
         string $baseUrl,
         int $sleepSec,
         bool $dryRun
-    ): void {
+    ): array {
+        $summary = ['eligible' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 0];
+
         $this->line('--- [1] Laporan POP ---');
         if (empty($rows)) {
             $this->line('Tidak ada item POP.');
-            return;
+            return $summary;
         }
 
         $grouped = [];
@@ -135,6 +210,7 @@ class RunOpsReminders extends Command
 
             if ($targetGroup === '') {
                 $this->warn("POP {$popName}: skip (group_id kosong).");
+                $summary['skipped']++;
                 continue;
             }
 
@@ -146,7 +222,10 @@ class RunOpsReminders extends Command
             $header .= 'Waktu: ' . $today->format('d M Y H:i') . "\n";
             $header .= "==================";
 
-            $this->dispatchGroup($tenantId, $targetGroup, $header, 'WA Group (Cron)', $dryRun, "header {$popName}");
+            $summary['eligible']++;
+            $headerOk = $this->dispatchGroup($tenantId, $targetGroup, $header, 'WA Group (Cron)', $dryRun, "header {$popName}");
+            if ($headerOk) $summary['sent']++;
+            else $summary['failed']++;
             if ($sleepSec > 0) sleep($sleepSec);
 
             foreach ($items as $item) {
@@ -166,10 +245,15 @@ class RunOpsReminders extends Command
                 $msg .= 'Teknisi: ' . $this->orDash($item['technician'] ?? '') . "\n\n";
                 $msg .= $btn . ': ' . $link;
 
-                $this->dispatchGroup($tenantId, $targetGroup, $msg, 'WA Group (Cron)', $dryRun, "item {$popName}");
+                $summary['eligible']++;
+                $itemOk = $this->dispatchGroup($tenantId, $targetGroup, $msg, 'WA Group (Cron)', $dryRun, "item {$popName}");
+                if ($itemOk) $summary['sent']++;
+                else $summary['failed']++;
                 if ($sleepSec > 0) sleep($sleepSec);
             }
         }
+
+        return $summary;
     }
 
     private function sendTechnicianReminders(
@@ -178,18 +262,23 @@ class RunOpsReminders extends Command
         CarbonImmutable $today,
         int $sleepSec,
         bool $dryRun
-    ): void {
+    ): array {
+        $summary = ['eligible' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 0];
+
         $this->line('--- [2] Reminder Teknisi ---');
         if (empty($rows)) {
             $this->line('Tidak ada reminder teknisi.');
-            return;
+            return $summary;
         }
 
         $grouped = [];
         foreach ($rows as $row) {
             $phone = trim((string) ($row['phone'] ?? ''));
             $name = trim((string) ($row['name'] ?? ''));
-            if ($phone === '' || $name === '') continue;
+            if ($phone === '' || $name === '') {
+                $summary['skipped']++;
+                continue;
+            }
 
             if (!isset($grouped[$name])) {
                 $grouped[$name] = [
@@ -203,7 +292,10 @@ class RunOpsReminders extends Command
         foreach ($grouped as $name => $pack) {
             $phone = trim((string) ($pack['phone'] ?? ''));
             $list = $pack['list'] ?? [];
-            if ($phone === '' || empty($list)) continue;
+            if ($phone === '' || empty($list)) {
+                $summary['skipped']++;
+                continue;
+            }
 
             $msg = "Halo {$name}, Briefing Pagi!\nSisa tugas pending Anda:\n\n";
             foreach ($list as $idx => $item) {
@@ -228,20 +320,27 @@ class RunOpsReminders extends Command
 
             if ($dryRun) {
                 $this->line("Reminder {$name}: dry-run");
+                $summary['eligible']++;
+                $summary['sent']++;
             } else {
+                $summary['eligible']++;
                 $resp = $this->waSender->sendPersonal($tenantId, $phone, $msg, [
                     'log_platform' => 'WA Personal (Cron)',
                 ]);
                 if (($resp['status'] ?? '') === 'sent') {
                     $this->line("Reminder {$name}: terkirim");
+                    $summary['sent']++;
                 } else {
                     $errorMsg = (string) ($resp['error'] ?? 'unknown');
                     $this->error("Reminder {$name}: gagal ({$errorMsg})");
+                    $summary['failed']++;
                 }
             }
 
             if ($sleepSec > 0) sleep($sleepSec);
         }
+
+        return $summary;
     }
 
     private function sendYesterdayRecap(
@@ -251,11 +350,14 @@ class RunOpsReminders extends Command
         array $topTech,
         CarbonImmutable $yesterday,
         bool $dryRun
-    ): void {
+    ): array {
+        $summary = ['eligible' => 0, 'sent' => 0, 'failed' => 0, 'skipped' => 0];
+
         $this->line('--- [3] Rekap Kinerja ---');
         if ($defaultGroupId === '') {
             $this->warn('Skip rekap: group default belum diset.');
-            return;
+            $summary['skipped']++;
+            return $summary;
         }
 
         $topList = "Belum ada data.";
@@ -276,7 +378,12 @@ class RunOpsReminders extends Command
         $msg .= 'Sisa Backlog: ' . (int) ($stats['backlog'] ?? 0) . "\n\n";
         $msg .= "Top Teknisi:\n{$topList}";
 
-        $this->dispatchGroup($tenantId, $defaultGroupId, $msg, 'WA Group (Cron)', $dryRun, 'rekap');
+        $summary['eligible']++;
+        $ok = $this->dispatchGroup($tenantId, $defaultGroupId, $msg, 'WA Group (Cron)', $dryRun, 'rekap');
+        if ($ok) $summary['sent']++;
+        else $summary['failed']++;
+
+        return $summary;
     }
 
     private function dispatchGroup(
@@ -286,10 +393,10 @@ class RunOpsReminders extends Command
         string $platform,
         bool $dryRun,
         string $label
-    ): void {
+    ): bool {
         if ($dryRun) {
             $this->line("Kirim {$label}: dry-run");
-            return;
+            return true;
         }
 
         $resp = $this->waSender->sendGroup($tenantId, $groupId, $message, [
@@ -297,9 +404,11 @@ class RunOpsReminders extends Command
         ]);
         if (($resp['status'] ?? '') === 'sent') {
             $this->line("Kirim {$label}: terkirim");
+            return true;
         } else {
             $errorMsg = (string) ($resp['error'] ?? 'unknown');
             $this->error("Kirim {$label}: gagal ({$errorMsg})");
+            return false;
         }
     }
 

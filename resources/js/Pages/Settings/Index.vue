@@ -61,6 +61,22 @@ const cronSettings = reactive({
     cron_line_cpanel: '',
     windows_task_command: '',
 });
+const cronLogs = ref([]);
+const cronLogsLoading = ref(false);
+const cronLogStats = reactive({
+    total: 0,
+    success: 0,
+    partial: 0,
+    failed: 0,
+    skipped: 0,
+    dry_run: 0,
+});
+const cronLogFilter = reactive({
+    job: '',
+    status: '',
+    range: '7d',
+    limit: 50,
+});
 
 const publicUrl = ref('');
 
@@ -267,6 +283,19 @@ async function loadAll(opts = {}) {
                 windows_task_command: data.cron_settings.windows_task_command || '',
             });
         }
+        if (Array.isArray(data.cron_logs)) {
+            cronLogs.value = data.cron_logs;
+        }
+        if (data.cron_log_stats && typeof data.cron_log_stats === 'object') {
+            Object.assign(cronLogStats, {
+                total: Number(data.cron_log_stats.total || 0),
+                success: Number(data.cron_log_stats.success || 0),
+                partial: Number(data.cron_log_stats.partial || 0),
+                failed: Number(data.cron_log_stats.failed || 0),
+                skipped: Number(data.cron_log_stats.skipped || 0),
+                dry_run: Number(data.cron_log_stats.dry_run || 0),
+            });
+        }
         // Public URL
         publicUrl.value = data.public_url || '';
         if (Array.isArray(data.redirect_links)) {
@@ -281,6 +310,7 @@ async function loadAll(opts = {}) {
     }
     // Load logs separately
     loadLogs();
+    loadCronLogs();
     loadInstallVars();
     loadRedirectLinks();
     loadRedirectEvents();
@@ -294,6 +324,35 @@ async function loadLogs() {
     const data = await api(`/notif-logs?${params}`);
     notifLogs.value = data.data || [];
     if (data.stats) notifStats.value = data.stats;
+}
+
+async function loadCronLogs() {
+    cronLogsLoading.value = true;
+    try {
+        const params = new URLSearchParams();
+        if (cronLogFilter.job) params.set('job', cronLogFilter.job);
+        if (cronLogFilter.status) params.set('status', cronLogFilter.status);
+        if (cronLogFilter.range) params.set('range', cronLogFilter.range);
+        if (cronLogFilter.limit) params.set('limit', String(cronLogFilter.limit));
+
+        const data = await api(`/cron/logs?${params.toString()}`);
+        cronLogs.value = Array.isArray(data.data) ? data.data : [];
+
+        Object.assign(cronLogStats, {
+            total: Number(data.stats?.total || 0),
+            success: Number(data.stats?.success || 0),
+            partial: Number(data.stats?.partial || 0),
+            failed: Number(data.stats?.failed || 0),
+            skipped: Number(data.stats?.skipped || 0),
+            dry_run: Number(data.stats?.dry_run || 0),
+        });
+    } catch (e) {
+        console.error('Load cron logs error:', e);
+        cronLogs.value = [];
+        Object.assign(cronLogStats, { total: 0, success: 0, partial: 0, failed: 0, skipped: 0, dry_run: 0 });
+    } finally {
+        cronLogsLoading.value = false;
+    }
 }
 
 async function loadInstallVars() {
@@ -697,6 +756,28 @@ function redirectEventClass(type) {
 // ===== Helpers =====
 function fmtDate(d) { return d ? new Date(d).toLocaleString('id-ID') : '-'; }
 function fmtNum(n) { return new Intl.NumberFormat('id-ID').format(n || 0); }
+function fmtDurationMs(ms) {
+    const n = Number(ms || 0);
+    if (!Number.isFinite(n) || n <= 0) return '-';
+    if (n < 1000) return `${Math.round(n)} ms`;
+    return `${(n / 1000).toFixed(2)} s`;
+}
+function cronJobLabel(jobKey) {
+    const key = String(jobKey || '').toLowerCase();
+    if (key === 'nightly_closing') return 'Closing Malam';
+    if (key === 'ops_reminders') return 'Reminder Pagi';
+    if (key === 'olt_daily_sync') return 'Sinkron OLT';
+    return key || '-';
+}
+function cronStatusClass(status) {
+    const s = String(status || '').toLowerCase();
+    if (s === 'success') return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300';
+    if (s === 'partial') return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300';
+    if (s === 'failed') return 'bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300';
+    if (s === 'dry_run') return 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300';
+    if (s === 'skipped') return 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300';
+    return 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300';
+}
 function statusColor(s) {
     s = (s || '').toLowerCase();
     if (['success', 'sent', 'ok'].includes(s)) return 'bg-green-100 text-green-800 dark:bg-green-500/20 dark:text-green-400';
@@ -1267,6 +1348,126 @@ onMounted(() => {
                                             {{ saving ? 'Menyimpan...' : 'Simpan Pengaturan Cron' }}
                                         </button>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card p-0 overflow-hidden rounded-2xl">
+                            <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                                <h3 class="text-base sm:text-lg font-bold tracking-tight text-gray-900 dark:text-white">Log Eksekusi Cron</h3>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Riwayat job cron tenant ini (closing, reminder, sinkron OLT).</p>
+                            </div>
+
+                            <div class="px-6 py-6 sm:px-8 space-y-6">
+                                <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+                                    <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-3 text-center">
+                                        <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Total</p>
+                                        <p class="text-lg font-black text-gray-900 dark:text-white">{{ fmtNum(cronLogStats.total) }}</p>
+                                    </div>
+                                    <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-3 text-center">
+                                        <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Success</p>
+                                        <p class="text-lg font-black text-emerald-600 dark:text-emerald-300">{{ fmtNum(cronLogStats.success) }}</p>
+                                    </div>
+                                    <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-3 text-center">
+                                        <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Partial</p>
+                                        <p class="text-lg font-black text-yellow-600 dark:text-yellow-300">{{ fmtNum(cronLogStats.partial) }}</p>
+                                    </div>
+                                    <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-3 text-center">
+                                        <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Failed</p>
+                                        <p class="text-lg font-black text-red-600 dark:text-red-300">{{ fmtNum(cronLogStats.failed) }}</p>
+                                    </div>
+                                    <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-3 text-center">
+                                        <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Skipped</p>
+                                        <p class="text-lg font-black text-gray-700 dark:text-gray-200">{{ fmtNum(cronLogStats.skipped) }}</p>
+                                    </div>
+                                    <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-3 text-center">
+                                        <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Dry Run</p>
+                                        <p class="text-lg font-black text-sky-600 dark:text-sky-300">{{ fmtNum(cronLogStats.dry_run) }}</p>
+                                    </div>
+                                </div>
+
+                                <div class="flex flex-col lg:flex-row lg:items-end gap-3">
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 flex-1">
+                                        <select v-model="cronLogFilter.job" @change="loadCronLogs" class="input text-sm !rounded-xl">
+                                            <option value="">Semua Job</option>
+                                            <option value="nightly_closing">Closing Malam</option>
+                                            <option value="ops_reminders">Reminder Pagi</option>
+                                            <option value="olt_daily_sync">Sinkron OLT</option>
+                                        </select>
+                                        <select v-model="cronLogFilter.status" @change="loadCronLogs" class="input text-sm !rounded-xl">
+                                            <option value="">Semua Status</option>
+                                            <option value="success">success</option>
+                                            <option value="partial">partial</option>
+                                            <option value="failed">failed</option>
+                                            <option value="skipped">skipped</option>
+                                            <option value="dry_run">dry_run</option>
+                                        </select>
+                                        <select v-model="cronLogFilter.range" @change="loadCronLogs" class="input text-sm !rounded-xl">
+                                            <option value="">All Time</option>
+                                            <option value="24h">24 Jam</option>
+                                            <option value="7d">7 Hari</option>
+                                            <option value="30d">30 Hari</option>
+                                        </select>
+                                        <select v-model.number="cronLogFilter.limit" @change="loadCronLogs" class="input text-sm !rounded-xl">
+                                            <option :value="25">25</option>
+                                            <option :value="50">50</option>
+                                            <option :value="100">100</option>
+                                            <option :value="200">200</option>
+                                        </select>
+                                    </div>
+                                    <button @click="loadCronLogs" :disabled="cronLogsLoading" class="btn btn-secondary lg:shrink-0">
+                                        {{ cronLogsLoading ? 'Loading...' : 'Refresh Log' }}
+                                    </button>
+                                </div>
+
+                                <div class="overflow-x-auto max-h-[28rem] rounded-2xl border border-gray-200/70 dark:border-white/10">
+                                    <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+                                        <thead class="bg-white/70 dark:bg-dark-950/60 sticky top-0">
+                                            <tr class="text-[11px] uppercase font-black tracking-widest text-gray-500 dark:text-gray-400">
+                                                <th class="px-4 py-3 text-left">Waktu</th>
+                                                <th class="px-4 py-3 text-left">Job</th>
+                                                <th class="px-4 py-3 text-left">Status</th>
+                                                <th class="px-4 py-3 text-left">Durasi</th>
+                                                <th class="px-4 py-3 text-left">Ringkasan</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="bg-white dark:bg-dark-950 divide-y divide-gray-200 dark:divide-white/10">
+                                            <tr v-for="log in cronLogs" :key="log.id" class="hover:bg-gray-50/80 dark:hover:bg-white/5">
+                                                <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                                                    {{ fmtDate(log.started_at || log.created_at) }}
+                                                </td>
+                                                <td class="px-4 py-3 text-xs text-gray-800 dark:text-gray-200">
+                                                    <div class="font-semibold">{{ cronJobLabel(log.job_key) }}</div>
+                                                    <div class="text-[11px] text-gray-500 dark:text-gray-500 font-mono">{{ log.command || '-' }}</div>
+                                                </td>
+                                                <td class="px-4 py-3 text-xs">
+                                                    <span :class="[cronStatusClass(log.status), 'px-2 py-1 rounded-full font-bold uppercase']">{{ log.status || '-' }}</span>
+                                                </td>
+                                                <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                                                    {{ fmtDurationMs(log.duration_ms) }}
+                                                </td>
+                                                <td class="px-4 py-3 text-xs text-gray-700 dark:text-gray-300">
+                                                    <div>{{ log.message || '-' }}</div>
+                                                    <div v-if="log.meta && log.meta.totals" class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                                                        kandidat={{ log.meta.totals.eligible || 0 }},
+                                                        terkirim={{ log.meta.totals.sent || 0 }},
+                                                        gagal={{ log.meta.totals.failed || 0 }}
+                                                    </div>
+                                                    <div v-else-if="log.meta && (log.meta.eligible_count !== undefined || log.meta.sent_count !== undefined || log.meta.failed_count !== undefined)" class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                                                        kandidat={{ log.meta.eligible_count || 0 }},
+                                                        terkirim={{ log.meta.sent_count || 0 }},
+                                                        gagal={{ log.meta.failed_count || 0 }}
+                                                    </div>
+                                                    <div v-else-if="log.meta && log.meta.job_count" class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                                                        job_count={{ log.meta.job_count }}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="cronLogs.length === 0">
+                                                <td colspan="5" class="px-4 py-12 text-center text-gray-500 dark:text-gray-400">Belum ada log cron untuk tenant ini.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
                         </div>

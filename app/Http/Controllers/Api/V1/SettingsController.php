@@ -63,6 +63,8 @@ class SettingsController extends Controller
             'fee_settings' => $feeSettings,
             'maps_config' => $mapsConfig,
             'cron_settings' => $cronSettings,
+            'cron_logs' => $this->getCronLogsData($tid),
+            'cron_log_stats' => $this->getCronLogStatsData($tid, '7d'),
             'public_url' => $publicUrl,
             'gateway_status' => $gatewayStatus,
             'redirect_links' => $redirectLinks,
@@ -555,6 +557,141 @@ class SettingsController extends Controller
             'status' => 'success',
             'message' => 'Pengaturan cron berhasil disimpan.',
             'data' => $this->getCronSettingsData($tid),
+        ]);
+    }
+
+    private function applyCronLogRangeFilter($query, string $range): void
+    {
+        $range = strtolower(trim($range));
+        if ($range === '') {
+            return;
+        }
+
+        $column = Schema::hasColumn('noci_cron_logs', 'started_at') ? 'started_at' : 'created_at';
+        if ($range === '24h') {
+            $query->where($column, '>=', now()->subDay());
+        } elseif ($range === '7d') {
+            $query->where($column, '>=', now()->subDays(7));
+        } elseif ($range === '30d') {
+            $query->where($column, '>=', now()->subDays(30));
+        }
+    }
+
+    private function getCronLogsData(int $tid, array $filters = []): array
+    {
+        if (!Schema::hasTable('noci_cron_logs')) {
+            return [];
+        }
+
+        $job = strtolower(trim((string) ($filters['job'] ?? '')));
+        $status = strtolower(trim((string) ($filters['status'] ?? '')));
+        $range = strtolower(trim((string) ($filters['range'] ?? '7d')));
+        $limit = (int) ($filters['limit'] ?? 50);
+        if ($limit < 1) $limit = 1;
+        if ($limit > 200) $limit = 200;
+
+        $validJobs = ['nightly_closing', 'ops_reminders', 'olt_daily_sync'];
+        $validStatuses = ['success', 'partial', 'failed', 'skipped', 'dry_run'];
+
+        $query = DB::table('noci_cron_logs')->where('tenant_id', $tid);
+        if (in_array($job, $validJobs, true)) {
+            $query->where('job_key', $job);
+        }
+        if (in_array($status, $validStatuses, true)) {
+            $query->where('status', $status);
+        }
+
+        $this->applyCronLogRangeFilter($query, $range);
+
+        return $query
+            ->orderByDesc('started_at')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get()
+            ->map(function ($row) {
+                $meta = [];
+                if (!empty($row->meta_json)) {
+                    $decoded = json_decode((string) $row->meta_json, true);
+                    if (is_array($decoded)) {
+                        $meta = $decoded;
+                    }
+                }
+
+                return [
+                    'id' => (int) ($row->id ?? 0),
+                    'tenant_id' => (int) ($row->tenant_id ?? 0),
+                    'job_key' => (string) ($row->job_key ?? ''),
+                    'command' => (string) ($row->command ?? ''),
+                    'status' => strtolower(trim((string) ($row->status ?? ''))),
+                    'message' => (string) ($row->message ?? ''),
+                    'duration_ms' => isset($row->duration_ms) ? (int) $row->duration_ms : null,
+                    'started_at' => $row->started_at ?? null,
+                    'finished_at' => $row->finished_at ?? null,
+                    'created_at' => $row->created_at ?? null,
+                    'meta' => $meta,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function getCronLogStatsData(int $tid, string $range = '7d', string $job = ''): array
+    {
+        $stats = [
+            'total' => 0,
+            'success' => 0,
+            'partial' => 0,
+            'failed' => 0,
+            'skipped' => 0,
+            'dry_run' => 0,
+        ];
+
+        if (!Schema::hasTable('noci_cron_logs')) {
+            return $stats;
+        }
+
+        $job = strtolower(trim($job));
+        $validJobs = ['nightly_closing', 'ops_reminders', 'olt_daily_sync'];
+
+        $query = DB::table('noci_cron_logs')->where('tenant_id', $tid);
+        if (in_array($job, $validJobs, true)) {
+            $query->where('job_key', $job);
+        }
+
+        $this->applyCronLogRangeFilter($query, $range);
+
+        $rows = $query
+            ->selectRaw('status, COUNT(*) as total')
+            ->groupBy('status')
+            ->get();
+
+        foreach ($rows as $row) {
+            $key = strtolower(trim((string) ($row->status ?? '')));
+            if (array_key_exists($key, $stats)) {
+                $stats[$key] = (int) ($row->total ?? 0);
+            }
+        }
+
+        $stats['total'] = $stats['success'] + $stats['partial'] + $stats['failed'] + $stats['skipped'] + $stats['dry_run'];
+        return $stats;
+    }
+
+    public function getCronLogs(Request $request): JsonResponse
+    {
+        $tid = $this->tenantId($request);
+        $job = strtolower(trim((string) $request->query('job', '')));
+        $status = strtolower(trim((string) $request->query('status', '')));
+        $range = strtolower(trim((string) $request->query('range', '7d')));
+        $limit = (int) $request->query('limit', 50);
+
+        return response()->json([
+            'data' => $this->getCronLogsData($tid, [
+                'job' => $job,
+                'status' => $status,
+                'range' => $range,
+                'limit' => $limit,
+            ]),
+            'stats' => $this->getCronLogStatsData($tid, $range, $job),
         ]);
     }
 

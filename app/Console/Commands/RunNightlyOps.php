@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Console\Concerns\ResolvesActiveTenants;
+use App\Support\CronExecutionLogger;
 use App\Support\WaGatewaySender;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
@@ -26,10 +27,12 @@ class RunNightlyOps extends Command
     private array $hasTableCache = [];
     private array $hasColumnCache = [];
     private WaGatewaySender $waSender;
+    private CronExecutionLogger $cronLogger;
 
     public function handle(): int
     {
         $this->waSender = app(WaGatewaySender::class);
+        $this->cronLogger = app(CronExecutionLogger::class);
 
         $tenantIds = $this->resolveActiveTenantIds((string) ($this->option('tenant') ?? ''));
         if (empty($tenantIds)) {
@@ -56,80 +59,153 @@ class RunNightlyOps extends Command
         foreach ($tenantIds as $tenantId) {
             $this->newLine();
             $this->line("=== TENANT #{$tenantId} ===");
+            $tenantStartedAt = now();
 
-            if (!$force && $this->alreadyLockedToday($tenantId, $today->format('Y-m-d'))) {
-                $this->warn('Skip: lock harian sudah ada (gunakan --force untuk kirim ulang).');
-                continue;
-            }
-
-            $report = $this->buildReportData($tenantId, $today, $tomorrow);
-            if (empty($report['pop_groups'])) {
-                $this->warn('Tidak ada POP dengan group_id aktif untuk tenant ini.');
-            }
-
-            $sentCount = 0;
-            $failedCount = 0;
-            $eligibleCount = 0;
-            foreach ($report['report_data'] as $popName => $data) {
-                if (empty($data['has_activity'])) {
+            try {
+                if (!$force && $this->alreadyLockedToday($tenantId, $today->format('Y-m-d'))) {
+                    $message = 'Skip: lock harian sudah ada.';
+                    $this->warn($message . ' (gunakan --force untuk kirim ulang).');
+                    $this->cronLogger->record(
+                        $tenantId,
+                        'nightly_closing',
+                        'ops:nightly-closing',
+                        'skipped',
+                        $message,
+                        [
+                            'date' => $today->format('Y-m-d'),
+                            'reason' => 'lock_exists',
+                        ],
+                        $tenantStartedAt,
+                        now()
+                    );
                     continue;
                 }
 
-                $groupId = trim((string) ($report['pop_groups'][$popName] ?? ''));
-                if ($groupId === '') {
-                    $this->line("- {$popName}: skip (group_id kosong)");
-                    continue;
+                $report = $this->buildReportData($tenantId, $today, $tomorrow);
+                if (empty($report['pop_groups'])) {
+                    $this->warn('Tidak ada POP dengan group_id aktif untuk tenant ini.');
                 }
-                $eligibleCount++;
 
-                $message = $this->buildClosingMessage($popName, $data, $today);
+                $sentCount = 0;
+                $failedCount = 0;
+                $eligibleCount = 0;
+                foreach ($report['report_data'] as $popName => $data) {
+                    if (empty($data['has_activity'])) {
+                        continue;
+                    }
+
+                    $groupId = trim((string) ($report['pop_groups'][$popName] ?? ''));
+                    if ($groupId === '') {
+                        $this->line("- {$popName}: skip (group_id kosong)");
+                        continue;
+                    }
+                    $eligibleCount++;
+
+                    $message = $this->buildClosingMessage($popName, $data, $today);
+                    if ($dryRun) {
+                        $this->line("- {$popName}: dry-run, pesan siap dikirim ke {$groupId}");
+                        $sentCount++;
+                        continue;
+                    }
+
+                    $resp = $this->waSender->sendGroup($tenantId, $groupId, $message, [
+                        'log_platform' => 'WA Group (Night)',
+                        // Nightly closing should always attempt all active gateways when one fails.
+                        'force_failover' => true,
+                    ]);
+
+                    if (($resp['status'] ?? '') === 'sent') {
+                        $this->line("- {$popName}: terkirim");
+                        $sentCount++;
+                    } else {
+                        $errorMsg = (string) ($resp['error'] ?? 'unknown');
+                        $this->error("- {$popName}: gagal ({$errorMsg})");
+                        $failedCount++;
+                    }
+
+                    if ($sleepSec > 0) {
+                        sleep($sleepSec);
+                    }
+                }
+
+                $this->line("Total POP: kandidat={$eligibleCount}, terkirim={$sentCount}, gagal={$failedCount}");
+
+                $lockWritten = false;
+                if (!$dryRun) {
+                    if ($eligibleCount === 0 || $sentCount > 0) {
+                        $this->writeLock($tenantId, $today->format('Y-m-d'));
+                        $lockWritten = true;
+                    } else {
+                        $this->warn('Lock harian tidak ditulis karena semua kandidat gagal kirim. Boleh retry tanpa --force.');
+                    }
+                }
+
+                $cleanup = $this->cleanupFinanceAttachments($tenantId, $today, $dryRun);
+                if (($cleanup['status'] ?? '') === 'success') {
+                    $this->line(
+                        'Cleanup: retention=' . $cleanup['retention_days'] . ' hari, '
+                        . 'rows=' . $cleanup['deleted_rows'] . ', '
+                        . 'files=' . $cleanup['deleted_files'] . ', '
+                        . 'missing=' . $cleanup['missing_files'] . ', '
+                        . 'failed=' . $cleanup['failed_files']
+                    );
+                } else {
+                    $this->warn('Cleanup skip: ' . ($cleanup['message'] ?? 'N/A'));
+                }
+
+                $logStatus = 'success';
+                $logMessage = 'Closing malam selesai.';
                 if ($dryRun) {
-                    $this->line("- {$popName}: dry-run, pesan siap dikirim ke {$groupId}");
-                    $sentCount++;
-                    continue;
+                    $logStatus = 'dry_run';
+                    $logMessage = 'Simulasi closing malam.';
+                } elseif ($eligibleCount <= 0) {
+                    $logStatus = 'skipped';
+                    $logMessage = 'Tidak ada kandidat POP beraktivitas.';
+                } elseif ($sentCount <= 0 && $failedCount > 0) {
+                    $logStatus = 'failed';
+                    $logMessage = 'Semua kandidat gagal dikirim.';
+                } elseif ($failedCount > 0) {
+                    $logStatus = 'partial';
+                    $logMessage = 'Sebagian kandidat gagal dikirim.';
                 }
 
-                $resp = $this->waSender->sendGroup($tenantId, $groupId, $message, [
-                    'log_platform' => 'WA Group (Night)',
-                    // Nightly closing should always attempt all active gateways when one fails.
-                    'force_failover' => true,
-                ]);
-
-                if (($resp['status'] ?? '') === 'sent') {
-                    $this->line("- {$popName}: terkirim");
-                    $sentCount++;
-                } else {
-                    $errorMsg = (string) ($resp['error'] ?? 'unknown');
-                    $this->error("- {$popName}: gagal ({$errorMsg})");
-                    $failedCount++;
-                }
-
-                if ($sleepSec > 0) {
-                    sleep($sleepSec);
-                }
-            }
-
-            $this->line("Total POP: kandidat={$eligibleCount}, terkirim={$sentCount}, gagal={$failedCount}");
-
-            if (!$dryRun) {
-                if ($eligibleCount === 0 || $sentCount > 0) {
-                    $this->writeLock($tenantId, $today->format('Y-m-d'));
-                } else {
-                    $this->warn('Lock harian tidak ditulis karena semua kandidat gagal kirim. Boleh retry tanpa --force.');
-                }
-            }
-
-            $cleanup = $this->cleanupFinanceAttachments($tenantId, $today, $dryRun);
-            if (($cleanup['status'] ?? '') === 'success') {
-                $this->line(
-                    'Cleanup: retention=' . $cleanup['retention_days'] . ' hari, '
-                    . 'rows=' . $cleanup['deleted_rows'] . ', '
-                    . 'files=' . $cleanup['deleted_files'] . ', '
-                    . 'missing=' . $cleanup['missing_files'] . ', '
-                    . 'failed=' . $cleanup['failed_files']
+                $this->cronLogger->record(
+                    $tenantId,
+                    'nightly_closing',
+                    'ops:nightly-closing',
+                    $logStatus,
+                    $logMessage,
+                    [
+                        'date' => $today->format('Y-m-d'),
+                        'eligible_count' => $eligibleCount,
+                        'sent_count' => $sentCount,
+                        'failed_count' => $failedCount,
+                        'lock_written' => $lockWritten,
+                        'cleanup' => [
+                            'status' => $cleanup['status'] ?? '',
+                            'deleted_rows' => (int) ($cleanup['deleted_rows'] ?? 0),
+                            'deleted_files' => (int) ($cleanup['deleted_files'] ?? 0),
+                            'missing_files' => (int) ($cleanup['missing_files'] ?? 0),
+                            'failed_files' => (int) ($cleanup['failed_files'] ?? 0),
+                        ],
+                    ],
+                    $tenantStartedAt,
+                    now()
                 );
-            } else {
-                $this->warn('Cleanup skip: ' . ($cleanup['message'] ?? 'N/A'));
+            } catch (\Throwable $e) {
+                $this->error('Tenant error: ' . $e->getMessage());
+                $this->cronLogger->record(
+                    $tenantId,
+                    'nightly_closing',
+                    'ops:nightly-closing',
+                    'failed',
+                    'Exception: ' . substr($e->getMessage(), 0, 180),
+                    [
+                        'date' => $today->format('Y-m-d'),
+                    ],
+                    $tenantStartedAt,
+                    now()
+                );
             }
         }
 
