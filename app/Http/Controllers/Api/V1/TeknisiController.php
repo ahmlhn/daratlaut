@@ -907,7 +907,11 @@ class TeknisiController extends Controller
                 'tech_name' => 'nullable|string|max:100',
             ]);
 
-            $this->ensureRekapAttachmentsTable();
+            try {
+                $this->ensureRekapAttachmentsTable();
+            } catch (\Throwable) {
+                // Do not block upload if DB schema auto-healing is not permitted in production.
+            }
 
             $file = $request->file('file');
             if (!$file) {
@@ -926,27 +930,40 @@ class TeknisiController extends Controller
             $fileName = 'rekap_bukti_' . ($safeTech ?: 'teknisi') . '_' . ($dateKey ?: date('Ymd')) . '_' . date('His') . '_' . random_int(1000, 9999) . '.' . $ext;
 
             $targetDir = public_path('uploads/rekap');
-            if (!is_dir($targetDir) && !@mkdir($targetDir, 0755, true) && !is_dir($targetDir)) {
-                throw new \RuntimeException('Folder upload bukti transfer tidak bisa dibuat');
+            $relativeBase = 'uploads/rekap';
+            $publicReady = (is_dir($targetDir) || @mkdir($targetDir, 0755, true)) && is_writable($targetDir);
+            if (!$publicReady) {
+                // Fallback ke storage/public yang biasanya writable di shared hosting.
+                $targetDir = storage_path('app/public/rekap');
+                $relativeBase = 'storage/rekap';
+                if (!is_dir($targetDir) && !@mkdir($targetDir, 0755, true) && !is_dir($targetDir)) {
+                    throw new \RuntimeException('Folder upload bukti transfer tidak bisa dibuat');
+                }
             }
 
             $file->move($targetDir, $fileName);
-            $relativePath = 'uploads/rekap/' . $fileName;
+            $relativePath = $relativeBase . '/' . $fileName;
 
-            $payload = [];
-            if (Schema::hasColumn('noci_rekap_attachments', 'tenant_id')) $payload['tenant_id'] = $tenantId;
-            if (Schema::hasColumn('noci_rekap_attachments', 'rekap_date')) $payload['rekap_date'] = $rekapDate;
-            if (Schema::hasColumn('noci_rekap_attachments', 'technician_name')) $payload['technician_name'] = $techName;
-            if (Schema::hasColumn('noci_rekap_attachments', 'file_name')) $payload['file_name'] = $fileName;
-            if (Schema::hasColumn('noci_rekap_attachments', 'file_path')) $payload['file_path'] = $relativePath;
-            if (Schema::hasColumn('noci_rekap_attachments', 'file_ext')) $payload['file_ext'] = $ext;
-            if (Schema::hasColumn('noci_rekap_attachments', 'mime_type')) $payload['mime_type'] = (string) $file->getClientMimeType();
-            if (Schema::hasColumn('noci_rekap_attachments', 'file_size')) $payload['file_size'] = (int) $file->getSize();
-            if (Schema::hasColumn('noci_rekap_attachments', 'created_by')) $payload['created_by'] = (string) ($request->user()?->name ?? '');
-            if (Schema::hasColumn('noci_rekap_attachments', 'created_at')) $payload['created_at'] = now();
+            try {
+                if (Schema::hasTable('noci_rekap_attachments')) {
+                    $payload = [];
+                    if (Schema::hasColumn('noci_rekap_attachments', 'tenant_id')) $payload['tenant_id'] = $tenantId;
+                    if (Schema::hasColumn('noci_rekap_attachments', 'rekap_date')) $payload['rekap_date'] = $rekapDate;
+                    if (Schema::hasColumn('noci_rekap_attachments', 'technician_name')) $payload['technician_name'] = $techName;
+                    if (Schema::hasColumn('noci_rekap_attachments', 'file_name')) $payload['file_name'] = $fileName;
+                    if (Schema::hasColumn('noci_rekap_attachments', 'file_path')) $payload['file_path'] = $relativePath;
+                    if (Schema::hasColumn('noci_rekap_attachments', 'file_ext')) $payload['file_ext'] = $ext;
+                    if (Schema::hasColumn('noci_rekap_attachments', 'mime_type')) $payload['mime_type'] = (string) $file->getClientMimeType();
+                    if (Schema::hasColumn('noci_rekap_attachments', 'file_size')) $payload['file_size'] = (int) $file->getSize();
+                    if (Schema::hasColumn('noci_rekap_attachments', 'created_by')) $payload['created_by'] = (string) ($request->user()?->name ?? '');
+                    if (Schema::hasColumn('noci_rekap_attachments', 'created_at')) $payload['created_at'] = now();
 
-            if (!empty($payload)) {
-                DB::table('noci_rekap_attachments')->insert($payload);
+                    if (!empty($payload)) {
+                        DB::table('noci_rekap_attachments')->insert($payload);
+                    }
+                }
+            } catch (\Throwable) {
+                // Non-fatal: attachment DB log failure should not block sending recap.
             }
 
             return response()->json([

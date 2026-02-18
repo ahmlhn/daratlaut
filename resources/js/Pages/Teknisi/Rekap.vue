@@ -189,7 +189,9 @@ async function fetchJson(url, options = {}) {
     throw new Error('Response JSON tidak valid')
   }
   if (!res.ok || !(data.success === true || data.status === 'success')) {
-    throw new Error(String(data.message || data.msg || 'Request gagal'))
+    const base = String(data.message || data.msg || 'Request gagal')
+    const detail = String(data.error || '').trim()
+    throw new Error(detail ? `${base}: ${detail}` : base)
   }
   return data
 }
@@ -325,7 +327,15 @@ async function sendRekapToGroup() {
   }
   sendingGroup.value = true
   try {
-    const mediaUrl = await uploadRekapProofIfAny()
+    let mediaUrl = ''
+    if (proofFile.value) {
+      try {
+        mediaUrl = await uploadRekapProofIfAny()
+      } catch (e) {
+        mediaUrl = ''
+        notify(`Upload bukti gagal, lanjut kirim tanpa bukti. ${e?.message || ''}`.trim(), 'error')
+      }
+    }
     const payload = {
       group_id: selectedGroupId.value,
       message: rekapPreview.value,
