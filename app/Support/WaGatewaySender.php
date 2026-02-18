@@ -205,7 +205,7 @@ class WaGatewaySender
             return $this->sendMpwa($gateway, $channel, $target, $message);
         }
 
-        return $this->sendBalesotomatis($gateway, $channel, $target, $message);
+        return ['ok' => false, 'error' => "Provider WA tidak didukung: {$provider}"];
     }
 
     private function sendMediaOnce(
@@ -221,119 +221,7 @@ class WaGatewaySender
             return $this->sendMpwaMedia($gateway, $channel, $target, $message, $mediaUrl, $options);
         }
 
-        return $this->sendBalesotomatisMedia($gateway, $channel, $target, $message, $mediaUrl, $options);
-    }
-
-    private function sendBalesotomatis(array $gateway, string $channel, string $target, string $message): array
-    {
-        $token = trim((string) ($gateway['token'] ?? ''));
-        $sender = trim((string) ($gateway['sender_number'] ?? ''));
-        if ($token === '' || $sender === '') {
-            return ['ok' => false, 'error' => 'Config WA tidak lengkap'];
-        }
-
-        $timeout = (int) ($gateway['timeout_sec'] ?? 10);
-        if ($timeout <= 0) $timeout = 10;
-
-        if ($channel === 'group') {
-            $groupUrl = $this->balesGroupEndpoint($gateway);
-            if ($groupUrl === '') {
-                return ['ok' => false, 'error' => 'Group URL kosong'];
-            }
-            $payload = [
-                'api_key' => $token,
-                'number_id' => $sender,
-                'group_id' => $target,
-                'message' => $message,
-            ];
-            return $this->httpJson($groupUrl, $payload, $timeout, 'balesotomatis');
-        }
-
-        $endpoint = $this->balesPersonalEndpoint($gateway);
-        if ($endpoint === '') {
-            return ['ok' => false, 'error' => 'Base URL kosong'];
-        }
-
-        $phoneNo = $this->phoneNoBales($target);
-        if ($phoneNo === '') {
-            return ['ok' => false, 'error' => 'Nomor tujuan kosong'];
-        }
-
-        $payload = [
-            'api_key' => $token,
-            'number_id' => $sender,
-            'enable_typing' => '1',
-            'method_send' => 'async',
-            'phone_no' => $phoneNo,
-            'country_code' => '62',
-            'message' => $message,
-        ];
-
-        return $this->httpJson($endpoint, $payload, $timeout, 'balesotomatis');
-    }
-
-    private function sendBalesotomatisMedia(
-        array $gateway,
-        string $channel,
-        string $target,
-        string $message,
-        string $mediaUrl,
-        array $options = []
-    ): array {
-        $token = trim((string) ($gateway['token'] ?? ''));
-        $sender = trim((string) ($gateway['sender_number'] ?? ''));
-        if ($token === '' || $sender === '') {
-            return ['ok' => false, 'error' => 'Config WA tidak lengkap'];
-        }
-        if ($channel !== 'group') {
-            return ['ok' => false, 'error' => 'Media hanya didukung untuk group'];
-        }
-
-        $timeout = (int) ($gateway['timeout_sec'] ?? 10);
-        if ($timeout <= 0) $timeout = 10;
-
-        $groupUrl = $this->balesGroupEndpoint($gateway);
-        if ($groupUrl === '') {
-            return ['ok' => false, 'error' => 'Group URL kosong'];
-        }
-
-        $kind = $this->detectMediaKind($mediaUrl, $options);
-        $sendAsCaption = (int) ($options['send_as_caption'] ?? 1);
-        if ($sendAsCaption !== 0) $sendAsCaption = 1;
-
-        $payload = [
-            'api_key' => $token,
-            'number_id' => $sender,
-            'enable_typing' => '1',
-            'method_send' => 'async',
-            'group_id' => $target,
-            'message' => $message,
-        ];
-
-        if ($kind === 'image') {
-            $payload['image_url'] = $mediaUrl;
-            $payload['send_as_caption'] = (string) $sendAsCaption;
-            return $this->httpJson($groupUrl, $payload, $timeout, 'balesotomatis');
-        }
-
-        $endpoints = $this->balesGroupFileEndpoints($gateway, $groupUrl, $options);
-        if (empty($endpoints)) {
-            return ['ok' => false, 'error' => 'URL endpoint kirim file group tidak ditemukan'];
-        }
-
-        $last = ['ok' => false, 'error' => 'Gagal kirim file media'];
-
-        $payloadFile = $payload;
-        $payloadFile['file_url'] = $mediaUrl;
-        $payloadFile['document_url'] = $mediaUrl;
-        foreach ($endpoints as $endpointFile) {
-            $last = $this->httpJson($endpointFile, $payloadFile, $timeout, 'balesotomatis');
-            if (!empty($last['ok'])) {
-                return $last;
-            }
-        }
-
-        return $last;
+        return ['ok' => false, 'error' => "Provider WA tidak didukung: {$provider}"];
     }
 
     private function sendMpwa(array $gateway, string $channel, string $target, string $message): array
@@ -444,26 +332,12 @@ class WaGatewaySender
             $trim = trim($body);
             $decoded = $trim !== '' ? json_decode($trim, true) : null;
 
-            if ($provider === 'balesotomatis') {
-                $ok = ($httpCode === 200);
-                if (is_array($decoded)) {
-                    if (array_key_exists('status', $decoded)) {
-                        $ok = $ok && (bool) $decoded['status'];
-                    }
-                    if (array_key_exists('code', $decoded)) {
-                        $ok = $ok && ((int) $decoded['code'] === 200);
-                    }
-                } elseif ($trim !== '' && preg_match('/"code"\s*:\s*"?(\d{3})"?/i', $trim, $m)) {
-                    $ok = $ok && ((int) $m[1] === 200);
-                }
-            } else {
-                $ok = $response->successful();
-                if ($ok && is_array($decoded)) {
-                    if (array_key_exists('status', $decoded)) {
-                        $ok = (bool) $decoded['status'];
-                    } elseif (array_key_exists('success', $decoded)) {
-                        $ok = (bool) $decoded['success'];
-                    }
+            $ok = $response->successful();
+            if ($ok && is_array($decoded)) {
+                if (array_key_exists('status', $decoded)) {
+                    $ok = (bool) $decoded['status'];
+                } elseif (array_key_exists('success', $decoded)) {
+                    $ok = (bool) $decoded['success'];
                 }
             }
 
@@ -660,15 +534,6 @@ class WaGatewaySender
         }
     }
 
-    private function phoneNoBales(string $raw): string
-    {
-        $clean = preg_replace('/\D/', '', $raw);
-        if ($clean === null || $clean === '') return '';
-        if (str_starts_with($clean, '62')) return substr($clean, 2);
-        if (str_starts_with($clean, '0')) return substr($clean, 1);
-        return $clean;
-    }
-
     private function phoneNo62(string $raw): string
     {
         $clean = preg_replace('/\D/', '', $raw);
@@ -701,93 +566,6 @@ class WaGatewaySender
         }
 
         return 'file';
-    }
-
-    private function balesPersonalEndpoint(array $gateway): string
-    {
-        $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
-        if ($baseUrl !== '') {
-            return $baseUrl;
-        }
-
-        $groupUrl = trim((string) ($gateway['group_url'] ?? ''));
-        $seed = $groupUrl !== '' ? $groupUrl : $baseUrl;
-        $path = '/public/v1/send_personal_message';
-        $endpoint = $this->balesEndpointFromSeed($seed, $path);
-        if ($endpoint !== '') {
-            return $endpoint;
-        }
-
-        return 'https://api.balesotomatis.id/public/v1/send_personal_message';
-    }
-
-    private function balesGroupEndpoint(array $gateway): string
-    {
-        $groupUrl = trim((string) ($gateway['group_url'] ?? ''));
-        if ($groupUrl !== '') {
-            return $groupUrl;
-        }
-
-        $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
-        $seed = $baseUrl !== '' ? $baseUrl : $groupUrl;
-        $path = '/public/v1/send_group_message';
-        $endpoint = $this->balesEndpointFromSeed($seed, $path);
-        if ($endpoint !== '') {
-            return $endpoint;
-        }
-
-        return 'https://api.balesotomatis.id/public/v1/send_group_message';
-    }
-
-    private function balesGroupFileEndpoints(array $gateway, string $groupUrl, array $options = []): array
-    {
-        $endpoints = [];
-
-        $this->pushUniqueEndpoint($endpoints, trim((string) ($options['group_file_url'] ?? '')));
-
-        $baseUrl = trim((string) ($gateway['base_url'] ?? ''));
-        $seed = $baseUrl !== '' ? $baseUrl : $groupUrl;
-        $this->pushUniqueEndpoint($endpoints, $this->balesEndpointFromSeed($seed, '/public/v1/send_group_file'));
-
-        $replacedUnderscore = str_ireplace('send_group_message', 'send_group_file', $groupUrl);
-        if ($replacedUnderscore !== $groupUrl) {
-            $this->pushUniqueEndpoint($endpoints, $replacedUnderscore);
-        }
-        $replacedHyphen = str_ireplace('send-group-message', 'send-group-file', $groupUrl);
-        if ($replacedHyphen !== $groupUrl) {
-            $this->pushUniqueEndpoint($endpoints, $replacedHyphen);
-        }
-
-        // Fallback: beberapa deployment menerima file_url lewat endpoint send-group-message.
-        $this->pushUniqueEndpoint($endpoints, $groupUrl);
-
-        return $endpoints;
-    }
-
-    private function pushUniqueEndpoint(array &$endpoints, string $url): void
-    {
-        $url = trim($url);
-        if ($url === '') {
-            return;
-        }
-        if (!in_array($url, $endpoints, true)) {
-            $endpoints[] = $url;
-        }
-    }
-
-    private function balesEndpointFromSeed(string $seedUrl, string $path): string
-    {
-        $seedUrl = trim($seedUrl);
-        if ($seedUrl === '') return '';
-
-        if (preg_match('~^(https?://[^/]+)/public/v1/~i', $seedUrl, $m)) {
-            return rtrim((string) $m[1], '/') . $path;
-        }
-        if (preg_match('~^(https?://[^/]+)~i', $seedUrl, $m)) {
-            return rtrim((string) $m[1], '/') . $path;
-        }
-
-        return '';
     }
 
     private function logNotif(

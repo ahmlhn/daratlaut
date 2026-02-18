@@ -25,8 +25,7 @@ class WaGateway extends Model
         'supports_group' => 'boolean',
     ];
 
-    // Gateway codes
-    const GATEWAY_BALESOTOMATIS = 'balesotomatis';
+    // Gateway code (single gateway policy)
     const GATEWAY_MPWA = 'mpwa';
 
     // Scopes

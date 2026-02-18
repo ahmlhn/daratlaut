@@ -26,8 +26,7 @@ const canOpenRoleSettings = computed(() => {
 
 // ===== Reactive State =====
 const gatewayStatus = ref({ wa: {}, tg: {} });
-const waConfig = reactive({ base_url: '', group_url: '', token: '', sender_number: '', target_number: '', group_id: '', recap_group_id: '', is_active: 0, failover_mode: 'manual' });
-const mpwaConfig = reactive({ base_url: '', token: '', sender_number: '', target_number: '', group_id: '', footer: '', is_active: 0 });
+const waConfig = reactive({ base_url: '', group_url: '', token: '', sender_number: '', target_number: '', group_id: '', recap_group_id: '', footer: '', is_active: 0 });
 const tgConfig = reactive({ bot_token: '', chat_id: '' });
 
 const templates = ref([]);
@@ -107,7 +106,6 @@ const activeSection = ref('status');
 const sections = [
     { id: 'status', name: 'Gateway Status', icon: 'wifi' },
     { id: 'wa', name: 'WhatsApp', icon: 'chat' },
-    { id: 'mpwa', name: 'WA Backup (MPWA)', icon: 'bolt' },
     { id: 'tg', name: 'Telegram', icon: 'paper-airplane' },
     { id: 'templates', name: 'Template Pesan', icon: 'document-text' },
     { id: 'pops', name: 'Manajemen POP', icon: 'map-pin' },
@@ -124,7 +122,7 @@ const sections = [
 
 // Option B navigation: top tabs + chips (no settings sidebar).
 const tabs = [
-    { id: 'gateway', title: 'Gateway', items: ['status', 'wa', 'mpwa', 'tg'] },
+    { id: 'gateway', title: 'Gateway', items: ['status', 'wa', 'tg'] },
     { id: 'pesan', title: 'Pesan', items: ['templates', 'logs'] },
     { id: 'operasional', title: 'Operasional', items: ['pops', 'recap_groups', 'fee'] },
     { id: 'system', title: 'System', items: ['redirect_links', 'public_url', 'maps', 'cron', 'roles', 'system_update'] },
@@ -234,18 +232,8 @@ async function loadAll(opts = {}) {
                 target_number: data.wa_config.target_number || '',
                 group_id: data.wa_config.group_id || '',
                 recap_group_id: data.wa_config.recap_group_id || '',
+                footer: data.wa_config.footer || '',
                 is_active: data.wa_config.is_active ? 1 : 0,
-            });
-        }
-        if (data.wa_failover_mode) waConfig.failover_mode = data.wa_failover_mode;
-        // MPWA
-        if (data.wa_gateways?.backup) {
-            const bk = data.wa_gateways.backup;
-            const ex = bk.extra || {};
-            Object.assign(mpwaConfig, {
-                base_url: bk.base_url || '', token: bk.token || '', sender_number: bk.sender_number || '',
-                target_number: ex.target_number || '', group_id: bk.group_id || '', footer: ex.footer || '',
-                is_active: bk.is_active ? 1 : 0,
             });
         }
         // TG
@@ -413,16 +401,6 @@ async function saveWa() {
     finally { saving.value = false; }
 }
 
-// ===== Save MPWA =====
-async function saveMpwa() {
-    saving.value = true;
-    try {
-        await api('/wa-backup', { method: 'POST', body: JSON.stringify({ ...mpwaConfig, failover_mode: waConfig.failover_mode }) });
-        alert('MPWA config tersimpan!');
-    } catch (e) { alert('Gagal menyimpan'); }
-    finally { saving.value = false; }
-}
-
 // ===== Save TG =====
 async function saveTg() {
     saving.value = true;
@@ -440,20 +418,7 @@ async function doTestWa(isGroup = false) {
         const res = await api('/test-wa', { method: 'POST', body: JSON.stringify({
             url: waConfig.base_url, token: waConfig.token, sender: waConfig.sender_number,
             target: isGroup ? waConfig.group_id : waConfig.target_number, is_group: isGroup,
-        }) });
-        alert(res.status === 'success' ? 'Berhasil!' : `Gagal: ${res.message}`);
-        loadLogs();
-    } catch (e) { alert('Error: ' + e.message); }
-    finally { testLoading.value = ''; }
-}
-
-async function doTestMpwa(isGroup = false) {
-    testLoading.value = isGroup ? 'mpwa_group' : 'mpwa_personal';
-    try {
-        const res = await api('/test-mpwa', { method: 'POST', body: JSON.stringify({
-            url: mpwaConfig.base_url, token: mpwaConfig.token, sender: mpwaConfig.sender_number,
-            target: isGroup ? mpwaConfig.group_id : mpwaConfig.target_number,
-            footer: mpwaConfig.footer, is_group: isGroup,
+            footer: waConfig.footer || '',
         }) });
         alert(res.status === 'success' ? 'Berhasil!' : `Gagal: ${res.message}`);
         loadLogs();
@@ -938,12 +903,12 @@ onMounted(() => {
                         </div>
                     </div>
 
-                    <!-- ===== WHATSAPP PRIMARY ===== -->
+                    <!-- ===== WHATSAPP (MPWA SINGLE GATEWAY) ===== -->
                     <div v-if="activeSection === 'wa'" class="card p-0 overflow-hidden rounded-2xl">
                         <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur flex items-start justify-between gap-4">
                             <div class="min-w-0">
-                                <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">WhatsApp (Gateway Utama)</h2>
-                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Gateway utama untuk notifikasi personal dan group.</p>
+                                <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">WhatsApp (MPWA)</h2>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Konfigurasi single gateway WhatsApp menggunakan MPWA.</p>
                             </div>
                             <label class="flex items-center gap-2 cursor-pointer select-none">
                                 <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ waConfig.is_active ? 'Aktif' : 'Non-aktif' }}</span>
@@ -954,52 +919,35 @@ onMounted(() => {
                         <div class="px-6 py-6 sm:px-8 space-y-6">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL Pesan Personal</label>
-                                    <input v-model="waConfig.base_url" type="url" class="input w-full" placeholder="https://api.balesotomatis.id/v1/send-message">
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL API MPWA</label>
+                                    <input v-model="waConfig.base_url" type="url" class="input w-full" placeholder="https://app.mpwa.net/send-message">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">API Token</label>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">API Key</label>
                                     <input v-model="waConfig.token" type="text" class="input w-full" placeholder="Token...">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Device Key (Sender)</label>
-                                    <input v-model="waConfig.sender_number" type="text" class="input w-full" placeholder="Device Key...">
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sender</label>
+                                    <input v-model="waConfig.sender_number" type="text" class="input w-full" placeholder="62888xxxx">
                                 </div>
                                 <div>
                                     <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Target Tes</label>
-                                    <input v-model="waConfig.target_number" type="text" class="input w-full" placeholder="08xxx">
+                                    <input v-model="waConfig.target_number" type="text" class="input w-full" placeholder="62888xxxx atau xxx@g.us">
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Mode Failover</label>
-                                    <select v-model="waConfig.failover_mode" class="input w-full">
-                                        <option value="manual">Manual (tetap gateway aktif)</option>
-                                        <option value="auto">Auto (pindah ke backup jika gagal)</option>
-                                    </select>
-                                    <p class="text-xs text-gray-400 mt-1">Manual: aktifkan hanya gateway yang ingin dipakai. Auto: gunakan backup bila primary gagal.</p>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Default Group ID</label>
+                                    <input v-model="waConfig.group_id" type="text" class="input w-full" placeholder="xxx@g.us">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Group Laporan Rekap</label>
+                                    <input v-model="waConfig.recap_group_id" type="text" class="input w-full" placeholder="xxx@g.us">
+                                    <p class="text-xs text-gray-400 mt-1">Jika kosong, sistem pakai Default Group ID.</p>
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Footer (Opsional)</label>
+                                    <input v-model="waConfig.footer" type="text" class="input w-full" placeholder="Sent via mpwa">
                                 </div>
                             </div>
-
-                            <!-- Advanced Group Settings -->
-                            <details class="rounded-2xl border border-gray-200/70 dark:border-white/10 overflow-hidden bg-gray-50/60 dark:bg-dark-900/30">
-                                <summary class="px-5 py-4 cursor-pointer text-sm font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100/80 dark:hover:bg-white/5">
-                                    Pengaturan Group (Advanced)
-                                </summary>
-                                <div class="p-5 space-y-4 bg-white dark:bg-dark-950 border-t border-gray-200/70 dark:border-white/10">
-                                    <div>
-                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL Pesan Group</label>
-                                        <input v-model="waConfig.group_url" type="url" class="input w-full" placeholder="https://api.balesotomatis.id/v1/send-group-message">
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Default Group ID</label>
-                                        <input v-model="waConfig.group_id" type="text" class="input w-full" placeholder="xxx@g.us">
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Group Laporan Rekap</label>
-                                        <input v-model="waConfig.recap_group_id" type="text" class="input w-full" placeholder="xxx@g.us">
-                                        <p class="text-xs text-gray-400 mt-1">Grup khusus untuk laporan harian teknisi. Jika kosong, gunakan Default Group ID.</p>
-                                    </div>
-                                </div>
-                            </details>
 
                             <div class="flex flex-wrap gap-2 pt-5 border-t border-gray-200/70 dark:border-white/10">
                                 <button @click="doTestWa(false)" :disabled="testLoading === 'wa_personal'" class="btn btn-secondary">
@@ -1009,61 +957,6 @@ onMounted(() => {
                                     {{ testLoading === 'wa_group' ? 'Sending...' : 'Tes Group' }}
                                 </button>
                                 <button @click="saveWa" :disabled="saving" class="btn btn-primary ml-auto">
-                                    {{ saving ? 'Menyimpan...' : 'Simpan' }}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- ===== MPWA BACKUP ===== -->
-                    <div v-if="activeSection === 'mpwa'" class="card p-0 overflow-hidden rounded-2xl">
-                        <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur flex items-start justify-between gap-4">
-                            <div class="min-w-0">
-                                <h2 class="text-lg sm:text-xl font-bold tracking-tight text-gray-900 dark:text-white">WhatsApp Backup (MPWA)</h2>
-                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Gateway cadangan untuk failover atau penggunaan manual.</p>
-                            </div>
-                            <label class="flex items-center gap-2 cursor-pointer select-none">
-                                <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ mpwaConfig.is_active ? 'Aktif' : 'Non-aktif' }}</span>
-                                <input type="checkbox" v-model="mpwaConfig.is_active" :true-value="1" :false-value="0" class="h-5 w-5 rounded-md text-orange-600 dark:bg-gray-700">
-                            </label>
-                        </div>
-
-                        <div class="px-6 py-6 sm:px-8 space-y-6">
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">URL API</label>
-                                    <input v-model="mpwaConfig.base_url" type="url" class="input w-full" placeholder="https://app.mpwa.net/send-message">
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">API Key</label>
-                                    <input v-model="mpwaConfig.token" type="text" class="input w-full">
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sender</label>
-                                    <input v-model="mpwaConfig.sender_number" type="text" class="input w-full" placeholder="62888xxxx">
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Target Tes</label>
-                                    <input v-model="mpwaConfig.target_number" type="text" class="input w-full" placeholder="62888xxxx atau xxx@g.us">
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Default Group ID</label>
-                                    <input v-model="mpwaConfig.group_id" type="text" class="input w-full" placeholder="xxx@g.us">
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Footer (Opsional)</label>
-                                    <input v-model="mpwaConfig.footer" type="text" class="input w-full" placeholder="Sent via mpwa">
-                                </div>
-                            </div>
-
-                            <div class="flex flex-wrap gap-2 pt-5 border-t border-gray-200/70 dark:border-white/10">
-                                <button @click="doTestMpwa(false)" :disabled="testLoading === 'mpwa_personal'" class="btn btn-secondary">
-                                    {{ testLoading === 'mpwa_personal' ? 'Sending...' : 'Tes Personal' }}
-                                </button>
-                                <button @click="doTestMpwa(true)" :disabled="testLoading === 'mpwa_group'" class="btn btn-secondary">
-                                    {{ testLoading === 'mpwa_group' ? 'Sending...' : 'Tes Group' }}
-                                </button>
-                                <button @click="saveMpwa" :disabled="saving" class="btn btn-primary ml-auto">
                                     {{ saving ? 'Menyimpan...' : 'Simpan' }}
                                 </button>
                             </div>

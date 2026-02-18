@@ -31,18 +31,14 @@ class SettingsController extends Controller
         $templates = DB::table('noci_msg_templates')->where('tenant_id', $tid)->get();
 
         $gwPrimary = DB::table('noci_wa_tenant_gateways')
-            ->where('tenant_id', $tid)->where('provider_code', 'balesotomatis')->first();
-        $gwBackup = DB::table('noci_wa_tenant_gateways')
             ->where('tenant_id', $tid)->where('provider_code', 'mpwa')->first();
+        $gwBackup = null;
 
         if ($gwPrimary && $gwPrimary->extra_json) {
             $gwPrimary->extra = json_decode($gwPrimary->extra_json, true) ?: [];
         }
-        if ($gwBackup && $gwBackup->extra_json) {
-            $gwBackup->extra = json_decode($gwBackup->extra_json, true) ?: [];
-        }
 
-        $failoverMode = $gwPrimary->failover_mode ?? ($gwBackup->failover_mode ?? 'manual');
+        $failoverMode = $gwPrimary->failover_mode ?? 'manual';
         $pops = Pop::forTenant($tid)->orderBy('pop_name')->get();
         $recapGroups = $this->getRecapGroupsData($tid);
         $feeSettings = $this->getFeeSettingsData($tid);
@@ -71,24 +67,31 @@ class SettingsController extends Controller
         ]);
     }
 
-    // ========== WhatsApp Primary Config ==========
+    // ========== WhatsApp (MPWA Single Gateway) ==========
 
     public function getWaConfig(Request $request): JsonResponse
     {
         $tid = $this->tenantId($request);
         $waConf = DB::table('noci_conf_wa')->where('tenant_id', $tid)->first();
         $gwPrimary = DB::table('noci_wa_tenant_gateways')
-            ->where('tenant_id', $tid)->where('provider_code', 'balesotomatis')->first();
+            ->where('tenant_id', $tid)->where('provider_code', 'mpwa')->first();
+        $extra = ($gwPrimary && $gwPrimary->extra_json) ? (json_decode($gwPrimary->extra_json, true) ?: []) : [];
+        $baseUrl = (string) ($gwPrimary->base_url ?? ($waConf->base_url ?? ''));
+        $groupUrl = (string) ($gwPrimary->group_url ?? ($waConf->group_url ?? $baseUrl));
+        if ($groupUrl === '') {
+            $groupUrl = $baseUrl;
+        }
 
         return response()->json(['data' => [
-            'base_url' => $waConf->base_url ?? '',
-            'group_url' => $waConf->group_url ?? '',
-            'token' => $waConf->token ?? '',
-            'sender_number' => $waConf->sender_number ?? '',
-            'target_number' => $waConf->target_number ?? '',
-            'group_id' => $waConf->group_id ?? '',
+            'base_url' => $baseUrl,
+            'group_url' => $groupUrl,
+            'token' => $gwPrimary->token ?? ($waConf->token ?? ''),
+            'sender_number' => $gwPrimary->sender_number ?? ($waConf->sender_number ?? ''),
+            'target_number' => $extra['target_number'] ?? ($waConf->target_number ?? ''),
+            'footer' => $extra['footer'] ?? '',
+            'group_id' => $gwPrimary->group_id ?? ($waConf->group_id ?? ''),
             'recap_group_id' => $waConf->recap_group_id ?? '',
-            'is_active' => (int) ($waConf->is_active ?? 0),
+            'is_active' => (int) ($gwPrimary->is_active ?? ($waConf->is_active ?? 0)),
             'failover_mode' => $gwPrimary->failover_mode ?? 'manual',
         ]]);
     }
@@ -103,6 +106,7 @@ class SettingsController extends Controller
         $target = trim($request->input('target_number', ''));
         $groupId = trim($request->input('group_id', ''));
         $recapGroupId = trim($request->input('recap_group_id', ''));
+        $footer = trim($request->input('footer', ''));
         $active = (int) $request->input('is_active', 0);
         $failoverMode = strtolower(trim($request->input('failover_mode', 'manual')));
         if ($failoverMode !== 'auto') $failoverMode = 'manual';
@@ -119,67 +123,14 @@ class SettingsController extends Controller
             DB::table('noci_conf_wa')->insert(array_merge($waData, ['tenant_id' => $tid]));
         }
 
-        // Sync gateway
-        $gwData = [
-            'label' => 'Balesotomatis', 'base_url' => $baseUrl, 'group_url' => $groupUrl,
-            'token' => $token, 'sender_number' => $sender, 'group_id' => $groupId,
-            'is_active' => $active, 'priority' => 1, 'failover_mode' => $failoverMode,
-        ];
-        $gwExists = DB::table('noci_wa_tenant_gateways')
-            ->where('tenant_id', $tid)->where('provider_code', 'balesotomatis')->exists();
-        if ($gwExists) {
-            DB::table('noci_wa_tenant_gateways')
-                ->where('tenant_id', $tid)->where('provider_code', 'balesotomatis')->update($gwData);
-        } else {
-            DB::table('noci_wa_tenant_gateways')->insert(array_merge($gwData, [
-                'tenant_id' => $tid, 'provider_code' => 'balesotomatis',
-            ]));
-        }
-
-        return response()->json(['status' => 'success', 'message' => 'WhatsApp config saved']);
-    }
-
-    // ========== WhatsApp Backup (MPWA) ==========
-
-    public function getBackupConfig(Request $request): JsonResponse
-    {
-        $tid = $this->tenantId($request);
-        $gw = DB::table('noci_wa_tenant_gateways')
-            ->where('tenant_id', $tid)->where('provider_code', 'mpwa')->first();
-        $extra = ($gw && $gw->extra_json) ? (json_decode($gw->extra_json, true) ?: []) : [];
-
-        return response()->json(['data' => [
-            'base_url' => $gw->base_url ?? '',
-            'token' => $gw->token ?? '',
-            'sender_number' => $gw->sender_number ?? '',
-            'target_number' => $extra['target_number'] ?? '',
-            'group_id' => $gw->group_id ?? '',
-            'footer' => $extra['footer'] ?? '',
-            'is_active' => (int) ($gw->is_active ?? 0),
-        ]]);
-    }
-
-    public function saveBackupConfig(Request $request): JsonResponse
-    {
-        $tid = $this->tenantId($request);
-        $baseUrl = trim($request->input('base_url', ''));
-        $token = trim($request->input('token', ''));
-        $sender = trim($request->input('sender_number', ''));
-        $target = trim($request->input('target_number', ''));
-        $groupId = trim($request->input('group_id', ''));
-        $footer = trim($request->input('footer', ''));
-        $active = (int) $request->input('is_active', 0);
-        $failoverMode = strtolower(trim($request->input('failover_mode', 'manual')));
-        if ($failoverMode !== 'auto') $failoverMode = 'manual';
-
+        // Sync single gateway MPWA
         $extra = json_encode(['footer' => $footer, 'target_number' => $target]);
         $gwData = [
-            'label' => 'MPWA', 'base_url' => $baseUrl, 'group_url' => $baseUrl,
+            'label' => 'MPWA', 'base_url' => $baseUrl, 'group_url' => ($groupUrl !== '' ? $groupUrl : $baseUrl),
             'token' => $token, 'sender_number' => $sender, 'group_id' => $groupId,
             'is_active' => $active, 'priority' => 1, 'failover_mode' => $failoverMode,
             'extra_json' => $extra,
         ];
-
         $gwExists = DB::table('noci_wa_tenant_gateways')
             ->where('tenant_id', $tid)->where('provider_code', 'mpwa')->exists();
         if ($gwExists) {
@@ -215,7 +166,19 @@ class SettingsController extends Controller
             }
         }
 
-        return response()->json(['status' => 'success', 'message' => 'MPWA config saved']);
+        return response()->json(['status' => 'success', 'message' => 'WhatsApp MPWA config saved']);
+    }
+
+    // ========== Backward Compatible Alias (/wa-backup) ==========
+
+    public function getBackupConfig(Request $request): JsonResponse
+    {
+        return $this->getWaConfig($request);
+    }
+
+    public function saveBackupConfig(Request $request): JsonResponse
+    {
+        return $this->saveWaConfig($request);
     }
 
     // ========== Telegram Config ==========
@@ -1104,30 +1067,30 @@ class SettingsController extends Controller
         $token = trim($request->input('token', ''));
         $sender = trim($request->input('sender', ''));
         $target = trim($request->input('target', ''));
+        $footer = trim($request->input('footer', ''));
         $isGroup = (bool) $request->input('is_group', false);
         $msg = $isGroup ? 'Tes Group WA OK!' : 'Tes Personal WA OK!';
 
         if (empty($url) || empty($token)) return response()->json(['status' => 'error', 'message' => 'URL dan Token wajib'], 422);
 
-        $payload = ['api_key' => $token, 'number_id' => $sender, 'message' => $msg];
-        if ($isGroup) {
-            $payload['group_id'] = $target;
-        } else {
-            $payload['method_send'] = 'async';
-            $payload['enable_typing'] = '1';
-            $phone = preg_replace('/[^0-9]/', '', $target);
-            if (substr($phone, 0, 2) === '62') $phone = substr($phone, 2);
-            elseif (substr($phone, 0, 1) === '0') $phone = substr($phone, 1);
-            $payload['phone_no'] = $phone;
-            $payload['country_code'] = '62';
+        $number = $target;
+        if (!$isGroup && strpos($number, '@') === false) {
+            $digits = preg_replace('/[^0-9]/', '', $number);
+            if (str_starts_with($digits, '0')) {
+                $digits = '62' . substr($digits, 1);
+            } elseif (!str_starts_with($digits, '62')) {
+                $digits = '62' . $digits;
+            }
+            $number = $digits;
         }
+
+        $payload = ['api_key' => $token, 'sender' => $sender, 'number' => $number, 'message' => $msg];
+        if ($footer !== '') $payload['footer'] = $footer;
+        if ($isGroup) $payload['is_group'] = true;
 
         try {
             $resp = Http::timeout(15)->post($url, $payload);
             $ok = $resp->successful();
-            $json = json_decode($resp->body(), true);
-            if ($json && isset($json['code']) && (int) $json['code'] !== 200) $ok = false;
-
             $this->logNotif($this->tenantId($request), $isGroup ? 'WA Group' : 'WA Personal', $target, $msg, $ok ? 'success' : 'failed', $resp->body());
             return response()->json(['status' => $ok ? 'success' : 'failed', 'message' => $resp->body()]);
         } catch (\Exception $e) {
@@ -1138,27 +1101,7 @@ class SettingsController extends Controller
 
     public function testMpwa(Request $request): JsonResponse
     {
-        $url = trim($request->input('url', ''));
-        $token = trim($request->input('token', ''));
-        $sender = trim($request->input('sender', ''));
-        $target = trim($request->input('target', ''));
-        $footer = trim($request->input('footer', ''));
-        $isGroup = (bool) $request->input('is_group', false);
-        $msg = $isGroup ? 'Tes Group WA Backup OK!' : 'Tes Personal WA Backup OK!';
-
-        if (empty($url) || empty($token)) return response()->json(['status' => 'error', 'message' => 'URL dan Token wajib'], 422);
-
-        $payload = ['api_key' => $token, 'sender' => $sender, 'number' => $target, 'message' => $msg];
-        if ($footer) $payload['footer'] = $footer;
-        if ($isGroup) $payload['is_group'] = true;
-
-        try {
-            $resp = Http::timeout(15)->post($url, $payload);
-            $this->logNotif($this->tenantId($request), $isGroup ? 'WA Backup Group' : 'WA Backup', $target, $msg, $resp->successful() ? 'success' : 'failed', $resp->body());
-            return response()->json(['status' => $resp->successful() ? 'success' : 'failed', 'message' => $resp->body()]);
-        } catch (\Exception $e) {
-            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
-        }
+        return $this->testWa($request);
     }
 
     public function testTg(Request $request): JsonResponse
