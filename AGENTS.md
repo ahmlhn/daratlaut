@@ -59,3 +59,7 @@ Last verified: 2026-02-19
 - 2026-02-19: Upgraded Vite toolchain (`vite` to v7 and `laravel-vite-plugin` to v2) and validated production build. Docs: N/A.
 - 2026-02-19: Upgraded related frontend packages (`@inertiajs/vue3`, `vue`, `axios`, `tailwindcss`, `@tailwindcss/postcss`) and validated production build. Docs: N/A.
 - 2026-02-19: Fixed Vite build warning for `/assets/favicon.svg` by moving Chat Admin empty-state background image URL out of Tailwind arbitrary CSS URL. Docs: N/A.
+- 2026-02-20: Fixed first-message WA chat notification path in Direct API by using `WaGatewaySender` (no `mysqli` dependency), added safer legacy fallback, and aligned HTTP SSL behavior with legacy gateway compatibility. Docs: N/A.
+- 2026-02-20: Preserved `Selesai` status during Direct `start_session` so customer messages after closed sessions trigger WA admin notification, then transition to `Menunggu` on send. Docs: N/A.
+- 2026-02-20: Added `balesotomatis` personal-send support in `WaGatewaySender` and updated Direct WA notify flow to try active providers (`mpwa` then `balesotomatis`) before legacy fallback, fixing missed WA alerts on reopened sessions. Docs: N/A.
+- 2026-02-20: Adjusted Chat Admin desktop detail-sidebar behavior so it is hidden by default and only shown when toggled, preventing customer detail panel from occupying/covering conversation area by default. Docs: N/A.

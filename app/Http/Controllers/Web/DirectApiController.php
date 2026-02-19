@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Web;
 
+use App\Support\WaGatewaySender;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -151,10 +152,8 @@ class DirectApiController extends Controller
             if ($this->hasColumn('noci_customers', 'location_info')) $update['location_info'] = $loc;
             if ($this->hasColumn('noci_customers', 'last_seen')) $update['last_seen'] = DB::raw('NOW()');
             if ($this->hasColumn('noci_customers', 'visit_count')) $update['visit_count'] = DB::raw('visit_count+1');
-            // Native parity: reopening direct page should move finished session back to Baru.
-            if ($this->hasColumn('noci_customers', 'status')) {
-                $update['status'] = DB::raw("IF(status='Selesai','Baru',status)");
-            }
+            // Preserve `Selesai` until customer really sends a new message.
+            // This keeps sendMessage() able to trigger WA notification on reopen.
             $custQ->update($update);
         } else {
             $insert = [
@@ -520,6 +519,45 @@ class DirectApiController extends Controller
             $target = trim((string) ($conf->target_number ?? ''));
             if ($target === '') return false;
 
+            // Preferred path: modern sender (HTTP + DB facade), no mysqli dependency.
+            $activeProviders = [];
+            if ($this->hasTable('noci_wa_tenant_gateways') && $this->hasColumn('noci_wa_tenant_gateways', 'provider_code')) {
+                $qProv = DB::table('noci_wa_tenant_gateways')
+                    ->where('tenant_id', $tenantId);
+                if ($this->hasColumn('noci_wa_tenant_gateways', 'is_active')) {
+                    $qProv->where('is_active', 1);
+                }
+                if ($this->hasColumn('noci_wa_tenant_gateways', 'priority')) {
+                    $qProv->orderBy('priority');
+                }
+                $activeProviders = $qProv
+                    ->pluck('provider_code')
+                    ->map(fn ($v) => strtolower(trim((string) $v)))
+                    ->filter(fn ($v) => $v !== '')
+                    ->unique()
+                    ->values()
+                    ->all();
+            }
+
+            // Keep explicit order for compatibility: MPWA first, then Balesotomatis.
+            foreach (['mpwa', 'balesotomatis'] as $provider) {
+                if (!empty($activeProviders) && !in_array($provider, $activeProviders, true)) {
+                    continue;
+                }
+
+                $resp = app(WaGatewaySender::class)->sendPersonal($tenantId, $target, $message, [
+                    'log_platform' => 'WA Chat',
+                    'force_provider' => $provider,
+                    'force_failover' => true,
+                ]);
+                if (($resp['status'] ?? '') === 'sent') {
+                    return true;
+                }
+            }
+
+            // Legacy fallback for tenants still using old gateway helper.
+            if (!function_exists('mysqli_connect')) return false;
+
             $root = dirname(base_path());
             $gatewayPath = $root . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'wa_gateway.php';
             if (!is_file($gatewayPath)) return false;
@@ -536,6 +574,10 @@ class DirectApiController extends Controller
             // Use MySQLi persistent connection to reduce churn on shared hosting.
             $mysqliHost = (str_starts_with($host, 'p:') ? $host : ('p:' . $host));
             $conn = @mysqli_connect($mysqliHost, $user, $pass, $db, $port);
+            if (!$conn) {
+                // Fallback to non-persistent connection if persistent socket is unavailable.
+                $conn = @mysqli_connect($host, $user, $pass, $db, $port);
+            }
             if (!$conn) return false;
             @mysqli_set_charset($conn, 'utf8mb4');
             @mysqli_query($conn, "SET time_zone = '+07:00'");
@@ -544,6 +586,15 @@ class DirectApiController extends Controller
             @mysqli_close($conn);
 
             return (($resp['status'] ?? '') === 'sent');
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function hasTable(string $table): bool
+    {
+        try {
+            return Schema::hasTable($table);
         } catch (\Throwable) {
             return false;
         }

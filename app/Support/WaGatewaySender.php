@@ -204,6 +204,9 @@ class WaGatewaySender
         if ($provider === 'mpwa') {
             return $this->sendMpwa($gateway, $channel, $target, $message);
         }
+        if ($provider === 'balesotomatis') {
+            return $this->sendBalesOtomatis($gateway, $channel, $target, $message);
+        }
 
         return ['ok' => false, 'error' => "Provider WA tidak didukung: {$provider}"];
     }
@@ -262,6 +265,55 @@ class WaGatewaySender
         }
 
         return $this->httpJson($endpoint, $payload, $timeout, 'mpwa');
+    }
+
+    private function sendBalesOtomatis(array $gateway, string $channel, string $target, string $message): array
+    {
+        $token = trim((string) ($gateway['token'] ?? ''));
+        $sender = trim((string) ($gateway['sender_number'] ?? ''));
+        if ($token === '' || $sender === '') {
+            return ['ok' => false, 'error' => 'Config WA tidak lengkap'];
+        }
+
+        $timeout = (int) ($gateway['timeout_sec'] ?? 10);
+        if ($timeout <= 0) $timeout = 10;
+
+        if ($channel === 'group') {
+            $endpoint = trim((string) ($gateway['group_url'] ?? ''));
+            if ($endpoint === '') {
+                $endpoint = 'https://api.balesotomatis.id/public/v1/send_group_message';
+            }
+            $payload = [
+                'api_key' => $token,
+                'number_id' => $sender,
+                'group_id' => $target,
+                'message' => $message,
+            ];
+
+            return $this->httpJson($endpoint, $payload, $timeout, 'balesotomatis');
+        }
+
+        $endpoint = trim((string) ($gateway['base_url'] ?? ''));
+        if ($endpoint === '') {
+            $endpoint = 'https://api.balesotomatis.id/public/v1/send_personal_message';
+        }
+
+        $phoneNo = $this->phoneNoBales($target);
+        if ($phoneNo === '') {
+            return ['ok' => false, 'error' => 'Nomor tujuan kosong'];
+        }
+
+        $payload = [
+            'api_key' => $token,
+            'number_id' => $sender,
+            'enable_typing' => '1',
+            'method_send' => 'async',
+            'phone_no' => $phoneNo,
+            'country_code' => '62',
+            'message' => $message,
+        ];
+
+        return $this->httpJson($endpoint, $payload, $timeout, 'balesotomatis');
     }
 
     private function sendMpwaMedia(
@@ -326,7 +378,13 @@ class WaGatewaySender
     private function httpJson(string $url, array $payload, int $timeoutSec, string $provider): array
     {
         try {
-            $response = Http::timeout($timeoutSec)->asJson()->post($url, $payload);
+            $client = Http::timeout($timeoutSec)->asJson();
+            // Keep legacy parity: some shared-hosting stacks don't provide complete CA bundle.
+            if (in_array($provider, ['mpwa', 'balesotomatis'], true)) {
+                $client = $client->withoutVerifying();
+            }
+
+            $response = $client->post($url, $payload);
             $body = (string) $response->body();
             $httpCode = (int) $response->status();
             $trim = trim($body);
@@ -541,6 +599,15 @@ class WaGatewaySender
         if (str_starts_with($clean, '62')) return $clean;
         if (str_starts_with($clean, '0')) return '62' . substr($clean, 1);
         return '62' . $clean;
+    }
+
+    private function phoneNoBales(string $raw): string
+    {
+        $clean = preg_replace('/\D/', '', $raw);
+        if ($clean === null || $clean === '') return '';
+        if (str_starts_with($clean, '62')) return substr($clean, 2);
+        if (str_starts_with($clean, '0')) return substr($clean, 1);
+        return $clean;
     }
 
     private function detectMediaKind(string $mediaUrl, array $options = []): string
