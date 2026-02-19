@@ -47,7 +47,7 @@ let contactsSessionSnapshot = null;
 let chatDbPromise = null;
 let lastIndexedDbPersistAt = 0;
 let lastContactsIndexedDbPersistAt = 0;
-let customerOverviewPeriod = 'today';
+let customerOverviewPeriod = '7days';
 let customerOverviewReqSeq = 0;
 let customerOverviewPoll = null;
 const CUSTOMER_OVERVIEW_POLL_MS = 8000;
@@ -235,7 +235,7 @@ function initCustomerOverviewPanel() {
         if (customerOverviewPeriod) periodEl.value = customerOverviewPeriod;
         if (!periodEl.dataset.bound) {
             periodEl.addEventListener('change', () => {
-                customerOverviewPeriod = periodEl.value || 'today';
+                customerOverviewPeriod = periodEl.value || '7days';
                 loadCustomerOverview(true);
             });
             periodEl.dataset.bound = '1';
@@ -449,7 +449,7 @@ function loadCustomerOverview(force = false) {
     }
 
     const reqSeq = ++customerOverviewReqSeq;
-    const url = `admin_api.php?action=get_customer_overview&period=${encodeURIComponent(customerOverviewPeriod || 'today')}`;
+    const url = `admin_api.php?action=get_customer_overview&period=${encodeURIComponent(customerOverviewPeriod || '7days')}`;
 
     fetch(url)
         .then((r) => r.json())

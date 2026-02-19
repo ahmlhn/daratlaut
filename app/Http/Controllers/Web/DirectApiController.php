@@ -151,7 +151,10 @@ class DirectApiController extends Controller
             if ($this->hasColumn('noci_customers', 'location_info')) $update['location_info'] = $loc;
             if ($this->hasColumn('noci_customers', 'last_seen')) $update['last_seen'] = DB::raw('NOW()');
             if ($this->hasColumn('noci_customers', 'visit_count')) $update['visit_count'] = DB::raw('visit_count+1');
-            // Don't reopen finished sessions on page load — only reopen when customer sends a message.
+            // Native parity: reopening direct page should move finished session back to Baru.
+            if ($this->hasColumn('noci_customers', 'status')) {
+                $update['status'] = DB::raw("IF(status='Selesai','Baru',status)");
+            }
             $custQ->update($update);
         } else {
             $insert = [
