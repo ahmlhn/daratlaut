@@ -19,6 +19,8 @@ use Illuminate\Support\Str;
 class ChatAdminApiController extends Controller
 {
     private static array $ensuredTenants = [];
+    private static array $tableCache = [];
+    private static array $columnCache = [];
 
     private function tenantId(Request $request): int
     {
@@ -32,6 +34,323 @@ class ChatAdminApiController extends Controller
         if (str_starts_with($p, '0')) $p = '62' . substr($p, 1);
         if (str_starts_with($p, '8')) $p = '62' . $p;
         return $p;
+    }
+
+    private function tableExists(string $table): bool
+    {
+        if (array_key_exists($table, self::$tableCache)) {
+            return (bool) self::$tableCache[$table];
+        }
+        try {
+            self::$tableCache[$table] = Schema::hasTable($table);
+        } catch (\Throwable) {
+            self::$tableCache[$table] = false;
+        }
+        return (bool) self::$tableCache[$table];
+    }
+
+    private function columnExists(string $table, string $column): bool
+    {
+        $key = $table . ':' . $column;
+        if (array_key_exists($key, self::$columnCache)) {
+            return (bool) self::$columnCache[$key];
+        }
+        if (!$this->tableExists($table)) {
+            self::$columnCache[$key] = false;
+            return false;
+        }
+        try {
+            self::$columnCache[$key] = Schema::hasColumn($table, $column);
+        } catch (\Throwable) {
+            self::$columnCache[$key] = false;
+        }
+        return (bool) self::$columnCache[$key];
+    }
+
+    private function friendlyEvent(string $raw): string
+    {
+        $cleanKey = $raw;
+        if (preg_match('/^\[([A-Z_]+)\]/', $raw, $m)) {
+            $cleanKey = $m[1];
+        }
+        $map = [
+            'view_halaman' => 'Kunjungan Web',
+            'mulai_chat' => 'Chat Masuk',
+            'buka_form' => 'Buka Form',
+            'klik_wa' => 'Klik WhatsApp',
+            'klik_wa_offline' => 'Klik WA (Offline)',
+            'claim' => 'Ambil Tugas',
+            'pending' => 'Tunda Tugas',
+            'cancel_req' => 'Ajuan Batal',
+            'cancel_approve' => 'Batal Disetujui',
+            'cancel_reject' => 'Batal Ditolak',
+            'transfer' => 'Transfer Tugas',
+            'finish' => 'Tugas Selesai',
+            'resume' => 'Lanjut Proses',
+            'priority_on' => 'Prioritas Aktif',
+            'priority_off' => 'Prioritas Nonaktif',
+            'logout' => 'Logout',
+            'CLAIM' => 'Ambil Tugas',
+            'TRANSFER' => 'Transfer Tugas',
+            'REQ_BATAL' => 'Ajuan Batal',
+            'ACC_BATAL' => 'Batal Disetujui',
+            'TOLAK_BATAL' => 'Batal Ditolak',
+            'UPDATE' => 'Update Status',
+            'NEW_TASK' => 'Tugas Baru',
+            'CREATE_TASK' => 'Buat Tugas',
+            'DELETE' => 'Hapus Data',
+            'VIEW_DETAIL' => 'Buka Detail',
+            'PRIORITY' => 'Ubah Prioritas',
+            'login' => 'Login Admin',
+        ];
+        if (isset($map[$cleanKey])) return $map[$cleanKey];
+        return ucwords(str_replace(['_', '-'], ' ', strtolower($cleanKey)));
+    }
+
+    private function badgeClassForLog(string $rawAction): string
+    {
+        $k = strtolower($rawAction);
+        if (str_contains($k, 'view')) return 'text-blue-600 bg-blue-100 dark:bg-blue-500/10 dark:text-blue-400';
+        if (str_contains($k, 'chat') || str_contains($k, 'wa')) return 'text-green-600 bg-green-100 dark:bg-green-500/10 dark:text-green-400';
+        if (str_contains($k, 'batal') || str_contains($k, 'delete')) return 'text-red-600 bg-red-100 dark:bg-red-500/10 dark:text-red-400';
+        if (str_contains($k, 'claim') || str_contains($k, 'ambil')) return 'text-indigo-600 bg-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400';
+        return 'text-slate-500 bg-slate-100 dark:bg-slate-800';
+    }
+
+    private function periodWhereSql(string $column, string $period): string
+    {
+        $safe = str_replace('`', '', $column);
+        switch ($period) {
+            case 'yesterday':
+                return "DATE(`{$safe}`) = CURDATE() - INTERVAL 1 DAY";
+            case '7days':
+                return "`{$safe}` >= DATE(NOW() - INTERVAL 7 DAY)";
+            case '30days':
+                return "`{$safe}` >= DATE(NOW() - INTERVAL 30 DAY)";
+            case 'today':
+            default:
+                return "DATE(`{$safe}`) = CURDATE()";
+        }
+    }
+
+    private function nowDb(): string
+    {
+        try {
+            $row = DB::selectOne('SELECT NOW() as now_time');
+            if ($row && isset($row->now_time)) return (string) $row->now_time;
+        } catch (\Throwable) {
+        }
+        return now()->format('Y-m-d H:i:s');
+    }
+
+    private function getCustomerOverview(Request $request): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+        if ($tenantId <= 0) {
+            return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
+        }
+
+        $period = (string) $request->query('period', 'today');
+        if (!in_array($period, ['today', 'yesterday', '7days', '30days'], true)) {
+            $period = 'today';
+        }
+
+        $response = [
+            'status' => 'success',
+            'period' => $period,
+            'server_time' => $this->nowDb(),
+            'online_users' => 0,
+            'unique_visits' => 0,
+            'total_leads' => 0,
+            'total_hits' => 0,
+            'chart_labels' => [],
+            'chart_series_pelanggan' => [],
+            'logs_pelanggan' => [],
+        ];
+
+        $hasLogs = $this->tableExists('noci_logs');
+        $hasCustomers = $this->tableExists('noci_customers');
+        $isDailyChart = in_array($period, ['7days', '30days'], true);
+
+        $labels = [];
+        $templateData = [];
+        $mapIndex = [];
+        if ($isDailyChart) {
+            $days = $period === '30days' ? 30 : 7;
+            for ($i = $days - 1; $i >= 0; $i--) {
+                $date = date('Y-m-d', strtotime("-{$i} days"));
+                $labels[] = date('d M', strtotime($date));
+                $mapIndex[$date] = count($labels) - 1;
+                $templateData[] = 0;
+            }
+        } else {
+            for ($i = 0; $i < 24; $i++) {
+                $labels[] = str_pad((string) $i, 2, '0', STR_PAD_LEFT) . ':00';
+                $mapIndex[$i] = $i;
+                $templateData[] = 0;
+            }
+        }
+        $response['chart_labels'] = $labels;
+
+        if ($hasLogs && $this->columnExists('noci_logs', 'timestamp') && $this->columnExists('noci_logs', 'visit_id')) {
+            $logHasTenant = $this->columnExists('noci_logs', 'tenant_id');
+            $logHasEventAction = $this->columnExists('noci_logs', 'event_action');
+            $logHasPlatform = $this->columnExists('noci_logs', 'platform');
+            $logHasIpAddress = $this->columnExists('noci_logs', 'ip_address');
+            $logPeriodSql = $this->periodWhereSql('timestamp', $period);
+
+            try {
+                $qOnline = DB::table('noci_logs')
+                    ->selectRaw('COUNT(DISTINCT visit_id) as total')
+                    ->when($logHasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
+                    ->whereRaw('`timestamp` > (NOW() - INTERVAL 2 MINUTE)');
+                $response['online_users'] = (int) ($qOnline->value('total') ?? 0);
+            } catch (\Throwable) {
+            }
+
+            try {
+                $qUnique = DB::table('noci_logs')
+                    ->selectRaw('COUNT(DISTINCT visit_id) as total')
+                    ->when($logHasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
+                    ->whereRaw($logPeriodSql);
+                $response['unique_visits'] = (int) ($qUnique->value('total') ?? 0);
+            } catch (\Throwable) {
+            }
+
+            if ($logHasEventAction) {
+                try {
+                    $qHits = DB::table('noci_logs')
+                        ->selectRaw('COUNT(*) as total')
+                        ->when($logHasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
+                        ->where('event_action', 'view_halaman')
+                        ->whereRaw($logPeriodSql);
+                    $response['total_hits'] = (int) ($qHits->value('total') ?? 0);
+                } catch (\Throwable) {
+                }
+            }
+
+            if ($logHasEventAction) {
+                $timeExpr = $isDailyChart ? "DATE(`timestamp`)" : "HOUR(`timestamp`)";
+                $eventExpr = "CASE WHEN event_action LIKE '[%]%' THEN SUBSTRING_INDEX(SUBSTRING_INDEX(event_action, ']', 1), '[', -1) ELSE event_action END";
+                $grouped = [];
+
+                try {
+                    $qChart = DB::table('noci_logs')
+                        ->when($logHasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
+                        ->whereRaw($logPeriodSql);
+
+                    if ($logHasPlatform) {
+                        $rows = $qChart
+                            ->selectRaw("{$eventExpr} as event_key, {$timeExpr} as time_bucket, platform, COUNT(*) as total")
+                            ->groupByRaw('event_key, platform, time_bucket')
+                            ->get();
+                    } else {
+                        $rows = $qChart
+                            ->selectRaw("{$eventExpr} as event_key, {$timeExpr} as time_bucket, COUNT(*) as total")
+                            ->groupByRaw('event_key, time_bucket')
+                            ->get();
+                    }
+
+                    foreach ($rows as $row) {
+                        $platform = $logHasPlatform ? (string) ($row->platform ?? 'web') : 'web';
+                        $isTeknisi = str_contains(strtolower($platform), 'teknisi') || str_contains(strtolower($platform), 'dashboard');
+                        if ($isTeknisi) continue;
+
+                        $friendly = $this->friendlyEvent((string) ($row->event_key ?? 'Lainnya'));
+                        if (!isset($grouped[$friendly])) {
+                            $grouped[$friendly] = $templateData;
+                        }
+
+                        $timeKey = $isDailyChart ? (string) ($row->time_bucket ?? '') : (int) ($row->time_bucket ?? 0);
+                        if (array_key_exists($timeKey, $mapIndex)) {
+                            $idx = $mapIndex[$timeKey];
+                            $grouped[$friendly][$idx] += (int) ($row->total ?? 0);
+                        }
+                    }
+                } catch (\Throwable) {
+                }
+
+                $series = [];
+                if (empty($grouped)) {
+                    $series[] = ['name' => 'Tidak Ada Data', 'data' => $templateData];
+                } else {
+                    foreach ($grouped as $name => $values) {
+                        $series[] = ['name' => $name, 'data' => $values];
+                    }
+                }
+                $response['chart_series_pelanggan'] = $series;
+            }
+
+            try {
+                $logSelect = ['visit_id', 'timestamp'];
+                if ($logHasEventAction) $logSelect[] = 'event_action';
+                if ($logHasPlatform) {
+                    $logSelect[] = 'platform';
+                } else {
+                    $logSelect[] = DB::raw("'web' as platform");
+                }
+                if ($logHasIpAddress) {
+                    $logSelect[] = 'ip_address';
+                } else {
+                    $logSelect[] = DB::raw("'' as ip_address");
+                }
+
+                $rows = DB::table('noci_logs')
+                    ->select($logSelect)
+                    ->when($logHasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
+                    ->whereRaw($logPeriodSql)
+                    ->orderByDesc('timestamp')
+                    ->limit(30)
+                    ->get();
+
+                $logs = [];
+                foreach ($rows as $row) {
+                    $rawAction = (string) ($row->event_action ?? '-');
+                    $platform = (string) ($row->platform ?? 'web');
+                    $isTeknisi = str_contains(strtolower($platform), 'teknisi') || str_contains(strtolower($platform), 'dashboard');
+                    if ($isTeknisi) continue;
+
+                    $timeObj = strtotime((string) ($row->timestamp ?? ''));
+                    $time = $timeObj ? date('H:i', $timeObj) : '-';
+                    $actor = str_starts_with($rawAction, '[')
+                        ? (string) ($row->visit_id ?? '-')
+                        : ('User (' . substr((string) ($row->visit_id ?? '0000'), -4) . ')');
+
+                    $logs[] = [
+                        'time' => $time,
+                        'ip' => $actor,
+                        'device' => (string) ($row->ip_address ?? '-'),
+                        'status' => $this->friendlyEvent($rawAction),
+                        'badge_class' => $this->badgeClassForLog($rawAction),
+                    ];
+                    if (count($logs) >= 15) break;
+                }
+                $response['logs_pelanggan'] = $logs;
+            } catch (\Throwable) {
+            }
+        }
+
+        if ($hasCustomers) {
+            $custHasTenant = $this->columnExists('noci_customers', 'tenant_id');
+            $custHasLastSeen = $this->columnExists('noci_customers', 'last_seen');
+            try {
+                $qLeads = DB::table('noci_customers')
+                    ->when($custHasTenant, fn ($q) => $q->where('tenant_id', $tenantId));
+                if ($custHasLastSeen) {
+                    $qLeads->whereRaw($this->periodWhereSql('last_seen', $period));
+                }
+                $response['total_leads'] = (int) $qLeads->count();
+            } catch (\Throwable) {
+                try {
+                    $response['total_leads'] = (int) DB::table('noci_customers')
+                        ->when($custHasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
+                        ->count();
+                } catch (\Throwable) {
+                }
+            }
+        }
+
+        return response()->json($response);
     }
 
     private function ensureLegacyTables(int $tenantId): void
@@ -122,6 +441,7 @@ class ChatAdminApiController extends Controller
 
         // Passthrough actions we already implemented in the REST controller.
         if ($action === 'get_contacts') return $api->contacts($request);
+        if ($action === 'get_customer_overview') return $this->getCustomerOverview($request);
         if ($action === 'get_messages') {
             $vid = trim((string) $request->query('visit_id', ''));
             if ($vid === '') return response()->json([]);

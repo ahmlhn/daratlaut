@@ -47,6 +47,12 @@ let contactsSessionSnapshot = null;
 let chatDbPromise = null;
 let lastIndexedDbPersistAt = 0;
 let lastContactsIndexedDbPersistAt = 0;
+let customerOverviewPeriod = 'today';
+let customerOverviewReqSeq = 0;
+let customerOverviewPoll = null;
+const CUSTOMER_OVERVIEW_POLL_MS = 8000;
+let customerOverviewChart = null;
+let customerOverviewApexPromise = null;
 
 // In SPA (Inertia), the chat DOM can be mounted/unmounted without reloading this script.
 // Keep a mutable reference so boot() can re-bind the current <audio> element.
@@ -107,6 +113,10 @@ function __chatBoot() {
     loadTemplates(); 
     setupShortcuts();
     setupHistoryScrollListener();
+    initCustomerOverviewPanel();
+    loadCustomerOverview(true);
+    if (customerOverviewPoll) clearInterval(customerOverviewPoll);
+    customerOverviewPoll = setInterval(() => loadCustomerOverview(false), CUSTOMER_OVERVIEW_POLL_MS);
 
     window.__chatBooting = false;
 }
@@ -129,6 +139,11 @@ window.__chatDispose = function () {
         loadingOlderHistory = false;
         lastContactSync = '';
         isFetching = false;
+        if (customerOverviewPoll) { clearInterval(customerOverviewPoll); customerOverviewPoll = null; }
+        if (customerOverviewChart) {
+            try { customerOverviewChart.destroy(); } catch (e) {}
+            customerOverviewChart = null;
+        }
     } catch (e) {
         // best-effort cleanup
     }
@@ -201,6 +216,267 @@ function closeChatMobile() {
     const url = new URL(window.location);
     url.searchParams.delete('id');
     window.history.replaceState({ view: 'list' }, '', url);
+}
+
+function isCustomerOverviewVisible() {
+    const emptyState = document.getElementById('empty-state');
+    const panel = document.getElementById('customer-overview-panel');
+    return !!panel && !!emptyState && !emptyState.classList.contains('hidden');
+}
+
+function initCustomerOverviewPanel() {
+    const panel = document.getElementById('customer-overview-panel');
+    if (!panel) return;
+
+    const periodEl = document.getElementById('customer-overview-period');
+    const refreshBtn = document.getElementById('customer-overview-refresh');
+
+    if (periodEl) {
+        if (customerOverviewPeriod) periodEl.value = customerOverviewPeriod;
+        if (!periodEl.dataset.bound) {
+            periodEl.addEventListener('change', () => {
+                customerOverviewPeriod = periodEl.value || 'today';
+                loadCustomerOverview(true);
+            });
+            periodEl.dataset.bound = '1';
+        }
+    }
+
+    if (refreshBtn && !refreshBtn.dataset.bound) {
+        refreshBtn.addEventListener('click', () => loadCustomerOverview(true));
+        refreshBtn.dataset.bound = '1';
+    }
+}
+
+function setCustomerOverviewOnline(isOnline) {
+    const dot = document.getElementById('customer-overview-live-dot');
+    const ping = document.getElementById('customer-overview-live-ping');
+    const text = document.getElementById('customer-overview-live-text');
+    if (!dot || !text) return;
+
+    if (isOnline) {
+        text.textContent = 'LIVE';
+        dot.classList.remove('bg-red-500');
+        dot.classList.add('bg-green-500');
+        if (ping) ping.classList.remove('hidden');
+        text.classList.remove('text-red-500');
+    } else {
+        text.textContent = 'OFFLINE';
+        dot.classList.remove('bg-green-500');
+        dot.classList.add('bg-red-500');
+        if (ping) ping.classList.add('hidden');
+        text.classList.add('text-red-500');
+    }
+}
+
+function updateCustomerOverviewStat(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const nextVal = String(value ?? 0);
+    if (el.textContent === nextVal) return;
+    el.textContent = nextVal;
+    el.style.transform = 'scale(1.06)';
+    setTimeout(() => { el.style.transform = 'scale(1)'; }, 180);
+}
+
+function renderCustomerOverviewLogs(logs) {
+    const holder = document.getElementById('customer-overview-logs');
+    if (!holder) return;
+
+    if (!Array.isArray(logs) || logs.length === 0) {
+        holder.innerHTML = '<div class="px-3 py-6 text-center text-xs text-slate-400">Belum ada log pelanggan.</div>';
+        return;
+    }
+
+    holder.innerHTML = logs.map((log) => {
+        const badgeClass = (typeof log.badge_class === 'string' && log.badge_class.trim() !== '')
+            ? log.badge_class
+            : 'text-slate-500 bg-slate-100 dark:bg-slate-800';
+        const actor = escapeHtml(String(log.ip || '-'));
+        const device = escapeHtml(String(log.device || '-'));
+        const time = escapeHtml(String(log.time || '-'));
+        const status = escapeHtml(String(log.status || '-'));
+        return `
+            <div class="px-3 py-2.5 flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                    <div class="text-xs font-bold text-slate-700 dark:text-slate-200 truncate">${actor}</div>
+                    <div class="text-[10px] text-slate-400 truncate">${device}</div>
+                </div>
+                <div class="shrink-0 text-right">
+                    <div class="text-[10px] font-mono text-slate-400 mb-1">${time}</div>
+                    <span class="inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${badgeClass}">${status}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function ensureCustomerOverviewApexLoaded() {
+    if (window.ApexCharts) return Promise.resolve(true);
+    if (customerOverviewApexPromise) return customerOverviewApexPromise;
+
+    customerOverviewApexPromise = new Promise((resolve) => {
+        const existing = document.getElementById('chat-overview-apexcharts');
+        if (existing) {
+            existing.addEventListener('load', () => resolve(!!window.ApexCharts), { once: true });
+            existing.addEventListener('error', () => resolve(false), { once: true });
+            return;
+        }
+
+        const s = document.createElement('script');
+        s.id = 'chat-overview-apexcharts';
+        s.src = 'https://cdn.jsdelivr.net/npm/apexcharts';
+        s.async = true;
+        s.onload = () => resolve(!!window.ApexCharts);
+        s.onerror = () => resolve(false);
+        document.body.appendChild(s);
+    }).finally(() => {
+        setTimeout(() => { customerOverviewApexPromise = null; }, 0);
+    });
+
+    return customerOverviewApexPromise;
+}
+
+function renderCustomerOverviewChart(labels, series) {
+    const chartEl = document.getElementById('customer-overview-chart');
+    const emptyEl = document.getElementById('customer-overview-chart-empty');
+    if (!chartEl) return;
+
+    const safeLabels = Array.isArray(labels) ? labels : [];
+    const safeSeries = Array.isArray(series) ? series : [];
+    const hasData = safeSeries.some((s) => Array.isArray(s?.data) && s.data.some((v) => Number(v || 0) > 0));
+
+    if (!hasData) {
+        if (customerOverviewChart) {
+            try { customerOverviewChart.destroy(); } catch (e) {}
+            customerOverviewChart = null;
+        }
+        chartEl.innerHTML = '';
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        return;
+    }
+
+    if (emptyEl) emptyEl.classList.add('hidden');
+    const isDark = document.documentElement.classList.contains('dark');
+
+    ensureCustomerOverviewApexLoaded().then((ok) => {
+        if (!ok || !window.ApexCharts || !document.body.contains(chartEl)) return;
+
+        const options = {
+            series: safeSeries,
+            chart: {
+                type: 'area',
+                height: 220,
+                fontFamily: 'Plus Jakarta Sans, sans-serif',
+                background: 'transparent',
+                toolbar: { show: false },
+                animations: { enabled: true }
+            },
+            colors: [
+                '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
+                '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16',
+                '#f97316', '#6366f1', '#14b8a6', '#d946ef'
+            ],
+            stroke: { curve: 'smooth', width: 2 },
+            dataLabels: { enabled: false },
+            fill: { type: 'gradient', gradient: { opacityFrom: 0.35, opacityTo: 0.05 } },
+            xaxis: {
+                categories: safeLabels,
+                labels: { style: { colors: isDark ? '#94a3b8' : '#64748b', fontSize: '10px' } },
+                axisBorder: { show: false },
+                axisTicks: { show: false },
+                tooltip: { enabled: false }
+            },
+            yaxis: {
+                labels: {
+                    style: { colors: isDark ? '#94a3b8' : '#64748b', fontSize: '10px' },
+                    formatter: function (val) { return Number(val || 0).toFixed(0); }
+                }
+            },
+            grid: {
+                borderColor: isDark ? '#334155' : '#e2e8f0',
+                strokeDashArray: 4,
+                padding: { left: 8, right: 4, top: 4, bottom: 0 }
+            },
+            legend: {
+                show: true,
+                position: 'top',
+                fontSize: '10px',
+                labels: { colors: isDark ? '#cbd5e1' : '#475569' }
+            },
+            tooltip: { theme: isDark ? 'dark' : 'light' },
+            responsive: [{
+                breakpoint: 1024,
+                options: {
+                    legend: { position: 'bottom' }
+                }
+            }]
+        };
+
+        if (customerOverviewChart) {
+            customerOverviewChart.updateOptions(options, false, true, true);
+            return;
+        }
+
+        customerOverviewChart = new window.ApexCharts(chartEl, options);
+        customerOverviewChart.render();
+    });
+}
+
+function setCustomerOverviewUpdatedLabel(serverTime) {
+    const el = document.getElementById('customer-overview-updated');
+    if (!el) return;
+    if (!serverTime) {
+        el.textContent = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        return;
+    }
+    const dt = new Date(serverTime);
+    if (Number.isNaN(dt.getTime())) {
+        el.textContent = String(serverTime);
+        return;
+    }
+    el.textContent = dt.toLocaleString('id-ID', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function loadCustomerOverview(force = false) {
+    const panel = document.getElementById('customer-overview-panel');
+    if (!panel) return;
+    if (!force && !isCustomerOverviewVisible()) return;
+
+    const periodEl = document.getElementById('customer-overview-period');
+    if (periodEl && periodEl.value) {
+        customerOverviewPeriod = periodEl.value;
+    }
+
+    const reqSeq = ++customerOverviewReqSeq;
+    const url = `admin_api.php?action=get_customer_overview&period=${encodeURIComponent(customerOverviewPeriod || 'today')}`;
+
+    fetch(url)
+        .then((r) => r.json())
+        .then((res) => {
+            if (reqSeq !== customerOverviewReqSeq) return;
+            if (!res || res.status === 'error') {
+                if (res && res.msg === 'Unauthorized') {
+                    window.location.href = '../login.php';
+                    return;
+                }
+                setCustomerOverviewOnline(false);
+                return;
+            }
+
+            setCustomerOverviewOnline(true);
+            updateCustomerOverviewStat('customer-overview-online', res.online_users ?? 0);
+            updateCustomerOverviewStat('customer-overview-unique', res.unique_visits ?? 0);
+            updateCustomerOverviewStat('customer-overview-leads', res.total_leads ?? 0);
+            updateCustomerOverviewStat('customer-overview-hits', res.total_hits ?? 0);
+            renderCustomerOverviewLogs(res.logs_pelanggan || []);
+            renderCustomerOverviewChart(res.chart_labels || [], res.chart_series_pelanggan || []);
+            setCustomerOverviewUpdatedLabel(res.server_time || '');
+        })
+        .catch(() => {
+            if (reqSeq !== customerOverviewReqSeq) return;
+            setCustomerOverviewOnline(false);
+        });
 }
 
 function compactChatCacheMap(inputMap, ttlMs) {
@@ -1046,6 +1322,8 @@ function closeActiveChat() {
     document.getElementById('empty-state').classList.remove('hidden'); 
     document.getElementById('panel-list').classList.remove('hidden');
     document.getElementById('panel-chat').classList.add('mobile-hidden'); 
+    initCustomerOverviewPanel();
+    loadCustomerOverview(true);
     document.title = "Chat Admin | Isolir";
     const url = new URL(window.location); url.searchParams.delete('id'); window.history.replaceState({}, '', url);
     document.querySelectorAll('.user-item-active').forEach(el => {

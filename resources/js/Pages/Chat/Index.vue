@@ -263,16 +263,82 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
             
             <div id="empty-state" class="absolute inset-0 flex flex-col items-center justify-center bg-[#f8fafc] dark:bg-darkbg z-0 overflow-hidden group select-none transition-opacity duration-300">
                 <div class="absolute inset-0 bg-[url('/assets/favicon.svg')] bg-repeat opacity-[0.05] dark:opacity-[0.02] grayscale animate-[pulse_8s_infinite] pointer-events-none"></div>
-                <div class="relative z-10 text-center p-10 animate-in fade-in zoom-in duration-700">
-                    <div class="relative inline-block mb-8 group-hover:scale-110 transition-transform duration-500">
-                        <div class="absolute inset-0 bg-blue-200 dark:bg-green-900/30 blur-3xl opacity-40 animate-pulse rounded-full"></div>
-                        <img src="/assets/favicon.svg" alt="Empty" class="w-24 h-24 opacity-90 animate-[bounce_3s_infinite] drop-shadow-xl relative z-10 filter drop-shadow-md">
+                <div class="relative z-10 w-full max-w-5xl px-4 md:px-8 py-8 animate-in fade-in zoom-in duration-700">
+                    <div class="text-center">
+                        <div class="relative inline-block mb-6 group-hover:scale-110 transition-transform duration-500">
+                            <div class="absolute inset-0 bg-blue-200 dark:bg-green-900/30 blur-3xl opacity-40 animate-pulse rounded-full"></div>
+                            <img src="/assets/favicon.svg" alt="Empty" class="w-20 h-20 md:w-24 md:h-24 opacity-90 animate-[bounce_3s_infinite] drop-shadow-xl relative z-10 filter drop-shadow-md">
+                        </div>
+                        <h3 class="text-3xl font-black text-slate-800 dark:text-slate-200 mb-2 tracking-tight">Halo, <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-blue-800 dark:from-green-400 dark:to-emerald-600"><span id="adm-first-name">Admin</span></span>!</h3>
+                        <p class="text-slate-500 dark:text-slate-400 text-sm max-w-xs mx-auto leading-relaxed mb-5">Pilih percakapan dari panel kiri.</p>
+                        <button onclick="openGame()" class="group relative px-6 py-3 bg-white dark:bg-[#233138] border border-slate-200 dark:border-white/10 rounded-full text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-green-400 hover:border-blue-300 dark:hover:border-green-500/50 shadow-sm hover:shadow-md transition-all flex items-center gap-2 mx-auto overflow-hidden">
+                            <span class="absolute inset-0 bg-blue-50 dark:bg-green-900/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></span><span class="relative z-10 text-lg">🐍</span><span class="relative z-10">Gabut? Main Snake</span>
+                        </button>
                     </div>
-                    <h3 class="text-3xl font-black text-slate-800 dark:text-slate-200 mb-3 tracking-tight">Halo, <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-blue-800 dark:from-green-400 dark:to-emerald-600"><span id="adm-first-name">Admin</span></span>!</h3>
-                    <p class="text-slate-500 dark:text-slate-400 text-sm max-w-xs mx-auto leading-relaxed mb-8">Pilih percakapan dari panel kiri.</p>
-                    <button onclick="openGame()" class="group relative px-6 py-3 bg-white dark:bg-[#233138] border border-slate-200 dark:border-white/10 rounded-full text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-green-400 hover:border-blue-300 dark:hover:border-green-500/50 shadow-sm hover:shadow-md transition-all flex items-center gap-2 mx-auto overflow-hidden">
-                        <span class="absolute inset-0 bg-blue-50 dark:bg-green-900/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></span><span class="relative z-10 text-lg">🐍</span><span class="relative z-10">Gabut? Main Snake</span>
-                    </button>
+
+                    <div id="customer-overview-panel" class="mt-7 bg-white/90 dark:bg-[#111b21]/95 backdrop-blur border border-slate-200 dark:border-white/10 rounded-2xl shadow-sm p-4 md:p-5 text-left">
+                        <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+                            <div>
+                                <h4 class="text-sm font-extrabold tracking-wide text-slate-800 dark:text-slate-100">Data Pelanggan</h4>
+                                <p class="text-[11px] text-slate-500 dark:text-slate-400">Ringkasan realtime aktivitas pelanggan dari dashboard native.</p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <select id="customer-overview-period" class="h-9 px-3 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#202c33] text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-blue-500 dark:focus:border-green-500">
+                                    <option value="today">Hari Ini</option>
+                                    <option value="yesterday">Kemarin</option>
+                                    <option value="7days">7 Hari</option>
+                                    <option value="30days">30 Hari</option>
+                                </select>
+                                <button id="customer-overview-refresh" type="button" class="h-9 px-3 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#202c33] text-xs font-bold text-slate-600 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5 transition">Refresh</button>
+                                <span id="customer-overview-live-pill" class="inline-flex items-center gap-1.5 px-2.5 h-9 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#202c33] text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                                    <span class="relative flex h-2 w-2">
+                                        <span id="customer-overview-live-ping" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                        <span id="customer-overview-live-dot" class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                                    </span>
+                                    <span id="customer-overview-live-text">LIVE</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 mb-4">
+                            <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] p-3">
+                                <div class="text-[10px] uppercase font-bold tracking-wider text-slate-400">Sedang Online</div>
+                                <div id="customer-overview-online" class="text-xl font-black text-slate-800 dark:text-white mt-1">0</div>
+                            </div>
+                            <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] p-3">
+                                <div class="text-[10px] uppercase font-bold tracking-wider text-slate-400">Pengunjung Unik</div>
+                                <div id="customer-overview-unique" class="text-xl font-black text-slate-800 dark:text-white mt-1">0</div>
+                            </div>
+                            <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] p-3">
+                                <div class="text-[10px] uppercase font-bold tracking-wider text-slate-400">Leads Baru</div>
+                                <div id="customer-overview-leads" class="text-xl font-black text-slate-800 dark:text-white mt-1">0</div>
+                            </div>
+                            <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] p-3">
+                                <div class="text-[10px] uppercase font-bold tracking-wider text-slate-400">Total Hits</div>
+                                <div id="customer-overview-hits" class="text-xl font-black text-slate-800 dark:text-white mt-1">0</div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-5 gap-3">
+                            <div class="lg:col-span-3 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] overflow-hidden">
+                                <div class="px-3 py-2 border-b border-slate-200 dark:border-white/10 text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400">Log Pelanggan</div>
+                                <div id="customer-overview-logs" class="max-h-56 overflow-y-auto custom-scrollbar divide-y divide-slate-100 dark:divide-white/5">
+                                    <div class="px-3 py-6 text-center text-xs text-slate-400">Memuat data pelanggan...</div>
+                                </div>
+                            </div>
+                            <div class="lg:col-span-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] overflow-hidden">
+                                <div class="px-3 py-2 border-b border-slate-200 dark:border-white/10 text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400">Tren Aktivitas Pelanggan</div>
+                                <div class="p-2.5">
+                                    <div id="customer-overview-chart" class="h-56"></div>
+                                    <div id="customer-overview-chart-empty" class="hidden px-2 py-8 text-center text-xs text-slate-400">Belum ada data chart untuk periode ini.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3 text-[10px] text-slate-400 dark:text-slate-500">
+                            Update terakhir: <span id="customer-overview-updated">-</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
