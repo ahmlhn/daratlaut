@@ -263,7 +263,7 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
             
             <div id="empty-state" class="absolute inset-0 flex flex-col items-center justify-center bg-[#f8fafc] dark:bg-darkbg z-0 overflow-hidden group select-none transition-opacity duration-300">
                 <div class="absolute inset-0 bg-[url('/assets/favicon.svg')] bg-repeat opacity-[0.05] dark:opacity-[0.02] grayscale animate-[pulse_8s_infinite] pointer-events-none"></div>
-                <div class="relative z-10 w-full max-w-5xl px-4 md:px-8 py-8 animate-in fade-in zoom-in duration-700">
+                <div class="relative z-10 w-full max-w-7xl px-4 md:px-8 xl:px-12 py-8 md:py-10 animate-in fade-in zoom-in duration-700">
                     <div class="text-center">
                         <div class="relative inline-block mb-6 group-hover:scale-110 transition-transform duration-500">
                             <div class="absolute inset-0 bg-blue-200 dark:bg-green-900/30 blur-3xl opacity-40 animate-pulse rounded-full"></div>
@@ -276,7 +276,7 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
                         </button>
                     </div>
 
-                    <div id="customer-overview-panel" class="mt-7 bg-white/90 dark:bg-[#111b21]/95 backdrop-blur border border-slate-200 dark:border-white/10 rounded-2xl shadow-sm p-4 md:p-5 text-left">
+                    <div id="customer-overview-panel" class="mt-8 bg-white/90 dark:bg-[#111b21]/95 backdrop-blur border border-slate-200 dark:border-white/10 rounded-2xl shadow-sm p-5 md:p-6 xl:p-7 text-left">
                         <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
                             <div>
                                 <h4 class="text-sm font-extrabold tracking-wide text-slate-800 dark:text-slate-100">Data Pelanggan</h4>
@@ -319,7 +319,7 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-1 lg:grid-cols-5 gap-3">
+                        <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
                             <div class="lg:col-span-3 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] overflow-hidden">
                                 <div class="px-3 py-2 border-b border-slate-200 dark:border-white/10 text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400">Log Pelanggan</div>
                                 <div id="customer-overview-logs" class="max-h-56 overflow-y-auto custom-scrollbar divide-y divide-slate-100 dark:divide-white/5">
@@ -329,7 +329,7 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
                             <div class="lg:col-span-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] overflow-hidden">
                                 <div class="px-3 py-2 border-b border-slate-200 dark:border-white/10 text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400">Tren Kunjungan Isolir</div>
                                 <div class="p-2.5">
-                                    <div id="customer-overview-chart" class="h-56"></div>
+                                    <div id="customer-overview-chart" class="h-64"></div>
                                     <div id="customer-overview-chart-empty" class="hidden px-2 py-8 text-center text-xs text-slate-400">Belum ada data chart untuk periode ini.</div>
                                 </div>
                             </div>
@@ -623,6 +623,18 @@ body.chat-admin-lock {
 #legacy-chat-root #tpl-list,
 #legacy-chat-root #manager-list {
   overscroll-behavior: contain;
+}
+
+@media (min-width: 1024px) {
+  #legacy-chat-root #user-detail-sidebar {
+    width: 23rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  #legacy-chat-root #user-detail-sidebar {
+    width: 25rem;
+  }
 }
 
 #legacy-chat-root .mobile-hidden { display: none !important; }
