@@ -262,7 +262,7 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
         <div id="panel-chat" class="flex-1 flex flex-col h-full bg-[#f0f2f5] dark:bg-darkbg relative mobile-hidden w-full overflow-hidden transition-colors">
             
             <div id="empty-state" class="absolute inset-0 flex flex-col items-center justify-center bg-[#f8fafc] dark:bg-darkbg z-0 overflow-hidden group select-none transition-opacity duration-300">
-                <div class="absolute inset-0 bg-[url('/assets/favicon.svg')] bg-repeat opacity-[0.05] dark:opacity-[0.02] grayscale animate-[pulse_8s_infinite] pointer-events-none"></div>
+                <div class="absolute inset-0 bg-repeat opacity-[0.05] dark:opacity-[0.02] grayscale animate-[pulse_8s_infinite] pointer-events-none" style="background-image: url('/assets/favicon.svg');"></div>
                 <div class="relative z-10 w-full max-w-7xl px-4 md:px-8 xl:px-12 py-8 md:py-10 animate-in fade-in zoom-in duration-700">
                     <div class="text-center">
                         <div class="relative inline-block mb-6 group-hover:scale-110 transition-transform duration-500">
