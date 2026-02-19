@@ -64,3 +64,4 @@ Last verified: 2026-02-19
 - 2026-02-20: Added `balesotomatis` personal-send support in `WaGatewaySender` and updated Direct WA notify flow to try active providers (`mpwa` then `balesotomatis`) before legacy fallback, fixing missed WA alerts on reopened sessions. Docs: N/A.
 - 2026-02-20: Adjusted Chat Admin desktop detail-sidebar behavior so it is hidden by default and only shown when toggled, preventing customer detail panel from occupying/covering conversation area by default. Docs: N/A.
 - 2026-02-19: Made Chat Admin detail sidebar width responsive (`clamp` + flex-basis) so it adapts when main admin sidebar expands/collapses instead of staying fixed width. Docs: N/A.
+- 2026-02-19: Fixed Chat Admin session delete UX/data sync by clearing deleted contact from local caches, forcing full contacts refresh after delete, and invalidating backend contacts cache on `delete_session`. Docs: N/A.

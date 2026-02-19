@@ -907,6 +907,22 @@ function persistContactsListToIndexedDb(payload = null) {
     }).catch(() => {});
 }
 
+function clearContactsCache() {
+    try {
+        sessionStorage.removeItem(CHAT_CONTACTS_SESSION_CACHE_KEY);
+    } catch (e) {
+    }
+
+    openChatCacheDb().then((db) => {
+        if (!db) return;
+        try {
+            const tx = db.transaction(CHAT_INDEXEDDB_STORE, 'readwrite');
+            tx.objectStore(CHAT_INDEXEDDB_STORE).delete(indexedDbContactsKey());
+        } catch (e) {
+        }
+    }).catch(() => {});
+}
+
 function readContactsListFromIndexedDb() {
     return openChatCacheDb().then((db) => {
         if (!db) return null;
@@ -955,7 +971,10 @@ function restoreContactsListFromIndexedDb() {
 
 function persistContactsCache(force = false) {
     if (isSearching) return;
-    if (!Array.isArray(usersData) || usersData.length === 0) return;
+    if (!Array.isArray(usersData) || usersData.length === 0) {
+        clearContactsCache();
+        return;
+    }
     const snapshot = contactsCachePayloadFromState();
     persistContactsCacheToSession(snapshot);
     const nowTs = Date.now();
@@ -1901,12 +1920,19 @@ function deleteSession() {
                     delete chatRoomCache[deletingVisitId];
                     persistChatCacheToSession();
                     deleteChatRoomFromIndexedDb(deletingVisitId);
+                    usersData = usersData.filter(u => String(u.visit_id) !== deletingVisitId);
+                    renderUserList(usersData, true);
+                    renderFilterButtons(usersData);
+                    persistContactsCache(true);
                     closeActiveChat(); 
-                    loadContacts(false); 
+                    lastContactSync = '';
+                    loadContacts(true); 
                     showSmartAlert("Terhapus", "Data chat berhasil dihapus.", "success"); 
                 } else { 
-                    showSmartAlert("Gagal", "Error.", "error"); 
+                    showSmartAlert("Gagal", res.msg || "Error.", "error"); 
                 } 
+            }).catch(() => {
+                showSmartAlert("Gagal", "Error.", "error");
             }); 
         } 
     }); 

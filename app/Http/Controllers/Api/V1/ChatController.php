@@ -94,6 +94,16 @@ class ChatController extends Controller
         }
     }
 
+    private function forgetContactsCache(int $tenantId): void
+    {
+        if ($tenantId <= 0) return;
+
+        try {
+            Cache::forget('chat:v1:contacts_full:' . $tenantId);
+        } catch (\Throwable) {
+        }
+    }
+
     private function hasColumnCached(string $table, string $col): bool
     {
         $key = $table . ':' . $col;
@@ -932,6 +942,7 @@ class ChatController extends Controller
         DB::table('noci_chat')->when($hasTenant, fn ($q) => $q->where('tenant_id', $tenantId))->where('visit_id', $visitId)->delete();
         DB::table('noci_customers')->when($this->hasCustomerColumn('tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))->where('visit_id', $visitId)->delete();
         $this->bumpConversationCacheVersion($tenantId, $visitId);
+        $this->forgetContactsCache($tenantId);
 
         return response()->json(['status' => 'success']);
     }
