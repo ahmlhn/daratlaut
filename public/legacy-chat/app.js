@@ -47,7 +47,7 @@ let contactsSessionSnapshot = null;
 let chatDbPromise = null;
 let lastIndexedDbPersistAt = 0;
 let lastContactsIndexedDbPersistAt = 0;
-let customerOverviewPeriod = '7days';
+let customerOverviewPeriod = 'today';
 let customerOverviewReqSeq = 0;
 let customerOverviewPoll = null;
 const CUSTOMER_OVERVIEW_POLL_MS = 8000;
@@ -235,7 +235,7 @@ function initCustomerOverviewPanel() {
         if (customerOverviewPeriod) periodEl.value = customerOverviewPeriod;
         if (!periodEl.dataset.bound) {
             periodEl.addEventListener('change', () => {
-                customerOverviewPeriod = periodEl.value || '7days';
+                customerOverviewPeriod = periodEl.value || 'today';
                 loadCustomerOverview(true);
             });
             periodEl.dataset.bound = '1';
@@ -344,6 +344,9 @@ function renderCustomerOverviewChart(labels, series) {
 
     const safeLabels = Array.isArray(labels) ? labels : [];
     const safeSeries = Array.isArray(series) ? series : [];
+    const isHourlyChart = safeLabels.length === 24 && safeLabels.every((label) => /^\d{2}:00$/.test(String(label || '')));
+    const isNarrowScreen = window.innerWidth < 768;
+    const hourlyLabelStep = isHourlyChart ? (isNarrowScreen ? 4 : 2) : 1;
     const hasData = safeSeries.some((s) => Array.isArray(s?.data) && s.data.some((v) => Number(v || 0) > 0));
 
     if (!hasData) {
@@ -382,7 +385,19 @@ function renderCustomerOverviewChart(labels, series) {
             fill: { type: 'gradient', gradient: { opacityFrom: 0.35, opacityTo: 0.05 } },
             xaxis: {
                 categories: safeLabels,
-                labels: { style: { colors: isDark ? '#94a3b8' : '#64748b', fontSize: '10px' } },
+                tickAmount: isHourlyChart ? Math.ceil(24 / hourlyLabelStep) : undefined,
+                labels: {
+                    style: { colors: isDark ? '#94a3b8' : '#64748b', fontSize: '10px' },
+                    rotate: isHourlyChart ? -45 : 0,
+                    hideOverlappingLabels: true,
+                    minHeight: isHourlyChart ? 44 : undefined,
+                    formatter: function (val) {
+                        if (!isHourlyChart) return val;
+                        const m = String(val || '').match(/^(\d{2}):/);
+                        if (!m) return val;
+                        return (Number(m[1]) % hourlyLabelStep === 0) ? val : '';
+                    }
+                },
                 axisBorder: { show: false },
                 axisTicks: { show: false },
                 tooltip: { enabled: false }
@@ -396,7 +411,7 @@ function renderCustomerOverviewChart(labels, series) {
             grid: {
                 borderColor: isDark ? '#334155' : '#e2e8f0',
                 strokeDashArray: 4,
-                padding: { left: 8, right: 4, top: 4, bottom: 0 }
+                padding: { left: 8, right: 4, top: 4, bottom: isHourlyChart ? 8 : 0 }
             },
             legend: {
                 show: true,
@@ -449,7 +464,7 @@ function loadCustomerOverview(force = false) {
     }
 
     const reqSeq = ++customerOverviewReqSeq;
-    const url = `admin_api.php?action=get_customer_overview&period=${encodeURIComponent(customerOverviewPeriod || '7days')}`;
+    const url = `admin_api.php?action=get_customer_overview&period=${encodeURIComponent(customerOverviewPeriod || 'today')}`;
 
     fetch(url)
         .then((r) => r.json())
