@@ -319,14 +319,14 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                            <div class="lg:col-span-3 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] overflow-hidden">
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] overflow-hidden">
                                 <div class="px-3 py-2 border-b border-slate-200 dark:border-white/10 text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400">Log Pelanggan</div>
                                 <div id="customer-overview-logs" class="max-h-56 overflow-y-auto custom-scrollbar divide-y divide-slate-100 dark:divide-white/5">
                                     <div class="px-3 py-6 text-center text-xs text-slate-400">Memuat data pelanggan...</div>
                                 </div>
                             </div>
-                            <div class="lg:col-span-2 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] overflow-hidden">
+                            <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] overflow-hidden">
                                 <div class="px-3 py-2 border-b border-slate-200 dark:border-white/10 text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400">Tren Kunjungan Isolir</div>
                                 <div class="p-2.5">
                                     <div id="customer-overview-chart" class="h-64"></div>
