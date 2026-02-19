@@ -231,23 +231,23 @@ class ChatAdminApiController extends Controller
 
             if ($logHasEventAction) {
                 $timeExpr = $isDailyChart ? "DATE(`timestamp`)" : "HOUR(`timestamp`)";
-                $eventExpr = "CASE WHEN event_action LIKE '[%]%' THEN SUBSTRING_INDEX(SUBSTRING_INDEX(event_action, ']', 1), '[', -1) ELSE event_action END";
-                $grouped = [];
+                $seriesData = $templateData;
 
                 try {
                     $qChart = DB::table('noci_logs')
                         ->when($logHasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
+                        ->where('event_action', 'view_halaman')
                         ->whereRaw($logPeriodSql);
 
                     if ($logHasPlatform) {
                         $rows = $qChart
-                            ->selectRaw("{$eventExpr} as event_key, {$timeExpr} as time_bucket, platform, COUNT(*) as total")
-                            ->groupByRaw('event_key, platform, time_bucket')
+                            ->selectRaw("{$timeExpr} as time_bucket, platform, COUNT(*) as total")
+                            ->groupByRaw('platform, time_bucket')
                             ->get();
                     } else {
                         $rows = $qChart
-                            ->selectRaw("{$eventExpr} as event_key, {$timeExpr} as time_bucket, COUNT(*) as total")
-                            ->groupByRaw('event_key, time_bucket')
+                            ->selectRaw("{$timeExpr} as time_bucket, COUNT(*) as total")
+                            ->groupByRaw('time_bucket')
                             ->get();
                     }
 
@@ -256,29 +256,18 @@ class ChatAdminApiController extends Controller
                         $isTeknisi = str_contains(strtolower($platform), 'teknisi') || str_contains(strtolower($platform), 'dashboard');
                         if ($isTeknisi) continue;
 
-                        $friendly = $this->friendlyEvent((string) ($row->event_key ?? 'Lainnya'));
-                        if (!isset($grouped[$friendly])) {
-                            $grouped[$friendly] = $templateData;
-                        }
-
                         $timeKey = $isDailyChart ? (string) ($row->time_bucket ?? '') : (int) ($row->time_bucket ?? 0);
                         if (array_key_exists($timeKey, $mapIndex)) {
                             $idx = $mapIndex[$timeKey];
-                            $grouped[$friendly][$idx] += (int) ($row->total ?? 0);
+                            $seriesData[$idx] += (int) ($row->total ?? 0);
                         }
                     }
                 } catch (\Throwable) {
                 }
 
-                $series = [];
-                if (empty($grouped)) {
-                    $series[] = ['name' => 'Tidak Ada Data', 'data' => $templateData];
-                } else {
-                    foreach ($grouped as $name => $values) {
-                        $series[] = ['name' => $name, 'data' => $values];
-                    }
-                }
-                $response['chart_series_pelanggan'] = $series;
+                $response['chart_series_pelanggan'] = [
+                    ['name' => 'Kunjungan Halaman Isolir', 'data' => $seriesData],
+                ];
             }
 
             try {
