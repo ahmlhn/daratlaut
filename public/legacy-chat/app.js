@@ -53,6 +53,143 @@ let customerOverviewPoll = null;
 const CUSTOMER_OVERVIEW_POLL_MS = 8000;
 let customerOverviewChart = null;
 let customerOverviewApexPromise = null;
+const CHAT_WEEKDAY_SHORT = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+
+function parseChatDateTime(rawValue) {
+    if (!rawValue) return null;
+    if (rawValue instanceof Date) return Number.isNaN(rawValue.getTime()) ? null : rawValue;
+
+    const text = String(rawValue).trim();
+    if (!text) return null;
+
+    const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+    let dt = new Date(normalized);
+    if (!Number.isNaN(dt.getTime())) return dt;
+
+    dt = new Date(text.replace(/-/g, '/'));
+    if (!Number.isNaN(dt.getTime())) return dt;
+
+    return null;
+}
+
+function getDayStart(dateObj) {
+    return new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+}
+
+function getCalendarDiffDays(fromDate, targetDate) {
+    const fromMs = getDayStart(fromDate).getTime();
+    const targetMs = getDayStart(targetDate).getTime();
+    return Math.round((fromMs - targetMs) / 86400000);
+}
+
+function formatHourMinute(rawValue) {
+    const dt = parseChatDateTime(rawValue);
+    if (!dt) return '';
+    return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatContactTimestamp(rawValue, fallbackText = '') {
+    const dt = parseChatDateTime(rawValue);
+    if (!dt) return String(fallbackText || '');
+
+    const now = new Date();
+    const diffDays = getCalendarDiffDays(now, dt);
+    if (diffDays <= 0) return formatHourMinute(dt);
+    if (diffDays === 1) return 'Kemarin';
+    if (diffDays < 7) return CHAT_WEEKDAY_SHORT[dt.getDay()] || formatHourMinute(dt);
+
+    const dd = String(dt.getDate()).padStart(2, '0');
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    if (dt.getFullYear() === now.getFullYear()) return `${dd}/${mm}`;
+    return `${dd}/${mm}/${String(dt.getFullYear()).slice(-2)}`;
+}
+
+function formatContactTimestampTooltip(rawValue) {
+    const dt = parseChatDateTime(rawValue);
+    if (!dt) return '';
+    try {
+        return new Intl.DateTimeFormat('id-ID', {
+            weekday: 'long',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        }).format(dt);
+    } catch (e) {
+        const yyyy = String(dt.getFullYear());
+        const mm = String(dt.getMonth() + 1).padStart(2, '0');
+        const dd = String(dt.getDate()).padStart(2, '0');
+        return `${dd}/${mm}/${yyyy} ${formatHourMinute(dt)}`;
+    }
+}
+
+function getMessageDayKey(rawValue) {
+    const dt = parseChatDateTime(rawValue);
+    if (!dt) return '';
+    const yyyy = String(dt.getFullYear());
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatMessageDayLabel(rawValue) {
+    const dt = parseChatDateTime(rawValue);
+    if (!dt) return 'Tanggal tidak diketahui';
+
+    const diffDays = getCalendarDiffDays(new Date(), dt);
+    if (diffDays === 0) return 'Hari Ini';
+    if (diffDays === 1) return 'Kemarin';
+
+    try {
+        return new Intl.DateTimeFormat('id-ID', {
+            day: '2-digit',
+            month: 'long',
+            year: 'numeric',
+        }).format(dt);
+    } catch (e) {
+        const yyyy = String(dt.getFullYear());
+        const mm = String(dt.getMonth() + 1).padStart(2, '0');
+        const dd = String(dt.getDate()).padStart(2, '0');
+        return `${dd}/${mm}/${yyyy}`;
+    }
+}
+
+function setMessageWrapperMeta(wrapper, msg) {
+    if (!wrapper) return;
+    const rawDate = String((msg && (msg.created_at || msg.last_msg_at || '')) || '').trim();
+    if (rawDate) {
+        wrapper.setAttribute('data-message-date', rawDate);
+    } else {
+        wrapper.removeAttribute('data-message-date');
+    }
+}
+
+function refreshMessageDaySeparators() {
+    const container = document.getElementById('messages');
+    if (!container) return;
+
+    container.querySelectorAll('.msg-day-separator').forEach(el => el.remove());
+
+    const wrappers = Array.from(container.querySelectorAll('[id^="msg-wrapper-"]'));
+    if (!wrappers.some((wrapper) => (wrapper.getAttribute('data-message-date') || '').trim() !== '')) {
+        return;
+    }
+
+    let prevDayKey = '__unset__';
+    wrappers.forEach((wrapper) => {
+        const rawDate = wrapper.getAttribute('data-message-date') || '';
+        const dayKey = getMessageDayKey(rawDate) || '__unknown__';
+        if (dayKey === prevDayKey) return;
+        prevDayKey = dayKey;
+
+        const label = formatMessageDayLabel(rawDate);
+        const separator = document.createElement('div');
+        separator.className = 'msg-day-separator flex justify-center my-2';
+        separator.innerHTML = `<span class="px-3 py-1 rounded-full bg-slate-100 dark:bg-white/10 border border-slate-200 dark:border-white/10 text-[10px] font-semibold text-slate-500 dark:text-slate-300">${escapeHtml(label)}</span>`;
+        container.insertBefore(separator, wrapper);
+    });
+}
 
 // In SPA (Inertia), the chat DOM can be mounted/unmounted without reloading this script.
 // Keep a mutable reference so boot() can re-bind the current <audio> element.
@@ -871,6 +1008,7 @@ function applyChatRoomSnapshot(cached) {
     if (!container) return false;
 
     container.innerHTML = cached.html;
+    refreshMessageDaySeparators();
     lastSyncTime = cached.lastSyncTime || '';
     oldestLoadedId = cached.oldestLoadedId ?? null;
     hasMoreHistory = !!cached.hasMoreHistory;
@@ -961,6 +1099,7 @@ function prependOlderMessages(messages) {
         const bubbleHtml = createBubbleHtml(msg);
         if (existingEl) {
             existingEl.innerHTML = bubbleHtml;
+            setMessageWrapperMeta(existingEl, msg);
             continue;
         }
 
@@ -968,9 +1107,11 @@ function prependOlderMessages(messages) {
         wrapper.id = `msg-wrapper-${msg.id}`;
         wrapper.className = `flex ${msg.sender === 'admin' ? 'justify-end' : 'justify-start'} mb-2 shrink-0 group animate-in fade-in zoom-in duration-200`;
         wrapper.innerHTML = bubbleHtml;
+        setMessageWrapperMeta(wrapper, msg);
         container.insertBefore(wrapper, container.firstChild);
     }
 
+    refreshMessageDaySeparators();
     const newHeight = container.scrollHeight;
     container.scrollTop = newHeight - prevHeight + prevTop;
 }
@@ -1177,7 +1318,10 @@ function renderUserList(data, force = false) {
         if (user.msg_type === 'image') prevMsgRaw = '📷 Gambar';
         const prevMsg = escapeHtml(String(prevMsgRaw)).substring(0, 30);
 
-        const displayTime = escapeHtml(String(user.display_time || ''));
+        const listDateRaw = String(user.last_msg_at || user.last_seen || '');
+        const displayTime = escapeHtml(formatContactTimestamp(listDateRaw, String(user.display_time || '')));
+        const displayTimeTitle = formatContactTimestampTooltip(listDateRaw);
+        const displayTimeAttr = displayTimeTitle ? ` title="${escapeHtml(displayTimeTitle)}"` : '';
         const statusIcon = (user.status === 'Selesai')
             ? '<span class="text-[9px] text-green-600 font-bold ml-1">✔</span>'
             : '';
@@ -1198,7 +1342,7 @@ function renderUserList(data, force = false) {
                             <span class="text-[10px] text-slate-400 font-normal">#${shortId}</span>
                             ${statusIcon}
                         </h4>
-                        <span class="text-[10px] text-slate-400 font-mono">${displayTime}</span>
+                        <span class="text-[10px] text-slate-400 font-mono"${displayTimeAttr}>${displayTime}</span>
                     </div>
                     <div class="flex items-center text-xs text-slate-500 dark:text-slate-400">
                         <p class="truncate flex-1 opacity-80">${prevMsg}</p>
@@ -1534,14 +1678,17 @@ function processMessageUpdates(data) {
 
         if (existingEl) {
             existingEl.innerHTML = bubbleHtml;
+            setMessageWrapperMeta(existingEl, msg);
         } else {
             const wrapper = document.createElement('div');
             wrapper.id = `msg-wrapper-${msg.id}`;
             wrapper.className = `flex ${msg.sender === 'admin' ? 'justify-end' : 'justify-start'} mb-2 shrink-0 group animate-in fade-in zoom-in duration-200`;
             wrapper.innerHTML = bubbleHtml;
+            setMessageWrapperMeta(wrapper, msg);
             container.appendChild(wrapper);
         }
     });
+    refreshMessageDaySeparators();
 }
 
 function createBubbleHtml(msg) {
@@ -1570,7 +1717,8 @@ function createBubbleHtml(msg) {
     let smartActions = '';
     if (!isMe && !isImg) { smartActions = detectSmartData(msg.message, msg.id); }
 
-    const bubbleInner = `<div id="msg-${msg.id}" class="${bg} ${padClass} rounded-lg text-[13.5px] leading-relaxed relative break-words shadow-sm"><span class="msg-text">${content}</span><div class="msg-time text-[9px] opacity-50 text-right mt-1 font-mono tracking-wide flex justify-end items-center gap-1 select-none">${editedLabel} ${msg.time} ${statusIcon}</div></div>`;
+    const displayMsgTime = escapeHtml(String(msg.time || formatHourMinute(msg.created_at) || ''));
+    const bubbleInner = `<div id="msg-${msg.id}" class="${bg} ${padClass} rounded-lg text-[13.5px] leading-relaxed relative break-words shadow-sm"><span class="msg-text">${content}</span><div class="msg-time text-[9px] opacity-50 text-right mt-1 font-mono tracking-wide flex justify-end items-center gap-1 select-none">${editedLabel} ${displayMsgTime} ${statusIcon}</div></div>`;
 
     if (isMe) {
         return `<div class="max-w-[85%] md:max-w-[75%] flex items-start">${menuBtn}${bubbleInner}</div>`;

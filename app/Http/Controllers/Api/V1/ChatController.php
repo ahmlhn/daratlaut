@@ -390,6 +390,7 @@ class ChatController extends Controller
                 'unread' => (int) ($unread[$vid] ?? 0),
                 'last_msg' => $lm ? (string) ($lm->message ?? '') : '',
                 'msg_type' => $lm ? (string) ($lm->type ?? 'text') : 'text',
+                'last_msg_at' => $lm ? (string) ($lm->created_at ?? '') : '',
                 'display_time' => $lm && !empty($lm->created_at) ? date('H:i', strtotime((string) $lm->created_at)) : '',
             ];
         }
@@ -593,6 +594,7 @@ class ChatController extends Controller
                 'type' => (string) ($r->type ?? 'text'),
                 'is_edited' => (int) ($r->is_edited ?? 0),
                 'status' => $hasMsgStatus ? ((string) ($r->msg_status ?? 'active')) : 'active',
+                'created_at' => (string) ($r->created_at ?? ''),
                 'time' => !empty($r->created_at) ? date('H:i', strtotime((string) $r->created_at)) : '',
                 'media_url' => ((string) ($r->type ?? 'text') === 'image') ? url("/api/v1/chat/media/" . ((int) $r->id)) : null,
             ];
