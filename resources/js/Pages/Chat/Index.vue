@@ -636,16 +636,14 @@ body.chat-admin-lock {
     inset: auto !important;
     transform: none !important;
     z-index: auto !important;
+    flex: 0 0 clamp(16rem, 30%, 27rem) !important;
+    width: clamp(16rem, 30%, 27rem) !important;
+    max-width: 45%;
   }
 
   #legacy-chat-root #user-detail-sidebar {
-    width: 23rem;
-  }
-}
-
-@media (min-width: 1280px) {
-  #legacy-chat-root #user-detail-sidebar {
-    width: 25rem;
+    width: clamp(16rem, 30%, 27rem);
+    transition: width 0.25s ease, flex-basis 0.25s ease, transform 0.3s ease;
   }
 }
 
