@@ -54,6 +54,9 @@ const txForm = ref({
 });
 const coaDropdown = ref([]);
 const branches = ref([]);
+const showPartySuggestions = ref(false);
+const defaultTxMethodOptions = ['Transfer', 'Cash', 'Transfer/Cash', 'QRIS', 'EDC'];
+const partySuggestionLimit = 8;
 
 // Approvals
 const approvals = ref([]);
@@ -131,6 +134,50 @@ function onTxAmountInput(line, field, event) {
     if (event?.target) {
         event.target.value = formatRp(amount);
     }
+}
+
+const txMethodOptions = computed(() => {
+    const currentValue = String(txForm.value.method || '').trim();
+    const historicValues = transactions.value
+        .map((tx) => String(tx?.method || '').trim())
+        .filter(Boolean);
+
+    return [...new Set([...defaultTxMethodOptions, ...historicValues, ...(currentValue ? [currentValue] : [])])];
+});
+
+const partySuggestions = computed(() => {
+    const uniqueNames = transactions.value
+        .map((tx) => String(tx?.party_name || '').trim())
+        .filter(Boolean)
+        .filter((name, index, arr) => arr.indexOf(name) === index);
+    const keyword = String(txForm.value.party_name || '').trim().toLowerCase();
+
+    if (!keyword) {
+        return uniqueNames.slice(0, partySuggestionLimit);
+    }
+
+    return uniqueNames
+        .filter((name) => name.toLowerCase().includes(keyword))
+        .slice(0, partySuggestionLimit);
+});
+
+function onPartyNameFocus() {
+    showPartySuggestions.value = true;
+}
+
+function onPartyNameInput() {
+    showPartySuggestions.value = true;
+}
+
+function onPartyNameBlur() {
+    setTimeout(() => {
+        showPartySuggestions.value = false;
+    }, 120);
+}
+
+function selectPartySuggestion(name) {
+    txForm.value.party_name = name;
+    showPartySuggestions.value = false;
 }
 
 // Load dashboard
@@ -534,6 +581,12 @@ watch(activeTab, (tab) => {
         case 'reports':
             loadReport();
             break;
+    }
+});
+
+watch(showTxModal, (visible) => {
+    if (!visible) {
+        showPartySuggestions.value = false;
     }
 });
 
@@ -1000,7 +1053,12 @@ onMounted(() => {
                         </div>
                         <div>
                             <label class="block text-sm font-medium mb-1">Metode</label>
-                            <input v-model="txForm.method" type="text" class="input w-full" placeholder="Transfer/Cash" />
+                            <select v-model="txForm.method" class="input w-full">
+                                <option value="">- Pilih Metode -</option>
+                                <option v-for="method in txMethodOptions" :key="method" :value="method">
+                                    {{ method }}
+                                </option>
+                            </select>
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-3">
@@ -1008,9 +1066,35 @@ onMounted(() => {
                             <label class="block text-sm font-medium mb-1">Deskripsi</label>
                             <input v-model="txForm.description" type="text" class="input w-full" />
                         </div>
-                        <div>
+                        <div class="relative">
                             <label class="block text-sm font-medium mb-1">Pihak Terkait</label>
-                            <input v-model="txForm.party_name" type="text" class="input w-full" />
+                            <input
+                                v-model="txForm.party_name"
+                                type="text"
+                                class="input w-full"
+                                autocomplete="off"
+                                @focus="onPartyNameFocus"
+                                @input="onPartyNameInput"
+                                @blur="onPartyNameBlur"
+                                @keydown.esc="showPartySuggestions = false"
+                            />
+                            <div
+                                v-if="showPartySuggestions"
+                                class="absolute z-20 mt-1 w-full rounded-md border border-gray-200 bg-white shadow-lg max-h-48 overflow-y-auto"
+                            >
+                                <button
+                                    v-for="name in partySuggestions"
+                                    :key="name"
+                                    type="button"
+                                    class="w-full px-3 py-2 text-left text-sm hover:bg-gray-50"
+                                    @mousedown.prevent="selectPartySuggestion(name)"
+                                >
+                                    {{ name }}
+                                </button>
+                                <div v-if="partySuggestions.length === 0" class="px-3 py-2 text-sm text-gray-500">
+                                    Belum ada rekomendasi.
+                                </div>
+                            </div>
                         </div>
                     </div>
 
