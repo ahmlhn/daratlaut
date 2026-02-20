@@ -75,3 +75,4 @@ Last verified: 2026-02-20
 - 2026-02-20: Hidden empty chat sessions in Chat Admin contacts by requiring at least one active `noci_chat` row before listing a customer (prevents start-session-only visits from appearing as blank conversations). Docs: N/A.
 - 2026-02-20: Added Direct chat presence heartbeat (`action=heartbeat`) from customer page and tightened admin online badge threshold to 30 seconds inactivity (otherwise offline). Docs: N/A.
 - 2026-02-20: Set Chat Admin customer detail sidebar to open by default on desktop boot while keeping mobile default hidden. Docs: N/A.
+- 2026-02-20: Changed Chat Admin `Leads Baru` overview metric to count customers with at least one user-sent chat message (first user message in selected period), not page visitors/`last_seen`. Docs: N/A.

@@ -319,7 +319,37 @@ class ChatAdminApiController extends Controller
             }
         }
 
-        if ($hasCustomers) {
+        $hasChat = $this->tableExists('noci_chat');
+        if (
+            $hasChat
+            && $this->columnExists('noci_chat', 'visit_id')
+            && $this->columnExists('noci_chat', 'sender')
+            && $this->columnExists('noci_chat', 'created_at')
+        ) {
+            $chatHasTenant = $this->columnExists('noci_chat', 'tenant_id');
+            $chatHasMsgStatus = $this->columnExists('noci_chat', 'msg_status');
+
+            try {
+                $firstUserMessage = DB::table('noci_chat')
+                    ->selectRaw('visit_id, MIN(created_at) as first_user_message_at')
+                    ->when($chatHasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
+                    ->where('sender', 'user')
+                    ->when($chatHasMsgStatus, function ($q) {
+                        $q->where(function ($qq) {
+                            $qq->where('msg_status', 'active')
+                                ->orWhereNull('msg_status');
+                        });
+                    })
+                    ->groupBy('visit_id');
+
+                $response['total_leads'] = (int) DB::query()
+                    ->fromSub($firstUserMessage, 'lead_first_msg')
+                    ->whereRaw($this->periodWhereSql('first_user_message_at', $period))
+                    ->count();
+            } catch (\Throwable) {
+            }
+        } elseif ($hasCustomers) {
+            // Fallback for legacy schema without noci_chat.
             $custHasTenant = $this->columnExists('noci_customers', 'tenant_id');
             $custHasLastSeen = $this->columnExists('noci_customers', 'last_seen');
             try {
@@ -330,12 +360,6 @@ class ChatAdminApiController extends Controller
                 }
                 $response['total_leads'] = (int) $qLeads->count();
             } catch (\Throwable) {
-                try {
-                    $response['total_leads'] = (int) DB::table('noci_customers')
-                        ->when($custHasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
-                        ->count();
-                } catch (\Throwable) {
-                }
             }
         }
 
