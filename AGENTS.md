@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-02-19
-Last verified: 2026-02-19
+Last updated: 2026-02-20
+Last verified: 2026-02-20
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -74,3 +74,4 @@ Last verified: 2026-02-19
 - 2026-02-20: Normalized Finance transaction detail `Cabang` display to handle object/JSON-string payloads and always render readable branch name/code. Docs: N/A.
 - 2026-02-20: Hidden empty chat sessions in Chat Admin contacts by requiring at least one active `noci_chat` row before listing a customer (prevents start-session-only visits from appearing as blank conversations). Docs: N/A.
 - 2026-02-20: Added Direct chat presence heartbeat (`action=heartbeat`) from customer page and tightened admin online badge threshold to 30 seconds inactivity (otherwise offline). Docs: N/A.
+- 2026-02-20: Set Chat Admin customer detail sidebar to open by default on desktop boot while keeping mobile default hidden. Docs: N/A.

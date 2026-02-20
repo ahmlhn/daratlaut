@@ -196,6 +196,22 @@ function refreshMessageDaySeparators() {
 // Keep a mutable reference so boot() can re-bind the current <audio> element.
 let audioNotif = null;
 
+function ensureDefaultCustomerSidebarVisibility() {
+    const sidebar = document.getElementById('user-detail-sidebar');
+    const backdrop = document.getElementById('user-sidebar-backdrop');
+    if (!sidebar) return;
+
+    if (window.innerWidth >= 1024) {
+        sidebar.classList.remove('translate-x-full');
+        sidebar.classList.add('translate-x-0');
+    } else {
+        sidebar.classList.remove('translate-x-0');
+        sidebar.classList.add('translate-x-full');
+    }
+
+    if (backdrop) backdrop.classList.add('hidden');
+}
+
 // In SPA (Inertia), DOMContentLoaded might have already fired before this script loads.
 // Expose boot/dispose so the Vue page can re-init / cleanup when navigating.
 function __chatBoot() {
@@ -208,6 +224,7 @@ function __chatBoot() {
     injectEditIndicator(); 
     ensureListStateForDeepLink();
     setupMobileBackHandler();
+    ensureDefaultCustomerSidebarVisibility();
     bindSidebarQuickActionButtons();
     hydrateChatCacheFromSession();
     hydrateContactsCacheFromSession();
