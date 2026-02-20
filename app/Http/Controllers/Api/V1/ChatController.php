@@ -237,6 +237,7 @@ class ChatController extends Controller
         $chatHasTenant = $this->hasChatColumn('tenant_id');
         $hasMsgStatus = $this->hasChatColumn('msg_status');
         $chatActiveWhere = $hasMsgStatus ? "(msg_status='active' OR msg_status IS NULL)" : "1=1";
+        $chatActiveExistsWhere = $hasMsgStatus ? "(ch.msg_status='active' OR ch.msg_status IS NULL)" : "1=1";
 
         // Fast path for polling: if client sends last_sync and there are no changes,
         // avoid running the heavier join + aggregation queries.
@@ -300,6 +301,15 @@ class ChatController extends Controller
 
         $base->leftJoinSub($lastChat, 'lc', function ($join) {
             $join->on('lc.visit_id', '=', 'c.visit_id');
+        });
+        // Do not show empty sessions in admin list.
+        // A customer may hit start_session without sending any message yet.
+        $base->whereExists(function ($q) use ($tenantId, $chatHasTenant, $chatActiveExistsWhere) {
+            $q->selectRaw('1')
+                ->from('noci_chat as ch')
+                ->whereColumn('ch.visit_id', 'c.visit_id')
+                ->when($chatHasTenant, fn ($qq) => $qq->where('ch.tenant_id', $tenantId))
+                ->whereRaw($chatActiveExistsWhere);
         });
 
         if ($search !== '') {

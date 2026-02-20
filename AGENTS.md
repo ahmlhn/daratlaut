@@ -72,3 +72,4 @@ Last verified: 2026-02-19
 - 2026-02-20: Updated Finance transaction modal so `Metode` uses dropdown options and `Pihak Terkait` shows live suggestion list on focus/type from existing tenant transaction lines. Docs: N/A.
 - 2026-02-20: Updated Finance transaction list UX: removed inline action column, made rows clickable to open transaction detail modal, and moved `Edit`/`Hapus` actions into detail modal. Docs: N/A.
 - 2026-02-20: Normalized Finance transaction detail `Cabang` display to handle object/JSON-string payloads and always render readable branch name/code. Docs: N/A.
+- 2026-02-20: Hidden empty chat sessions in Chat Admin contacts by requiring at least one active `noci_chat` row before listing a customer (prevents start-session-only visits from appearing as blank conversations). Docs: N/A.
