@@ -72,15 +72,7 @@ class DirectApiController extends Controller
 
     private function checkStatus(Request $request, int $tenantId): JsonResponse
     {
-        $welMsg = 'Halo kak, ada yang bisa kami bantu?';
-        try {
-            $tpl = DB::table('noci_msg_templates')
-                ->where('tenant_id', $tenantId)
-                ->where('code', 'web_welcome')
-                ->value('message');
-            if (is_string($tpl) && trim($tpl) !== '') $welMsg = $tpl;
-        } catch (\Throwable) {
-        }
+        $welMsg = $this->resolveWelcomeMessage($tenantId);
 
         $set = null;
         try {
@@ -123,6 +115,53 @@ class DirectApiController extends Controller
             'wa_link' => $waLink,
             'welcome_msg' => $welMsg,
         ], $request);
+    }
+
+    private function resolveWelcomeMessage(int $tenantId, string $customerName = ''): string
+    {
+        $welcome = 'Halo kak, ada yang bisa kami bantu?';
+
+        try {
+            $tpl = DB::table('noci_msg_templates')
+                ->where('tenant_id', $tenantId)
+                ->where('code', 'web_welcome')
+                ->value('message');
+            if (is_string($tpl) && trim($tpl) !== '') {
+                $welcome = $tpl;
+            }
+        } catch (\Throwable) {
+        }
+
+        if ($customerName !== '') {
+            $welcome = str_replace(['{name}', '{customer_name}'], $customerName, $welcome);
+        }
+
+        return $welcome;
+    }
+
+    private function persistWelcomeMessageIfNeeded(int $tenantId, string $visitId, string $customerName = ''): void
+    {
+        if ($visitId === '') return;
+
+        try {
+            $chatQ = DB::table('noci_chat')->where('visit_id', $visitId);
+            if ($this->hasColumn('noci_chat', 'tenant_id')) $chatQ->where('tenant_id', $tenantId);
+            if ($chatQ->exists()) return;
+
+            $ins = [
+                'visit_id' => $visitId,
+                'sender' => 'admin',
+                'message' => $this->resolveWelcomeMessage($tenantId, $customerName),
+                'type' => 'text',
+                'is_read' => 1,
+                'created_at' => DB::raw('NOW()'),
+            ];
+            if ($this->hasColumn('noci_chat', 'tenant_id')) $ins['tenant_id'] = $tenantId;
+            if ($this->hasColumn('noci_chat', 'updated_at')) $ins['updated_at'] = DB::raw('NOW()');
+            if ($this->hasColumn('noci_chat', 'msg_status')) $ins['msg_status'] = 'active';
+            DB::table('noci_chat')->insert($ins);
+        } catch (\Throwable) {
+        }
     }
 
     private function startSession(Request $request, int $tenantId): JsonResponse
@@ -171,39 +210,10 @@ class DirectApiController extends Controller
             DB::table('noci_customers')->insert($insert);
         }
 
-        // Insert welcome message if chat is empty.
-        $chatQ = DB::table('noci_chat')->where('visit_id', $visitId);
-        if ($this->hasColumn('noci_chat', 'tenant_id')) $chatQ->where('tenant_id', $tenantId);
-        $chatExists = $chatQ->exists();
-
-        if (!$chatExists) {
-            $wel = 'Halo, ada yang bisa kami bantu?';
-            try {
-                $tpl = DB::table('noci_msg_templates')
-                    ->where('tenant_id', $tenantId)
-                    ->where('code', 'web_welcome')
-                    ->value('message');
-                if (is_string($tpl) && trim($tpl) !== '') {
-                    $wel = str_replace(['{name}', '{customer_name}'], $name, $tpl);
-                }
-            } catch (\Throwable) {
-            }
-
-            $ins = [
-                'visit_id' => $visitId,
-                'sender' => 'admin',
-                'message' => $wel,
-                'type' => 'text',
-                'is_read' => 1,
-                'created_at' => DB::raw('NOW()'),
-            ];
-            if ($this->hasColumn('noci_chat', 'tenant_id')) $ins['tenant_id'] = $tenantId;
-            if ($this->hasColumn('noci_chat', 'updated_at')) $ins['updated_at'] = DB::raw('NOW()');
-            if ($this->hasColumn('noci_chat', 'msg_status')) $ins['msg_status'] = 'active';
-            DB::table('noci_chat')->insert($ins);
-        }
-
-        return $this->json(['status' => 'success'], $request);
+        return $this->json([
+            'status' => 'success',
+            'welcome_msg' => $this->resolveWelcomeMessage($tenantId, $name),
+        ], $request);
     }
 
     private function getMessages(Request $request, int $tenantId): JsonResponse
@@ -363,6 +373,19 @@ class DirectApiController extends Controller
         if ($message === '') {
             return $this->json(['status' => 'error', 'msg' => 'Pesan kosong'], $request, 422);
         }
+
+        $customerName = '';
+        try {
+            $qName = DB::table('noci_customers')->where('visit_id', $visitId);
+            if ($this->hasColumn('noci_customers', 'tenant_id')) $qName->where('tenant_id', $tenantId);
+            $customerName = (string) ($qName->value('customer_name') ?? '');
+        } catch (\Throwable) {
+            $customerName = '';
+        }
+
+        // Welcome is display-only before first customer message.
+        // Persist it only when user sends the first message.
+        $this->persistWelcomeMessageIfNeeded($tenantId, $visitId, $customerName);
 
         $ins = [
             'visit_id' => $visitId,

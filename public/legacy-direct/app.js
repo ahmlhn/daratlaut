@@ -394,6 +394,30 @@ function compressImage(file, quality = 0.7, maxWidth = 1000) {
 
 function handleEnter(e) { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }
 
+function resolveDisplayWelcomeMessage() {
+    const fallback = 'Halo kak, ada yang bisa kami bantu?';
+    const base = String(dynamicWelcome || fallback).trim() || fallback;
+    const name = String(localStorage.getItem('noci_user_name') || getAutoName() || '').trim();
+    if (!name) return base;
+    return base.replace(/\{name\}|\{customer_name\}/gi, name);
+}
+
+function getRenderableMessages() {
+    const renderList = Array.isArray(messagesCache) ? messagesCache.slice() : [];
+    if (renderList.length > 0) return renderList;
+
+    renderList.push({
+        id: 'local-welcome',
+        sender: 'admin',
+        message: resolveDisplayWelcomeMessage(),
+        type: 'text',
+        is_edited: 0,
+        time: '',
+    });
+
+    return renderList;
+}
+
 async function startPolling() { 
     const firstLoadOk = await loadMessages(true); 
     if(checkInterval) clearInterval(checkInterval); 
@@ -437,7 +461,7 @@ function loadMessages(isFirstLoad = false) {
             const container = document.getElementById('chat-messages');
             if (container) {
                 container.innerHTML = '';
-                messagesCache.forEach(m => {
+                getRenderableMessages().forEach(m => {
                     appendBubble(m.message, m.sender, m.time, m.type || 'text', m.is_edited);
                 });
                 scrollToBottom();
@@ -492,9 +516,10 @@ function loadMessages(isFirstLoad = false) {
             for (let i = 0; i < messagesCache.length; i++) {
                 const id = String(messagesCache[i]?.id ?? '');
                 if (id) messagePos[id] = i;
-                const m = messagesCache[i];
-                appendBubble(m.message, m.sender, m.time, m.type || 'text', m.is_edited);
             }
+            getRenderableMessages().forEach((m) => {
+                appendBubble(m.message, m.sender, m.time, m.type || 'text', m.is_edited);
+            });
             scrollToBottom();
         }
         return true;

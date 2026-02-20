@@ -11,6 +11,7 @@ let editingMsgId = null;
 let lastGlobalUnread = -1; 
 let isDeepLinkChecked = false;
 let currentFilter = 'all'; 
+let isDeletingSession = false;
 
 // [SMART SYNC VARS]
 let lastSyncTime = '';       // Untuk Chat Room
@@ -207,6 +208,7 @@ function __chatBoot() {
     injectEditIndicator(); 
     ensureListStateForDeepLink();
     setupMobileBackHandler();
+    bindSidebarQuickActionButtons();
     hydrateChatCacheFromSession();
     hydrateContactsCacheFromSession();
     const restoredContacts = restoreContactsListFromSession();
@@ -1907,14 +1909,64 @@ function confirmEndSession() { if (!activeVisitId) return; /* Optimistic UI: swi
 
 function reopenSession() { if (!activeVisitId) return; /* Optimistic UI: switch footer instantly */ const userIndex = usersData.findIndex(u => u.visit_id == activeVisitId); if(userIndex !== -1) usersData[userIndex].status = 'Proses'; const fa = document.getElementById('footer-active'); const fl = document.getElementById('footer-locked'); if(fa) fa.classList.remove('hidden'); if(fl) fl.classList.add('hidden'); const mt = document.getElementById('menu-toggle-session'); if(mt) { mt.innerHTML = 'Selesaikan Sesi'; mt.setAttribute('onclick', 'openEndModal()'); mt.className = 'block px-4 py-2.5 text-sm hover:bg-green-50 dark:hover:bg-white/5 text-green-600 dark:text-green-400 border-b border-slate-100 dark:border-white/10 font-bold'; } const be = document.getElementById('btn-end-session'); const br = document.getElementById('btn-reopen-session'); if(be) be.classList.remove('hidden'); if(br) br.classList.add('hidden'); /* Fire & forget: send reopen + background refresh */ const fd = new FormData(); fd.append('action', 'reopen_session'); fd.append('visit_id', activeVisitId); fetch('admin_api.php', { method: 'POST', body: fd }).then(r => r.json()).then(res => { if (res.status !== 'success') { /* Rollback on failure */ if(userIndex !== -1) usersData[userIndex].status = 'Selesai'; openChat(activeVisitId); showSmartAlert("Error", "Gagal membuka sesi.", "error"); } else { loadContacts(false); } }); }
 
+function resolveCurrentVisitId() {
+    if (activeVisitId) return String(activeVisitId).trim();
+
+    const activeItem = document.querySelector('.user-item-active[data-visit-id]');
+    const fromActiveItem = String(activeItem?.getAttribute('data-visit-id') || '').trim();
+    if (fromActiveItem) return fromActiveItem;
+
+    const fromHeader = String(document.getElementById('h-id')?.innerText || '').replace(/^#/, '').trim();
+    if (fromHeader) return fromHeader;
+
+    try {
+        const fromUrl = String(new URLSearchParams(window.location.search).get('id') || '').trim();
+        if (fromUrl) return fromUrl;
+    } catch (e) {
+    }
+
+    return '';
+}
+
+function bindSidebarQuickActionButtons() {
+    const sidebar = document.getElementById('user-detail-sidebar');
+    if (!sidebar) return;
+
+    const quickActionButtons = Array.from(sidebar.querySelectorAll('.grid.grid-cols-2.gap-3 button'));
+    if (quickActionButtons.length === 0) return;
+
+    quickActionButtons.forEach((btn) => {
+        if (!btn.getAttribute('type')) btn.setAttribute('type', 'button');
+    });
+
+    const deleteBtn = quickActionButtons.find((btn) => /hapus/i.test(String(btn.textContent || '')));
+    if (!deleteBtn || deleteBtn.dataset.boundDeleteSession === '1') return;
+
+    deleteBtn.dataset.boundDeleteSession = '1';
+    deleteBtn.removeAttribute('onclick');
+    deleteBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        deleteSession();
+    });
+}
+
 function deleteSession() { 
-    if (!activeVisitId) return; 
+    if (isDeletingSession) return;
+    const resolvedVisitId = resolveCurrentVisitId();
+    if (!resolvedVisitId) {
+        showSmartAlert("Validasi", "Pilih chat pelanggan dulu.", "warning");
+        return;
+    }
+
+    activeVisitId = resolvedVisitId;
     showSmartConfirm("Hapus Chat?", "Data akan hilang permanen.", "danger", "Hapus").then((isConfirmed) => { 
         if (isConfirmed) { 
-            const deletingVisitId = String(activeVisitId);
+            isDeletingSession = true;
+            const deletingVisitId = String(resolvedVisitId);
+            const wasActive = String(activeVisitId || '') === deletingVisitId;
             const fd = new FormData(); 
             fd.append('action', 'delete_session'); 
-            fd.append('visit_id', activeVisitId); 
+            fd.append('visit_id', deletingVisitId); 
             fetch('admin_api.php', { method: 'POST', body: fd }).then(r => r.json()).then(res => { 
                 if (res.status === 'success') { 
                     delete chatRoomCache[deletingVisitId];
@@ -1924,7 +1976,9 @@ function deleteSession() {
                     renderUserList(usersData, true);
                     renderFilterButtons(usersData);
                     persistContactsCache(true);
-                    closeActiveChat(); 
+                    if (wasActive || String(activeVisitId || '') === deletingVisitId) {
+                        closeActiveChat();
+                    }
                     lastContactSync = '';
                     loadContacts(true); 
                     showSmartAlert("Terhapus", "Data chat berhasil dihapus.", "success"); 
@@ -1933,6 +1987,8 @@ function deleteSession() {
                 } 
             }).catch(() => {
                 showSmartAlert("Gagal", "Error.", "error");
+            }).finally(() => {
+                isDeletingSession = false;
             }); 
         } 
     }); 
