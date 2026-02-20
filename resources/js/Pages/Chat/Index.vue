@@ -319,7 +319,7 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-4">
                             <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-[#202c33] overflow-hidden">
                                 <div class="px-3 py-2 border-b border-slate-200 dark:border-white/10 text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400">Log Pelanggan</div>
                                 <div id="customer-overview-logs" class="max-h-56 overflow-y-auto custom-scrollbar divide-y divide-slate-100 dark:divide-white/5">

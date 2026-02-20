@@ -425,35 +425,118 @@ function setCustomerOverviewOnline(isOnline) {
     }
 }
 
+function buildOverviewSignature(payload) {
+    try {
+        return JSON.stringify(payload ?? null);
+    } catch (e) {
+        return String(payload ?? '');
+    }
+}
+
+function toSafeOverviewNumber(value) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+}
+
+function animateOverviewStatValue(el, fromVal, toVal) {
+    const delta = toVal - fromVal;
+    if (delta === 0) return;
+
+    const duration = Math.min(650, Math.max(260, Math.abs(delta) * 14));
+    const startAt = performance.now();
+    const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+    const prevRaf = Number(el.dataset.overviewRafId || 0);
+    if (prevRaf) cancelAnimationFrame(prevRaf);
+
+    const step = (now) => {
+        const progress = Math.min(1, (now - startAt) / duration);
+        const eased = easeOutCubic(progress);
+        const current = Math.round(fromVal + (toVal - fromVal) * eased);
+        el.textContent = String(current);
+        if (progress < 1) {
+            const rafId = requestAnimationFrame(step);
+            el.dataset.overviewRafId = String(rafId);
+            return;
+        }
+        el.textContent = String(toVal);
+        el.dataset.overviewRafId = '';
+    };
+
+    const rafId = requestAnimationFrame(step);
+    el.dataset.overviewRafId = String(rafId);
+
+    const accentColor = delta > 0 ? 'rgb(22, 163, 74)' : 'rgb(220, 38, 38)';
+    try {
+        el.animate(
+            [
+                { transform: 'translateY(2px) scale(0.97)', opacity: 0.78, color: accentColor },
+                { transform: 'translateY(0) scale(1.08)', opacity: 1, color: accentColor, offset: 0.55 },
+                { transform: 'translateY(0) scale(1)', opacity: 1, color: '' }
+            ],
+            { duration: 430, easing: 'cubic-bezier(.2,.8,.2,1)' }
+        );
+    } catch (e) {
+        el.style.transform = 'scale(1.06)';
+        setTimeout(() => { el.style.transform = 'scale(1)'; }, 180);
+    }
+}
+
 function updateCustomerOverviewStat(id, value) {
     const el = document.getElementById(id);
     if (!el) return;
-    const nextVal = String(value ?? 0);
-    if (el.textContent === nextVal) return;
-    el.textContent = nextVal;
-    el.style.transform = 'scale(1.06)';
-    setTimeout(() => { el.style.transform = 'scale(1)'; }, 180);
+
+    const nextVal = toSafeOverviewNumber(value);
+    const prevVal = toSafeOverviewNumber(
+        el.dataset.overviewValue ?? String(el.textContent || '').replace(/[^\d.-]/g, '')
+    );
+    if (prevVal === nextVal) return;
+
+    el.dataset.overviewValue = String(nextVal);
+    animateOverviewStatValue(el, prevVal, nextVal);
 }
 
 function renderCustomerOverviewLogs(logs) {
     const holder = document.getElementById('customer-overview-logs');
     if (!holder) return;
 
-    if (!Array.isArray(logs) || logs.length === 0) {
+    const safeLogs = Array.isArray(logs) ? logs : [];
+    const logsSignature = buildOverviewSignature(
+        safeLogs.map((log) => ({
+            time: String(log?.time ?? '-'),
+            actor: String(log?.ip ?? '-'),
+            device: String(log?.device ?? '-'),
+            status: String(log?.status ?? '-'),
+            badge: String(log?.badge_class ?? ''),
+        }))
+    );
+    if (holder.dataset.logsSignature === logsSignature) return;
+
+    const previousKeys = new Set(
+        Array.from(holder.querySelectorAll('[data-log-key]')).map((el) => String(el.getAttribute('data-log-key') || ''))
+    );
+    holder.dataset.logsSignature = logsSignature;
+
+    if (safeLogs.length === 0) {
         holder.innerHTML = '<div class="px-3 py-6 text-center text-xs text-slate-400">Belum ada log pelanggan.</div>';
         return;
     }
 
-    holder.innerHTML = logs.map((log) => {
+    holder.innerHTML = safeLogs.map((log) => {
         const badgeClass = (typeof log.badge_class === 'string' && log.badge_class.trim() !== '')
             ? log.badge_class
             : 'text-slate-500 bg-slate-100 dark:bg-slate-800';
-        const actor = escapeHtml(String(log.ip || '-'));
-        const device = escapeHtml(String(log.device || '-'));
-        const time = escapeHtml(String(log.time || '-'));
-        const status = escapeHtml(String(log.status || '-'));
+        const actorRaw = String(log.ip || '-');
+        const deviceRaw = String(log.device || '-');
+        const timeRaw = String(log.time || '-');
+        const statusRaw = String(log.status || '-');
+        const logKey = encodeURIComponent(`${timeRaw}|${actorRaw}|${statusRaw}|${deviceRaw}`);
+        const actor = escapeHtml(actorRaw);
+        const device = escapeHtml(deviceRaw);
+        const time = escapeHtml(timeRaw);
+        const status = escapeHtml(statusRaw);
         return `
-            <div class="px-3 py-2.5 flex items-start justify-between gap-3">
+            <div data-log-key="${logKey}" class="px-3 py-2.5 flex items-start justify-between gap-3">
                 <div class="min-w-0">
                     <div class="text-xs font-bold text-slate-700 dark:text-slate-200 truncate">${actor}</div>
                     <div class="text-[10px] text-slate-400 truncate">${device}</div>
@@ -465,6 +548,21 @@ function renderCustomerOverviewLogs(logs) {
             </div>
         `;
     }).join('');
+
+    holder.querySelectorAll('[data-log-key]').forEach((row) => {
+        const key = String(row.getAttribute('data-log-key') || '');
+        if (previousKeys.has(key)) return;
+        try {
+            row.animate(
+                [
+                    { opacity: 0, transform: 'translateY(8px) scale(0.98)' },
+                    { opacity: 1, transform: 'translateY(0) scale(1)' }
+                ],
+                { duration: 280, easing: 'cubic-bezier(.2,.8,.2,1)' }
+            );
+        } catch (e) {
+        }
+    });
 }
 
 function ensureCustomerOverviewApexLoaded() {
@@ -498,12 +596,29 @@ function renderCustomerOverviewChart(labels, series) {
     const emptyEl = document.getElementById('customer-overview-chart-empty');
     if (!chartEl) return;
 
-    const safeLabels = Array.isArray(labels) ? labels : [];
-    const safeSeries = Array.isArray(series) ? series : [];
+    const safeLabels = Array.isArray(labels) ? labels.map((label) => String(label ?? '')) : [];
+    const safeSeries = Array.isArray(series)
+        ? series.map((entry) => ({
+            name: String(entry?.name ?? ''),
+            data: Array.isArray(entry?.data) ? entry.data.map((v) => toSafeOverviewNumber(v)) : [],
+        }))
+        : [];
     const isHourlyChart = safeLabels.length === 24 && safeLabels.every((label) => /^\d{2}:00$/.test(String(label || '')));
     const isNarrowScreen = window.innerWidth < 768;
     const hourlyLabelStep = isHourlyChart ? (isNarrowScreen ? 4 : 2) : 1;
+    const isDark = document.documentElement.classList.contains('dark');
     const hasData = safeSeries.some((s) => Array.isArray(s?.data) && s.data.some((v) => Number(v || 0) > 0));
+    const nextSignature = hasData
+        ? buildOverviewSignature({
+            labels: safeLabels,
+            series: safeSeries,
+            theme: isDark ? 'dark' : 'light',
+            tickStep: hourlyLabelStep,
+        })
+        : '__empty__';
+    const prevSignature = chartEl.dataset.chartSignature || '';
+    if (prevSignature === nextSignature) return;
+    chartEl.dataset.chartSignature = nextSignature;
 
     if (!hasData) {
         if (customerOverviewChart) {
@@ -516,7 +631,6 @@ function renderCustomerOverviewChart(labels, series) {
     }
 
     if (emptyEl) emptyEl.classList.add('hidden');
-    const isDark = document.documentElement.classList.contains('dark');
 
     ensureCustomerOverviewApexLoaded().then((ok) => {
         if (!ok || !window.ApexCharts || !document.body.contains(chartEl)) return;
@@ -529,7 +643,12 @@ function renderCustomerOverviewChart(labels, series) {
                 fontFamily: 'Plus Jakarta Sans, sans-serif',
                 background: 'transparent',
                 toolbar: { show: false },
-                animations: { enabled: true }
+                animations: {
+                    enabled: true,
+                    speed: 420,
+                    animateGradually: { enabled: true, delay: 55 },
+                    dynamicAnimation: { enabled: true, speed: 320 },
+                }
             },
             colors: [
                 '#3b82f6', '#10b981', '#f59e0b', '#ef4444',

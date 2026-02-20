@@ -76,3 +76,5 @@ Last verified: 2026-02-20
 - 2026-02-20: Added Direct chat presence heartbeat (`action=heartbeat`) from customer page and tightened admin online badge threshold to 30 seconds inactivity (otherwise offline). Docs: N/A.
 - 2026-02-20: Set Chat Admin customer detail sidebar to open by default on desktop boot while keeping mobile default hidden. Docs: N/A.
 - 2026-02-20: Changed Chat Admin `Leads Baru` overview metric to count customers with at least one user-sent chat message (first user message in selected period), not page visitors/`last_seen`. Docs: N/A.
+- 2026-02-20: Improved Chat Admin customer-overview update animations; animate only changed stats/log rows/chart payloads and skip animation/re-render when data snapshot is unchanged. Docs: N/A.
+- 2026-02-20: Widened Chat Admin `Tren Kunjungan Isolir` overview column on desktop by changing log/trend grid ratio from equal split to weighted width. Docs: N/A.
