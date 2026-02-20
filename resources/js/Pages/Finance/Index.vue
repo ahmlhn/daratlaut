@@ -42,7 +42,9 @@ const txFilters = ref({
     search: '',
 });
 const showTxModal = ref(false);
+const showTxDetailModal = ref(false);
 const editingTx = ref(null);
+const selectedTxDetail = ref(null);
 const txForm = ref({
     tx_date: new Date().toISOString().split('T')[0],
     ref_no: '',
@@ -316,11 +318,35 @@ async function loadTransactions() {
         if (data.status === 'ok') {
             transactions.value = data.data;
             txPagination.value = data.pagination;
+            if (showTxDetailModal.value && selectedTxDetail.value) {
+                const refreshedTx = data.data.find((item) => item.id === selectedTxDetail.value.id);
+                if (refreshedTx) {
+                    selectedTxDetail.value = refreshedTx;
+                } else {
+                    closeTxDetailModal();
+                }
+            }
         }
     } catch (e) {
         console.error('Failed to load transactions:', e);
     }
     loading.value = false;
+}
+
+function openTxDetailModal(tx) {
+    selectedTxDetail.value = tx;
+    showTxDetailModal.value = true;
+}
+
+function closeTxDetailModal() {
+    showTxDetailModal.value = false;
+    selectedTxDetail.value = null;
+}
+
+function editFromTxDetail() {
+    if (!selectedTxDetail.value) return;
+    showTxDetailModal.value = false;
+    openTxModal(selectedTxDetail.value);
 }
 
 // Open transaction modal
@@ -407,7 +433,7 @@ async function saveTransaction() {
 }
 
 // Delete transaction
-async function deleteTransaction(tx) {
+async function deleteTransaction(tx, options = {}) {
     if (!confirm('Hapus transaksi ini?')) return;
     
     try {
@@ -415,6 +441,9 @@ async function deleteTransaction(tx) {
         const data = await res.json();
         
         if (data.status === 'ok') {
+            if (options.closeDetail) {
+                closeTxDetailModal();
+            }
             await loadTransactions();
         } else {
             alert(data.message || 'Gagal menghapus');
@@ -422,6 +451,11 @@ async function deleteTransaction(tx) {
     } catch (e) {
         alert('Error: ' + e.message);
     }
+}
+
+async function deleteFromTxDetail() {
+    if (!selectedTxDetail.value) return;
+    await deleteTransaction(selectedTxDetail.value, { closeDetail: true });
 }
 
 // Load approvals
@@ -743,6 +777,7 @@ onMounted(() => {
                 </div>
                 
                 <div class="card p-4">
+                    <div class="mb-2 text-xs text-gray-500">Klik baris transaksi untuk melihat detail.</div>
                     <table class="min-w-full text-sm">
                         <thead>
                             <tr class="bg-gray-50">
@@ -752,17 +787,21 @@ onMounted(() => {
                                 <th class="px-3 py-2 text-left">Status</th>
                                 <th class="px-3 py-2 text-right">Debit</th>
                                 <th class="px-3 py-2 text-right">Credit</th>
-                                <th class="px-3 py-2 text-left">Aksi</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr v-if="loading">
-                                <td colspan="7" class="text-center py-8 text-gray-500">Loading...</td>
+                                <td colspan="6" class="text-center py-8 text-gray-500">Loading...</td>
                             </tr>
                             <tr v-else-if="transactions.length === 0">
-                                <td colspan="7" class="text-center py-8 text-gray-500">Tidak ada data</td>
+                                <td colspan="6" class="text-center py-8 text-gray-500">Tidak ada data</td>
                             </tr>
-                            <tr v-for="tx in transactions" :key="tx.id" class="border-b hover:bg-gray-50">
+                            <tr
+                                v-for="tx in transactions"
+                                :key="tx.id"
+                                class="border-b hover:bg-gray-50 cursor-pointer"
+                                @click="openTxDetailModal(tx)"
+                            >
                                 <td class="px-3 py-2">{{ formatDateDisplay(tx.tx_date) }}</td>
                                 <td class="px-3 py-2">{{ tx.ref_no || '-' }}</td>
                                 <td class="px-3 py-2">{{ tx.description }}</td>
@@ -773,10 +812,6 @@ onMounted(() => {
                                 </td>
                                 <td class="px-3 py-2 text-right">{{ formatRp(tx.total_debit) }}</td>
                                 <td class="px-3 py-2 text-right">{{ formatRp(tx.total_credit) }}</td>
-                                <td class="px-3 py-2">
-                                    <button @click="openTxModal(tx)" class="text-blue-600 hover:underline mr-2">Edit</button>
-                                    <button v-if="tx.status !== 'POSTED'" @click="deleteTransaction(tx)" class="text-red-600 hover:underline">Hapus</button>
-                                </td>
                             </tr>
                         </tbody>
                     </table>
@@ -1170,6 +1205,91 @@ onMounted(() => {
                 <div class="p-4 border-t flex justify-end gap-3">
                     <button @click="showTxModal = false" class="btn bg-gray-100">Batal</button>
                     <button @click="saveTransaction" class="btn btn-primary" :disabled="!txIsBalanced">Simpan</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transaction Detail Modal -->
+        <div v-if="showTxDetailModal && selectedTxDetail" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="p-4 border-b">
+                    <h3 class="text-lg font-semibold">Detail Transaksi</h3>
+                </div>
+                <div class="p-4 space-y-4">
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                        <div>
+                            <div class="text-gray-500">Tanggal</div>
+                            <div class="font-medium">{{ formatDateDisplay(selectedTxDetail.tx_date) }}</div>
+                        </div>
+                        <div>
+                            <div class="text-gray-500">No. Ref</div>
+                            <div class="font-medium">{{ selectedTxDetail.ref_no || '-' }}</div>
+                        </div>
+                        <div>
+                            <div class="text-gray-500">Status</div>
+                            <span class="inline-block mt-1 px-2 py-0.5 rounded text-xs" :class="statusClass(selectedTxDetail.status)">
+                                {{ selectedTxDetail.status }}
+                            </span>
+                        </div>
+                        <div>
+                            <div class="text-gray-500">Cabang</div>
+                            <div class="font-medium">{{ selectedTxDetail.branch || '-' }}</div>
+                        </div>
+                        <div>
+                            <div class="text-gray-500">Metode</div>
+                            <div class="font-medium">{{ selectedTxDetail.method || '-' }}</div>
+                        </div>
+                        <div>
+                            <div class="text-gray-500">Pihak Terkait</div>
+                            <div class="font-medium">{{ selectedTxDetail.party_name || '-' }}</div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-sm text-gray-500 mb-1">Deskripsi</div>
+                        <div class="p-3 rounded border bg-gray-50 text-sm">{{ selectedTxDetail.description || '-' }}</div>
+                    </div>
+
+                    <div class="border rounded-lg overflow-hidden">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Akun</th>
+                                    <th class="px-3 py-2 text-left">Keterangan</th>
+                                    <th class="px-3 py-2 text-right">Debit</th>
+                                    <th class="px-3 py-2 text-right">Credit</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="line in selectedTxDetail.lines || []" :key="line.id" class="border-t">
+                                    <td class="px-3 py-2">{{ line.coa_code || '-' }} - {{ line.coa_name || '-' }}</td>
+                                    <td class="px-3 py-2">{{ line.description || '-' }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatRp(line.debit) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatRp(line.credit) }}</td>
+                                </tr>
+                            </tbody>
+                            <tfoot class="bg-gray-50 font-medium">
+                                <tr>
+                                    <td colspan="2" class="px-3 py-2 text-right">Total:</td>
+                                    <td class="px-3 py-2 text-right">{{ formatRp(selectedTxDetail.total_debit) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatRp(selectedTxDetail.total_credit) }}</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+                <div class="p-4 border-t flex justify-between gap-3">
+                    <div class="flex gap-3">
+                        <button @click="editFromTxDetail" class="btn btn-primary">Edit</button>
+                        <button
+                            v-if="selectedTxDetail.status !== 'POSTED'"
+                            @click="deleteFromTxDetail"
+                            class="btn bg-red-100 text-red-700"
+                        >
+                            Hapus
+                        </button>
+                    </div>
+                    <button @click="closeTxDetailModal" class="btn bg-gray-100">Tutup</button>
                 </div>
             </div>
         </div>

@@ -70,3 +70,4 @@ Last verified: 2026-02-19
 - 2026-02-20: Normalized Finance page date formatting with resilient frontend parser (`YYYY-MM-DD` and ISO), rendered transaction dates as `dd/MM/yyyy`, and aligned date inputs to `lang=id-ID`. Docs: N/A.
 - 2026-02-20: Updated Finance transaction modal amount inputs (`Debit`/`Credit`) to live-format thousand separators (`10.000`, `100.000`) while preserving numeric values for totals and API payload. Docs: N/A.
 - 2026-02-20: Updated Finance transaction modal so `Metode` uses dropdown options and `Pihak Terkait` shows live suggestion list on focus/type from existing tenant transaction lines. Docs: N/A.
+- 2026-02-20: Updated Finance transaction list UX: removed inline action column, made rows clickable to open transaction detail modal, and moved `Edit`/`Hapus` actions into detail modal. Docs: N/A.
