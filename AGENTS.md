@@ -68,3 +68,4 @@ Last verified: 2026-02-19
 - 2026-02-19: Fixed Quick Action `Hapus` reliability in Chat Admin by binding sidebar delete button via JS listener and adding robust visit-id fallback/guard in `deleteSession`. Docs: N/A.
 - 2026-02-20: Changed Direct welcome-message flow: no DB insert on `start_session`, render welcome client-side while chat empty, and persist welcome into `noci_chat` only when customer sends first message. Docs: N/A.
 - 2026-02-20: Normalized Finance page date formatting with resilient frontend parser (`YYYY-MM-DD` and ISO), rendered transaction dates as `dd/MM/yyyy`, and aligned date inputs to `lang=id-ID`. Docs: N/A.
+- 2026-02-20: Updated Finance transaction modal amount inputs (`Debit`/`Credit`) to live-format thousand separators (`10.000`, `100.000`) while preserving numeric values for totals and API payload. Docs: N/A.

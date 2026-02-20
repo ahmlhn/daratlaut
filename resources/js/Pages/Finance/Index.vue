@@ -118,6 +118,21 @@ function normalizeDateForInput(value) {
     return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+function parseAmountInput(value) {
+    const digitsOnly = String(value ?? '').replace(/[^\d]/g, '');
+    if (!digitsOnly) return 0;
+    const parsed = Number.parseInt(digitsOnly, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function onTxAmountInput(line, field, event) {
+    const amount = parseAmountInput(event?.target?.value);
+    line[field] = amount;
+    if (event?.target) {
+        event.target.value = formatRp(amount);
+    }
+}
+
 // Load dashboard
 async function loadDashboard() {
     loading.value = true;
@@ -1029,10 +1044,24 @@ onMounted(() => {
                                             <input v-model="line.description" type="text" class="input w-full text-sm" />
                                         </td>
                                         <td class="px-2 py-1">
-                                            <input v-model.number="line.debit" type="number" class="input w-full text-sm text-right" min="0" />
+                                            <input
+                                                :value="formatRp(line.debit || 0)"
+                                                @input="onTxAmountInput(line, 'debit', $event)"
+                                                type="text"
+                                                inputmode="numeric"
+                                                autocomplete="off"
+                                                class="input w-full text-sm text-right"
+                                            />
                                         </td>
                                         <td class="px-2 py-1">
-                                            <input v-model.number="line.credit" type="number" class="input w-full text-sm text-right" min="0" />
+                                            <input
+                                                :value="formatRp(line.credit || 0)"
+                                                @input="onTxAmountInput(line, 'credit', $event)"
+                                                type="text"
+                                                inputmode="numeric"
+                                                autocomplete="off"
+                                                class="input w-full text-sm text-right"
+                                            />
                                         </td>
                                         <td class="px-2 py-1">
                                             <button @click="removeTxLine(idx)" type="button" class="text-red-600 hover:text-red-800">×</button>
