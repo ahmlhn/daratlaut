@@ -75,6 +75,49 @@ function formatRp(value) {
     return new Intl.NumberFormat('id-ID').format(value || 0);
 }
 
+function extractDateParts(value) {
+    if (value == null || value === '') return null;
+
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return {
+            year: String(value.getFullYear()),
+            month: String(value.getMonth() + 1).padStart(2, '0'),
+            day: String(value.getDate()).padStart(2, '0'),
+        };
+    }
+
+    const text = String(value).trim();
+    if (!text) return null;
+
+    const ymd = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (ymd) {
+        return { year: ymd[1], month: ymd[2], day: ymd[3] };
+    }
+
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) {
+        return {
+            year: String(parsed.getFullYear()),
+            month: String(parsed.getMonth() + 1).padStart(2, '0'),
+            day: String(parsed.getDate()).padStart(2, '0'),
+        };
+    }
+
+    return null;
+}
+
+function formatDateDisplay(value) {
+    const parts = extractDateParts(value);
+    if (!parts) return '-';
+    return `${parts.day}/${parts.month}/${parts.year}`;
+}
+
+function normalizeDateForInput(value) {
+    const parts = extractDateParts(value);
+    if (!parts) return '';
+    return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 // Load dashboard
 async function loadDashboard() {
     loading.value = true;
@@ -223,7 +266,7 @@ function openTxModal(tx = null) {
     editingTx.value = tx;
     if (tx) {
         txForm.value = {
-            tx_date: tx.tx_date,
+            tx_date: normalizeDateForInput(tx.tx_date),
             ref_no: tx.ref_no || '',
             description: tx.description,
             branch_id: tx.branch_id,
@@ -554,7 +597,7 @@ onMounted(() => {
                             </thead>
                             <tbody>
                                 <tr v-for="tx in dashboard.recent_transactions" :key="tx.id" class="border-b">
-                                    <td class="px-3 py-2">{{ tx.tx_date }}</td>
+                                    <td class="px-3 py-2">{{ formatDateDisplay(tx.tx_date) }}</td>
                                     <td class="px-3 py-2">{{ tx.description }}</td>
                                     <td class="px-3 py-2">
                                         <span class="px-2 py-0.5 rounded text-xs" :class="statusClass(tx.status)">
@@ -617,8 +660,8 @@ onMounted(() => {
             <!-- Transactions Tab -->
             <div v-if="activeTab === 'transactions'">
                 <div class="flex flex-wrap gap-3 mb-4">
-                    <input v-model="txFilters.start_date" type="date" class="input" />
-                    <input v-model="txFilters.end_date" type="date" class="input" />
+                    <input v-model="txFilters.start_date" type="date" lang="id-ID" class="input" />
+                    <input v-model="txFilters.end_date" type="date" lang="id-ID" class="input" />
                     <select v-model="txFilters.status" class="input">
                         <option value="">Semua Status</option>
                         <option value="PENDING">PENDING</option>
@@ -652,7 +695,7 @@ onMounted(() => {
                                 <td colspan="7" class="text-center py-8 text-gray-500">Tidak ada data</td>
                             </tr>
                             <tr v-for="tx in transactions" :key="tx.id" class="border-b hover:bg-gray-50">
-                                <td class="px-3 py-2">{{ tx.tx_date }}</td>
+                                <td class="px-3 py-2">{{ formatDateDisplay(tx.tx_date) }}</td>
                                 <td class="px-3 py-2">{{ tx.ref_no || '-' }}</td>
                                 <td class="px-3 py-2">{{ tx.description }}</td>
                                 <td class="px-3 py-2">
@@ -716,7 +759,7 @@ onMounted(() => {
                                         v-model="selectedApprovals"
                                     />
                                 </td>
-                                <td class="px-3 py-2">{{ tx.tx_date }}</td>
+                                <td class="px-3 py-2">{{ formatDateDisplay(tx.tx_date) }}</td>
                                 <td class="px-3 py-2">{{ tx.description }}</td>
                                 <td class="px-3 py-2 text-right">Rp {{ formatRp(tx.total_debit) }}</td>
                                 <td class="px-3 py-2">{{ tx.created_by }}</td>
@@ -738,8 +781,8 @@ onMounted(() => {
                         <option value="balance">Neraca</option>
                         <option value="trial">Trial Balance</option>
                     </select>
-                    <input v-model="reportPeriod.start_date" type="date" class="input" />
-                    <input v-model="reportPeriod.end_date" type="date" class="input" />
+                    <input v-model="reportPeriod.start_date" type="date" lang="id-ID" class="input" />
+                    <input v-model="reportPeriod.end_date" type="date" lang="id-ID" class="input" />
                     <button @click="loadReport" class="btn btn-primary">Generate</button>
                 </div>
                 
@@ -927,7 +970,7 @@ onMounted(() => {
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div>
                             <label class="block text-sm font-medium mb-1">Tanggal</label>
-                            <input v-model="txForm.tx_date" type="date" class="input w-full" />
+                            <input v-model="txForm.tx_date" type="date" lang="id-ID" class="input w-full" />
                         </div>
                         <div>
                             <label class="block text-sm font-medium mb-1">No. Ref</label>
