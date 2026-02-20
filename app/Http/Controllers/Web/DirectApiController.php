@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Schema;
  * Actions supported (parity with dashboard/direct/api.php):
  *  - check_status
  *  - start_session
+ *  - heartbeat
  *  - get_messages
  *  - send (text or multipart image)
  */
@@ -56,6 +57,9 @@ class DirectApiController extends Controller
             }
             if ($action === 'start_session') {
                 return $this->startSession($request, $tenantId);
+            }
+            if ($action === 'heartbeat') {
+                return $this->heartbeat($request, $tenantId);
             }
             if ($action === 'get_messages') {
                 return $this->getMessages($request, $tenantId);
@@ -213,6 +217,39 @@ class DirectApiController extends Controller
         return $this->json([
             'status' => 'success',
             'welcome_msg' => $this->resolveWelcomeMessage($tenantId, $name),
+        ], $request);
+    }
+
+    private function heartbeat(Request $request, int $tenantId): JsonResponse
+    {
+        $visitId = trim((string) ($request->input('visit_id') ?? $request->query('visit_id') ?? ''));
+        if ($visitId === '') {
+            return $this->json(['status' => 'error', 'msg' => 'visit_id kosong'], $request, 422);
+        }
+
+        try {
+            $q = DB::table('noci_customers')->where('visit_id', $visitId);
+            if ($this->hasColumn('noci_customers', 'tenant_id')) {
+                $q->where('tenant_id', $tenantId);
+            }
+
+            $update = [];
+            if ($this->hasColumn('noci_customers', 'last_seen')) {
+                $update['last_seen'] = DB::raw('NOW()');
+            }
+            if ($this->hasColumn('noci_customers', 'ip_address')) {
+                $update['ip_address'] = (string) ($request->server('REMOTE_ADDR') ?? $request->ip() ?? '0.0.0.0');
+            }
+
+            if (!empty($update)) {
+                $q->update($update);
+            }
+        } catch (\Throwable) {
+        }
+
+        return $this->json([
+            'status' => 'success',
+            'server_time' => date('Y-m-d H:i:s'),
         ], $request);
     }
 

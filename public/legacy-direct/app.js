@@ -3,6 +3,7 @@
 
 let visitId = localStorage.getItem('noci_visit_id');
 let checkInterval = null;
+let heartbeatInterval = null;
 let isChatOpen = false;
 let unreadCount = 0;
 let lastSyncTime = ''; // Smart sync cursor (server_time)
@@ -16,6 +17,7 @@ let dynamicWelcome = "Halo kak, ada yang bisa kami bantu?"; // Default
 const TENANT_TOKEN = document.body ? (document.body.dataset.tenantToken || '') : '';
 const API_URL = TENANT_TOKEN ? `api.php?t=${encodeURIComponent(TENANT_TOKEN)}` : 'api.php';
 const LOG_URL = TENANT_TOKEN ? `../log.php?t=${encodeURIComponent(TENANT_TOKEN)}` : '../log.php';
+const PRESENCE_HEARTBEAT_MS = 10000;
 // Use same-origin uploads so it works both on localhost and production domains.
 const UPLOAD_URL = (() => {
     try { return `${window.location.origin}/chat/uploads/`; } catch (e) { return '/chat/uploads/'; }
@@ -37,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     checkChatSystemStatus();
+    startPresenceHeartbeat();
     logVisit('view_halaman');
 
     document.addEventListener('keydown', (e) => {
@@ -44,6 +47,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const imgViewer = document.getElementById('img-viewer-client');
             if (imgViewer && imgViewer.style.display === 'flex') { closeImageViewer(); return; }
             if (isChatOpen) closeLocalChat();
+        }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            sendPresenceHeartbeat();
         }
     });
 });
@@ -146,6 +155,24 @@ function logVisit(action) {
     if (TENANT_TOKEN) fd.append('t', TENANT_TOKEN);
     if (navigator.sendBeacon) navigator.sendBeacon(LOG_URL, fd);
     else fetch(LOG_URL, { method: 'POST', body: fd }).catch(() => {});
+}
+
+function sendPresenceHeartbeat() {
+    if (!visitId) return;
+    const fd = new FormData();
+    fd.append('action', 'heartbeat');
+    fd.append('visit_id', visitId);
+    fetch(API_URL, { method: 'POST', body: fd }).catch(() => {});
+}
+
+function startPresenceHeartbeat() {
+    sendPresenceHeartbeat();
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    heartbeatInterval = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+            sendPresenceHeartbeat();
+        }
+    }, PRESENCE_HEARTBEAT_MS);
 }
 
 function getAutoName() {

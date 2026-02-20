@@ -1843,7 +1843,20 @@ function saveAdminProfile() { const name = document.getElementById('adm-name').v
 
 function setText(selector, text) { document.querySelectorAll(selector).forEach(el => el.innerText = text || '-'); }
 
-function getStatus(lastSeen) { if (!lastSeen) return '<span class="text-slate-400 dark:text-slate-500 text-xs">Offline</span>'; const seenDate = new Date(lastSeen.replace(/-/g, "/")); const diffMins = Math.floor((new Date() - seenDate) / 60000); if (diffMins < 5) return `<span class="text-green-600 dark:text-green-400 text-xs font-bold">Online</span>`; return `<span class="text-slate-500 dark:text-slate-400 text-xs">Seen ${seenDate.getHours()}:${seenDate.getMinutes().toString().padStart(2,'0')}</span>`; }
+function getStatus(lastSeen) {
+    const seenDate = parseChatDateTime(lastSeen);
+    if (!seenDate) {
+        return '<span class="text-slate-400 dark:text-slate-500 text-xs">Offline</span>';
+    }
+
+    const diffMs = Date.now() - seenDate.getTime();
+    const diffSeconds = Number.isFinite(diffMs) ? Math.floor(diffMs / 1000) : Number.POSITIVE_INFINITY;
+    if (diffSeconds <= 30) {
+        return '<span class="text-green-600 dark:text-green-400 text-xs font-bold">Online</span>';
+    }
+
+    return '<span class="text-slate-400 dark:text-slate-500 text-xs">Offline</span>';
+}
 
 function escapeHtml(text) {
     return String(text)
