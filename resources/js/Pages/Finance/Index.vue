@@ -117,6 +117,53 @@ function formatDateDisplay(value) {
     return `${parts.day}/${parts.month}/${parts.year}`;
 }
 
+function formatBranchValue(value) {
+    if (value == null || value === '') return '-';
+
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return '-';
+
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                return formatBranchValue(parsed);
+            } catch (error) {
+                return trimmed;
+            }
+        }
+
+        return trimmed;
+    }
+
+    if (typeof value === 'object') {
+        const name = String(value.name ?? value.branch_name ?? '').trim();
+        if (name) return name;
+
+        const code = String(value.code ?? value.branch_code ?? '').trim();
+        if (code) return code;
+
+        return '-';
+    }
+
+    return String(value);
+}
+
+function formatTxBranch(tx) {
+    if (!tx || typeof tx !== 'object') return '-';
+
+    const fromBranchField = formatBranchValue(tx.branch);
+    if (fromBranchField !== '-') return fromBranchField;
+
+    const fromBranchNameField = formatBranchValue(tx.branch_name);
+    if (fromBranchNameField !== '-') return fromBranchNameField;
+
+    const fromBranchCodeField = formatBranchValue(tx.branch_code);
+    if (fromBranchCodeField !== '-') return fromBranchCodeField;
+
+    return '-';
+}
+
 function normalizeDateForInput(value) {
     const parts = extractDateParts(value);
     if (!parts) return '';
@@ -1233,7 +1280,7 @@ onMounted(() => {
                         </div>
                         <div>
                             <div class="text-gray-500">Cabang</div>
-                            <div class="font-medium">{{ selectedTxDetail.branch || '-' }}</div>
+                            <div class="font-medium">{{ formatTxBranch(selectedTxDetail) }}</div>
                         </div>
                         <div>
                             <div class="text-gray-500">Metode</div>
