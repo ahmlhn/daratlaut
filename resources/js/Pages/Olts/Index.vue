@@ -2646,9 +2646,9 @@ onMounted(async () => {
                 </div>
 
                 <div v-if="regDetailModalOpen && regModalOnu" class="fixed inset-0 z-[85]">
-                    <div class="absolute inset-0 bg-black/55 backdrop-blur-sm" @click="closeRegDetailModal()"></div>
-                    <div class="absolute inset-0 p-3 sm:p-6 flex items-end sm:items-center justify-center">
-                        <div class="w-full max-w-5xl max-h-[92vh] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl overflow-hidden">
+                    <div class="absolute inset-0 bg-transparent" @click="closeRegDetailModal()"></div>
+                    <div class="absolute top-1/2 left-1/2 w-[96%] sm:w-[94%] max-w-5xl max-h-[90vh] -translate-x-1/2 -translate-y-1/2">
+                        <div class="h-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 shadow-xl overflow-hidden">
                             <template v-for="item in [regModalOnu]" :key="onuKey(item)">
                                 <div class="px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-white/10 flex items-center justify-between gap-3">
                                     <div class="min-w-0">
