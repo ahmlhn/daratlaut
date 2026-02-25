@@ -2635,7 +2635,7 @@ onMounted(async () => {
                                                         </div>
                                                     </div>
 
-                                                    <div class="rounded-xl border border-slate-200/80 dark:border-white/10 bg-slate-50/70 dark:bg-slate-900/40 p-3 space-y-3">
+                                                    <div class="rounded-xl border border-slate-200/80 dark:border-white/10 bg-slate-50/70 dark:bg-slate-900/40 p-3 sm:p-4 space-y-3">
                                                         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                                             <div>
                                                                 <div class="text-[10px] uppercase tracking-wide text-slate-400">Histori Rx</div>
@@ -2643,12 +2643,12 @@ onMounted(async () => {
                                                                     Periode aktif: {{ rxHistoryRangeLabel(regRxHistoryRange) }}
                                                                 </div>
                                                             </div>
-                                                            <div class="flex flex-wrap gap-1.5">
+                                                            <div class="grid grid-cols-3 gap-1.5 w-full sm:w-auto sm:flex sm:flex-wrap">
                                                                 <button
                                                                     v-for="opt in regRxHistoryRanges"
                                                                     :key="opt.value"
                                                                     type="button"
-                                                                    class="px-2.5 py-1 text-[11px] rounded-lg border transition"
+                                                                    class="w-full sm:w-auto px-2 py-1.5 text-[11px] rounded-lg border transition"
                                                                     :class="
                                                                         isOnuRxHistoryRangeActive(opt.value)
                                                                             ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300'
@@ -2661,12 +2661,12 @@ onMounted(async () => {
                                                             </div>
                                                         </div>
 
-                                                        <div class="text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
-                                                            <span>Total: {{ getOnuRxHistoryMeta(item).count ?? 0 }}</span>
-                                                            <span>Latest: {{ formatRx(getOnuRxHistoryMeta(item).latest) }}</span>
-                                                            <span>Min: {{ formatRx(getOnuRxHistoryMeta(item).min) }}</span>
-                                                            <span>Max: {{ formatRx(getOnuRxHistoryMeta(item).max) }}</span>
-                                                            <span>Avg: {{ formatRx(getOnuRxHistoryMeta(item).avg) }}</span>
+                                                        <div class="grid grid-cols-2 sm:flex sm:flex-wrap gap-1.5 sm:gap-x-3 sm:gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Total: {{ getOnuRxHistoryMeta(item).count ?? 0 }}</span>
+                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Latest: {{ formatRx(getOnuRxHistoryMeta(item).latest) }}</span>
+                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Min: {{ formatRx(getOnuRxHistoryMeta(item).min) }}</span>
+                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Max: {{ formatRx(getOnuRxHistoryMeta(item).max) }}</span>
+                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1 col-span-2 sm:col-span-1">Avg: {{ formatRx(getOnuRxHistoryMeta(item).avg) }}</span>
                                                         </div>
 
                                                         <div v-if="isOnuRxHistoryLoading(item)" class="text-xs text-blue-600 dark:text-blue-300">
@@ -2678,25 +2678,43 @@ onMounted(async () => {
                                                         <div v-else-if="!getOnuRxHistoryRows(item).length" class="text-xs text-slate-500 dark:text-slate-400 italic">
                                                             Belum ada snapshot Rx untuk periode ini.
                                                         </div>
-                                                        <div v-else class="overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10">
-                                                            <table class="min-w-full text-xs">
-                                                                <thead class="bg-slate-100/80 dark:bg-slate-800/70 text-slate-500 dark:text-slate-300 uppercase tracking-wide">
-                                                                    <tr>
-                                                                        <th class="px-3 py-2 text-left">Waktu</th>
-                                                                        <th class="px-3 py-2 text-left">Rx</th>
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody class="divide-y divide-slate-100 dark:divide-white/10 bg-white/80 dark:bg-slate-900/30">
-                                                                    <tr v-for="(rxItem, idx) in getOnuRxHistoryRows(item)" :key="`${onuKey(item)}-rx-${idx}-${rxItem.sampled_at}`">
-                                                                        <td class="px-3 py-2 text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                                                                            {{ formatSampledAt(rxItem.sampled_at) }}
-                                                                        </td>
-                                                                        <td class="px-3 py-2 font-semibold" :class="getRxToneClass(extractRxValue(rxItem.rx_power))">
-                                                                            {{ formatRx(rxItem.rx_power) }}
-                                                                        </td>
-                                                                    </tr>
-                                                                </tbody>
-                                                            </table>
+                                                        <div v-else class="space-y-2">
+                                                            <div class="sm:hidden space-y-2">
+                                                                <div
+                                                                    v-for="(rxItem, idx) in getOnuRxHistoryRows(item)"
+                                                                    :key="`${onuKey(item)}-rx-mobile-${idx}-${rxItem.sampled_at}`"
+                                                                    class="rounded-lg border border-slate-200/80 dark:border-white/10 bg-white/80 dark:bg-slate-900/30 px-3 py-2.5"
+                                                                >
+                                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400">Waktu</div>
+                                                                    <div class="text-xs text-slate-600 dark:text-slate-300 break-words">
+                                                                        {{ formatSampledAt(rxItem.sampled_at) }}
+                                                                    </div>
+                                                                    <div class="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Rx</div>
+                                                                    <div class="text-sm font-semibold" :class="getRxToneClass(extractRxValue(rxItem.rx_power))">
+                                                                        {{ formatRx(rxItem.rx_power) }}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div class="hidden sm:block overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10">
+                                                                <table class="min-w-full text-xs">
+                                                                    <thead class="bg-slate-100/80 dark:bg-slate-800/70 text-slate-500 dark:text-slate-300 uppercase tracking-wide">
+                                                                        <tr>
+                                                                            <th class="px-3 py-2 text-left">Waktu</th>
+                                                                            <th class="px-3 py-2 text-left">Rx</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody class="divide-y divide-slate-100 dark:divide-white/10 bg-white/80 dark:bg-slate-900/30">
+                                                                        <tr v-for="(rxItem, idx) in getOnuRxHistoryRows(item)" :key="`${onuKey(item)}-rx-${idx}-${rxItem.sampled_at}`">
+                                                                            <td class="px-3 py-2 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                                                                                {{ formatSampledAt(rxItem.sampled_at) }}
+                                                                            </td>
+                                                                            <td class="px-3 py-2 font-semibold" :class="getRxToneClass(extractRxValue(rxItem.rx_power))">
+                                                                                {{ formatRx(rxItem.rx_power) }}
+                                                                            </td>
+                                                                        </tr>
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
                                                         </div>
                                                     </div>
 
