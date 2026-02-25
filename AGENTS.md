@@ -53,6 +53,7 @@ Last verified: 2026-02-25
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-02-25: Cron Scheduler OLT Laravel di `Settings -> Cron Scheduler` kini kembali memakai `olt_time` sebagai jam start sinkron periodik 6 jam (jam server). `routes/console.php` menghitung cron per-tenant dari `noci_cron_settings.olt_time` (fallback env `OLT_DAILY_SYNC_TIME`), dan UI `resources/js/Pages/Settings/Index.vue` mengaktifkan input jam OLT + preview slot 6 jam. Docs: `AGENTS.md`, `docs/OLT.md`, `docs/RUNBOOK.md`, `docs/CODEMAP.md`.
 - 2026-02-25: OLT Laravel menambahkan histori Rx power ONU: migration tabel `noci_olt_rx_logs`, sinkronisasi scheduler kini menyimpan snapshot Rx + update `noci_olt_onu.rx_power`, endpoint baru `GET /api/v1/olts/{id}/onu-rx-history`, UI detail ONU menambah tombol periode (`24 Jam/7 Hari/30 Hari`) + tabel histori Rx, serta jadwal OLT scheduler di `routes/console.php` diubah fixed jam server `00/06/12/18` dengan retensi otomatis 90 hari (1x/hari/tenant). Docs: `AGENTS.md`, `docs/OLT.md`, `docs/RUNBOOK.md`, `docs/CODEMAP.md`.
 - 2026-02-19: Created `backend-laravel/AGENTS.md` as local AI working context and maintenance policy. Docs: AGENTS.md.
 - 2026-02-19: Audited live finance schema, aligned finance controller/models to DB baseline (`noci_fin_*`), and added backend finance permission enforcement. Docs: `docs/finance-schema-audit-2026-02-19.md`.

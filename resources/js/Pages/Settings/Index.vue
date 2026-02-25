@@ -60,6 +60,23 @@ const cronSettings = reactive({
     cron_line_cpanel: '',
     windows_task_command: '',
 });
+
+function normalizeClock(value, fallback = '02:15') {
+    const raw = String(value || '').trim();
+    if (/^([01]\d|2[0-3]):([0-5]\d)$/.test(raw)) return raw;
+    return fallback;
+}
+
+const oltSchedulePreview = computed(() => {
+    const [hour, minute] = normalizeClock(cronSettings.olt_time, '02:15').split(':').map((n) => Number(n));
+    const times = [];
+    for (let step = 0; step < 4; step += 1) {
+        const nextHour = (hour + (step * 6)) % 24;
+        times.push(`${String(nextHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`);
+    }
+    return times.join(', ');
+});
+
 const cronLogs = ref([]);
 const cronLogsLoading = ref(false);
 const cronLogStats = reactive({
@@ -1225,12 +1242,9 @@ onMounted(() => {
                                                 <input v-model="cronSettings.olt_enabled" :true-value="1" :false-value="0" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
                                                 Aktifkan Sinkron OLT (`olt:queue-daily-sync`)
                                             </label>
-                                            <div class="text-xs font-semibold text-primary-700 dark:text-primary-300">
-                                                Jadwal fixed jam server: 00:00, 06:00, 12:00, 18:00.
-                                            </div>
-                                            <input v-model="cronSettings.olt_time" type="time" class="input w-full md:w-48 opacity-60 cursor-not-allowed" disabled>
+                                            <input v-model="cronSettings.olt_time" type="time" class="input w-full md:w-48">
                                             <p class="text-xs text-gray-500 dark:text-gray-400">
-                                                `olt_time` dipertahankan hanya untuk kompatibilitas data lama dan tidak dipakai scheduler aktif.
+                                                Rekomendasi: 02:15 WIB saat trafik rendah. Scheduler berjalan tiap 6 jam mengikuti jam server dari start `olt_time`: {{ oltSchedulePreview }}.
                                             </p>
                                         </div>
                                     </div>
