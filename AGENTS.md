@@ -53,6 +53,7 @@ Last verified: 2026-02-25
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-02-25: Scheduler cron OLT kini mengikuti timezone aplikasi dari env bawaan `APP_TIMEZONE` (via `config('app.timezone')`) di `routes/console.php`; event tenant tetap memakai jam `olt_time` dari Cron Scheduler, dan fallback global tetap memakai `OLT_DAILY_SYNC_TIME` dengan timezone yang sama. `OLT_SCHEDULE_TIMEZONE` dihapus dari `.env.example`. Docs: N/A.
 - 2026-02-25: Perbaikan reliabilitas cron OLT untuk penyimpanan Rx history. Command `olt:queue-daily-sync` menambah opsi `--sync` (eksekusi langsung tanpa queue worker), scheduler OLT tenant/fallback di `routes/console.php` kini menjalankan command dengan `--sync`, dan logging cron membedakan mode `sync` vs `queued` beserta jumlah sukses/gagal per tenant. Docs: `docs/OLT.md`, `docs/RUNBOOK.md`, `docs/CODEMAP.md`.
 - 2026-02-25: Modal detail ONU OLT (`resources/js/Pages/Olts/Index.vue`) kini memakai layout `header + body scroll + footer tetap`; tombol aksi (`Edit Nama`, `Refresh`, `Restart`, `Hapus ONU`) dipindah ke footer modal agar tidak ikut terscroll saat isi detail/histori panjang. Docs: N/A.
 - 2026-02-25: Histori Rx pada modal detail ONU OLT (`resources/js/Pages/Olts/Index.vue`) disederhanakan menjadi tampilan tabel saja (tanpa card mobile), ditambah pagination `Prev/Next` dan dropdown jumlah baris (`10/20/50/100`) untuk kontrol data yang ditampilkan per halaman. Docs: `docs/OLT.md`.

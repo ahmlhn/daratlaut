@@ -94,7 +94,7 @@ if ($opsRemindersEnabled) {
 | Reads per-tenant schedules from table `noci_cron_settings`:
 | - ops:nightly-closing
 | - ops:send-reminders
-| - olt:queue-daily-sync (daily at tenant `olt_time`, server clock)
+| - olt:queue-daily-sync (daily at tenant `olt_time`, timezone from APP_TIMEZONE)
 | Enable/disable via env OPS_TENANT_SCHEDULE_ENABLED (default: true).
 |
 */
@@ -106,6 +106,15 @@ $normalizeClock = static function (?string $value, string $fallback): string {
 
     return $fallback;
 };
+$oltScheduleTimezone = trim((string) config('app.timezone', 'UTC'));
+if ($oltScheduleTimezone === '') {
+    $oltScheduleTimezone = 'UTC';
+}
+try {
+    new \DateTimeZone($oltScheduleTimezone);
+} catch (\Throwable) {
+    $oltScheduleTimezone = 'UTC';
+}
 
 $opsTenantScheduleEnabled = filter_var((string) env('OPS_TENANT_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
 $tenantOltScheduled = 0;
@@ -165,6 +174,7 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
                 $oltTime = $normalizeClock($hasOltTimeColumn ? (string) ($row->olt_time ?? '') : null, '02:15');
                 Schedule::command('olt:queue-daily-sync', ['--tenant' => (string) $tenantId, '--sync' => true])
                     ->dailyAt($oltTime)
+                    ->timezone($oltScheduleTimezone)
                     ->withoutOverlapping()
                     ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
                 $tenantOltScheduled++;
@@ -183,7 +193,7 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
 | Prioritas utama: jadwal per-tenant dari `noci_cron_settings`.
 | Fallback global (env) tetap disediakan untuk kompatibilitas deployment lama
 | atau saat jadwal tenant belum dikonfigurasi.
-| OLT sync berjalan harian dari `OLT_DAILY_SYNC_TIME` (jam server).
+| OLT sync berjalan harian dari `OLT_DAILY_SYNC_TIME` (timezone from APP_TIMEZONE).
 |
 */
 $oltDailySyncEnabled = filter_var((string) env('OLT_DAILY_SYNC_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
@@ -194,6 +204,7 @@ if (($oltDailySyncEnabled || $oltDailySyncLegacyEnabled) && $tenantOltScheduled 
     $oltDailySyncAt = $normalizeClock($oltDailySyncTime, '02:15');
     Schedule::command('olt:queue-daily-sync', ['--sync' => true])
         ->dailyAt($oltDailySyncAt)
+        ->timezone($oltScheduleTimezone)
         ->withoutOverlapping()
         ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
 }
