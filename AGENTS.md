@@ -53,6 +53,7 @@ Last verified: 2026-02-25
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-02-25: UI detail ONU pada tabel registered OLT (`resources/js/Pages/Olts/Index.vue`) diubah dari inline expand menjadi popup modal. Klik baris ONU kini membuka modal detail (info ONU, histori Rx, edit nama, refresh/restart/hapus), dan modal ditutup saat ganti filter/FSP/search/OLT agar state tetap konsisten. Docs: `docs/OLT.md`.
 - 2026-02-25: UI detail ONU OLT (`resources/js/Pages/Olts/Index.vue`) memperbaiki responsivitas card Histori Rx di mobile: tombol periode jadi grid 3 kolom, ringkasan metrik jadi chip grid, dan daftar histori memakai kartu vertikal pada layar kecil (tabel tetap untuk desktop). Docs: N/A.
 - 2026-02-25: Load manual data OLT (`GET /api/v1/olts/{id}/registered?fsp=...` dan `POST /api/v1/olts/{id}/registered-all`) kini ikut menyimpan Rx ke DB: refresh cache `noci_olt_onu.rx_power` dan insert snapshot histori ke `noci_olt_rx_logs` saat hasil telnet tersedia. Docs: `docs/OLT.md`.
 - 2026-02-25: Optimasi performa load `Semua SFP` di halaman OLT. `resources/js/Pages/Olts/Index.vue` kini melakukan merge data per-FSP secara batch (single assignment) untuk mengurangi recompute/sort berulang pada data ONU besar, dan `app/Http/Controllers/Api/OltController.php` mengganti agregasi `array_merge` berulang dengan append loop pada endpoint `registered-all`. Docs: N/A.

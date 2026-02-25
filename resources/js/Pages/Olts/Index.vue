@@ -887,6 +887,7 @@ const regSortDir = ref('asc');
 
 const regHighlightKey = ref('');
 const regExpandedKey = ref('');
+const regDetailModalOpen = ref(false);
 const regDetailLoadingKey = ref('');
 const regDetails = ref({});
 const regEditingKey = ref('');
@@ -1255,10 +1256,23 @@ const regTotal = computed(() => registeredFiltered.value.length);
 const regTotalPages = computed(() => Math.max(1, Math.ceil(regTotal.value / regPageSize.value)));
 const regPageStart = computed(() => (Math.max(1, regPage.value) - 1) * regPageSize.value);
 const regPageItems = computed(() => registeredFiltered.value.slice(regPageStart.value, regPageStart.value + regPageSize.value));
+const regModalOnu = computed(() => {
+    const key = String(regExpandedKey.value || '').trim();
+    if (!key) return null;
+    return registered.value.find((it) => onuKey(it) === key) || null;
+});
 
 watch(regTotalPages, () => {
     if (regPage.value > regTotalPages.value) regPage.value = regTotalPages.value;
     if (regPage.value < 1) regPage.value = 1;
+});
+
+watch(regModalOnu, (onu) => {
+    if (regDetailModalOpen.value && !onu) {
+        regDetailModalOpen.value = false;
+        regExpandedKey.value = '';
+        cancelEditOnuName();
+    }
 });
 
 function hasRegisteredFspData(fsp) {
@@ -1543,8 +1557,7 @@ async function loadRegisteredAll({ force = false, silent = false } = {}) {
 async function changeRegFsp() {
     if (regSearchMode.value) exitRegSearchMode();
     regPage.value = 1;
-    regExpandedKey.value = '';
-    cancelEditOnuName();
+    closeRegDetailModal();
 
     if (!selectedOltId.value) return;
     const fsp = String(regFilterFsp.value || '');
@@ -1587,14 +1600,14 @@ function enterRegSearchMode() {
         loadedFsp: { ...(regLoadedFsp.value || {}) },
         page: regPage.value || 1,
         expandedKey: regExpandedKey.value || '',
+        detailModalOpen: !!regDetailModalOpen.value,
         editingKey: regEditingKey.value || '',
         editingName: regEditingName.value || '',
     };
     registered.value = [];
     regLoadedFsp.value = {};
     regPage.value = 1;
-    regExpandedKey.value = '';
-    cancelEditOnuName();
+    closeRegDetailModal();
 }
 
 function exitRegSearchMode() {
@@ -1607,15 +1620,19 @@ function exitRegSearchMode() {
         regLoadedFsp.value = backup.loadedFsp ? { ...backup.loadedFsp } : {};
         regPage.value = backup.page || 1;
         regExpandedKey.value = backup.expandedKey || '';
-        regEditingKey.value = backup.editingKey || '';
-        regEditingName.value = backup.editingName || '';
+        regDetailModalOpen.value = !!(backup.detailModalOpen && backup.expandedKey);
+        if (regDetailModalOpen.value) {
+            regEditingKey.value = backup.editingKey || '';
+            regEditingName.value = backup.editingName || '';
+        } else {
+            cancelEditOnuName();
+        }
         return;
     }
     registered.value = [];
     regLoadedFsp.value = {};
     regPage.value = 1;
-    regExpandedKey.value = '';
-    cancelEditOnuName();
+    closeRegDetailModal();
 }
 
 function isLikelySn(query) {
@@ -1685,8 +1702,7 @@ watch(
         if (suppressRegSearchWatcher) return;
         const query = String(val || '').trim();
         regPage.value = 1;
-        regExpandedKey.value = '';
-        cancelEditOnuName();
+        closeRegDetailModal();
 
         if (regDbSearchTimer) {
             clearTimeout(regDbSearchTimer);
@@ -1758,14 +1774,20 @@ function setRowActionLoading(key, type, active) {
     rowActionType.value = type;
 }
 
+function closeRegDetailModal() {
+    regDetailModalOpen.value = false;
+    regExpandedKey.value = '';
+    cancelEditOnuName();
+}
+
 async function toggleRegDetail(onu) {
     const key = onuKey(onu);
-    if (regExpandedKey.value === key) {
-        regExpandedKey.value = '';
-        if (regEditingKey.value === key) cancelEditOnuName();
+    if (regDetailModalOpen.value && regExpandedKey.value === key) {
+        closeRegDetailModal();
         return;
     }
     regExpandedKey.value = key;
+    regDetailModalOpen.value = true;
     regRxHistoryRange.value = '24h';
     await loadOnuDetail(onu, { force: false, silent: true });
     await loadOnuRxHistory(onu, { range: regRxHistoryRange.value, force: false, silent: true });
@@ -1919,7 +1941,7 @@ async function deleteRegisteredOnu(onu) {
         if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
 
         registered.value = registered.value.filter(it => onuKey(it) !== key);
-        if (regExpandedKey.value === key) regExpandedKey.value = '';
+        if (regExpandedKey.value === key) closeRegDetailModal();
         clearRxHistoryCache(key);
         setRegStatus('ONU berhasil dihapus.', 'success');
         if (isTeknisi.value) teknisiWriteReady.value = true;
@@ -2083,6 +2105,7 @@ async function onOltChanged(newId, prevId) {
     regSearchMode.value = false;
     regLoadedFsp.value = {};
     regLiveLoadingFsp.value = {};
+    regDetailModalOpen.value = false;
     regExpandedKey.value = '';
     regDetails.value = {};
     regRxHistoryRange.value = '24h';
@@ -2569,7 +2592,7 @@ onMounted(async () => {
                                         <tr
                                             class="cursor-pointer"
                                             :class="[
-                                                regExpandedKey === onuKey(item)
+                                                regDetailModalOpen && regExpandedKey === onuKey(item)
                                                     ? 'bg-emerald-50/80 dark:bg-emerald-500/10'
                                                     : 'hover:bg-slate-50 dark:hover:bg-slate-800/40',
                                                 regHighlightKey === onuKey(item) ? 'ring-2 ring-emerald-400/60' : '',
@@ -2587,216 +2610,6 @@ onMounted(async () => {
                                                 >
                                                     {{ formatRegStatus(item).label }}
                                                 </span>
-                                            </td>
-                                        </tr>
-
-                                        <tr v-if="regExpandedKey === onuKey(item)" class="bg-white dark:bg-slate-900/40">
-                                            <td colspan="5" class="px-3 sm:px-6 py-4">
-                                                <div v-if="regDetailLoadingKey === onuKey(item)" class="flex items-center gap-3 text-sm text-slate-500">
-                                                    <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-500">
-                                                        <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                            <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                                        </svg>
-                                                    </span>
-                                                    Memuat detail ONU...
-                                                </div>
-
-                                                <div v-else class="space-y-4">
-                                                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-600 dark:text-slate-300">
-                                                        <div class="min-w-0 space-y-1">
-                                                            <div class="text-[10px] uppercase tracking-wide text-slate-400">Interface</div>
-                                                            <div class="font-semibold text-slate-700 dark:text-slate-200 break-all">{{ item.interface || onuKey(item) }}</div>
-                                                        </div>
-                                                        <div class="min-w-0 space-y-1">
-                                                            <div class="text-[10px] uppercase tracking-wide text-slate-400">Nama</div>
-                                                            <div v-if="regEditingKey === onuKey(item)">
-                                                                <input
-                                                                    v-model="regEditingName"
-                                                                    class="block w-full max-w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
-                                                                    @click.stop
-                                                                />
-                                                            </div>
-                                                            <div v-else class="font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</div>
-                                                        </div>
-                                                        <div class="min-w-0 space-y-1">
-                                                            <div class="text-[10px] uppercase tracking-wide text-slate-400">SN</div>
-                                                            <div class="font-semibold text-slate-700 dark:text-slate-200 break-all">{{ item.sn || '-' }}</div>
-                                                        </div>
-                                                        <div class="min-w-0 space-y-1">
-                                                            <div class="text-[10px] uppercase tracking-wide text-slate-400">Status</div>
-                                                            <div class="font-semibold text-slate-700 dark:text-slate-200">{{ formatRegStatus(item).label }}</div>
-                                                        </div>
-                                                        <div class="min-w-0 space-y-1">
-                                                            <div class="text-[10px] uppercase tracking-wide text-slate-400">Power Rx</div>
-                                                            <div class="font-semibold" :class="getRxTextClass(item)">
-                                                                {{ extractRxValue(item.rx) !== null ? formatRx(item.rx) : '-' }}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    <div class="rounded-xl border border-slate-200/80 dark:border-white/10 bg-slate-50/70 dark:bg-slate-900/40 p-3 sm:p-4 space-y-3">
-                                                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                                                            <div>
-                                                                <div class="text-[10px] uppercase tracking-wide text-slate-400">Histori Rx</div>
-                                                                <div class="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                                                                    Periode aktif: {{ rxHistoryRangeLabel(regRxHistoryRange) }}
-                                                                </div>
-                                                            </div>
-                                                            <div class="grid grid-cols-3 gap-1.5 w-full sm:w-auto sm:flex sm:flex-wrap">
-                                                                <button
-                                                                    v-for="opt in regRxHistoryRanges"
-                                                                    :key="opt.value"
-                                                                    type="button"
-                                                                    class="w-full sm:w-auto px-2 py-1.5 text-[11px] rounded-lg border transition"
-                                                                    :class="
-                                                                        isOnuRxHistoryRangeActive(opt.value)
-                                                                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300'
-                                                                            : 'border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/70'
-                                                                    "
-                                                                    @click.stop="setOnuRxHistoryRange(item, opt.value)"
-                                                                >
-                                                                    {{ opt.label }}
-                                                                </button>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="grid grid-cols-2 sm:flex sm:flex-wrap gap-1.5 sm:gap-x-3 sm:gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
-                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Total: {{ getOnuRxHistoryMeta(item).count ?? 0 }}</span>
-                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Latest: {{ formatRx(getOnuRxHistoryMeta(item).latest) }}</span>
-                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Min: {{ formatRx(getOnuRxHistoryMeta(item).min) }}</span>
-                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Max: {{ formatRx(getOnuRxHistoryMeta(item).max) }}</span>
-                                                            <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1 col-span-2 sm:col-span-1">Avg: {{ formatRx(getOnuRxHistoryMeta(item).avg) }}</span>
-                                                        </div>
-
-                                                        <div v-if="isOnuRxHistoryLoading(item)" class="text-xs text-blue-600 dark:text-blue-300">
-                                                            Memuat histori Rx...
-                                                        </div>
-                                                        <div v-else-if="getOnuRxHistoryError(item)" class="text-xs text-rose-600 dark:text-rose-300">
-                                                            {{ getOnuRxHistoryError(item) }}
-                                                        </div>
-                                                        <div v-else-if="!getOnuRxHistoryRows(item).length" class="text-xs text-slate-500 dark:text-slate-400 italic">
-                                                            Belum ada snapshot Rx untuk periode ini.
-                                                        </div>
-                                                        <div v-else class="space-y-2">
-                                                            <div class="sm:hidden space-y-2">
-                                                                <div
-                                                                    v-for="(rxItem, idx) in getOnuRxHistoryRows(item)"
-                                                                    :key="`${onuKey(item)}-rx-mobile-${idx}-${rxItem.sampled_at}`"
-                                                                    class="rounded-lg border border-slate-200/80 dark:border-white/10 bg-white/80 dark:bg-slate-900/30 px-3 py-2.5"
-                                                                >
-                                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400">Waktu</div>
-                                                                    <div class="text-xs text-slate-600 dark:text-slate-300 break-words">
-                                                                        {{ formatSampledAt(rxItem.sampled_at) }}
-                                                                    </div>
-                                                                    <div class="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Rx</div>
-                                                                    <div class="text-sm font-semibold" :class="getRxToneClass(extractRxValue(rxItem.rx_power))">
-                                                                        {{ formatRx(rxItem.rx_power) }}
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                            <div class="hidden sm:block overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10">
-                                                                <table class="min-w-full text-xs">
-                                                                    <thead class="bg-slate-100/80 dark:bg-slate-800/70 text-slate-500 dark:text-slate-300 uppercase tracking-wide">
-                                                                        <tr>
-                                                                            <th class="px-3 py-2 text-left">Waktu</th>
-                                                                            <th class="px-3 py-2 text-left">Rx</th>
-                                                                        </tr>
-                                                                    </thead>
-                                                                    <tbody class="divide-y divide-slate-100 dark:divide-white/10 bg-white/80 dark:bg-slate-900/30">
-                                                                        <tr v-for="(rxItem, idx) in getOnuRxHistoryRows(item)" :key="`${onuKey(item)}-rx-${idx}-${rxItem.sampled_at}`">
-                                                                            <td class="px-3 py-2 text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                                                                                {{ formatSampledAt(rxItem.sampled_at) }}
-                                                                            </td>
-                                                                            <td class="px-3 py-2 font-semibold" :class="getRxToneClass(extractRxValue(rxItem.rx_power))">
-                                                                                {{ formatRx(rxItem.rx_power) }}
-                                                                            </td>
-                                                                        </tr>
-                                                                    </tbody>
-                                                                </table>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    <div class="flex flex-wrap gap-2">
-                                                        <template v-if="regEditingKey === onuKey(item)">
-                                                            <button
-                                                                type="button"
-                                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                                                :disabled="isRowActionLoading(onuKey(item), 'rename')"
-                                                                @click.stop="saveEditOnuName(item)"
-                                                            >
-                                                                <span v-if="isRowActionLoading(onuKey(item), 'rename')" class="inline-flex h-4 w-4 items-center justify-center">
-                                                                    <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                                                    </svg>
-                                                                </span>
-                                                                Simpan
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
-                                                                @click.stop="cancelEditOnuName()"
-                                                            >
-                                                                Batal
-                                                            </button>
-                                                        </template>
-                                                        <button
-                                                            v-else
-                                                            type="button"
-                                                            class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition"
-                                                            @click.stop="startEditOnuName(item)"
-                                                        >
-                                                            Edit Nama
-                                                        </button>
-
-                                                        <button
-                                                            type="button"
-                                                            class="px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                                            :disabled="isRowActionLoading(onuKey(item), 'refresh')"
-                                                            @click.stop="refreshRegisteredOnu(item)"
-                                                        >
-                                                            <span v-if="isRowActionLoading(onuKey(item), 'refresh')" class="inline-flex h-4 w-4 items-center justify-center">
-                                                                <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                                                </svg>
-                                                            </span>
-                                                            Refresh
-                                                        </button>
-
-                                                        <button
-                                                            type="button"
-                                                            class="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                                            :disabled="isRowActionLoading(onuKey(item), 'restart')"
-                                                            @click.stop="restartRegisteredOnu(item)"
-                                                        >
-                                                            <span v-if="isRowActionLoading(onuKey(item), 'restart')" class="inline-flex h-4 w-4 items-center justify-center">
-                                                                <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                                                </svg>
-                                                            </span>
-                                                            Restart
-                                                        </button>
-
-                                                        <button
-                                                            type="button"
-                                                            class="px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-100 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                                            :disabled="isRowActionLoading(onuKey(item), 'delete')"
-                                                            @click.stop="deleteRegisteredOnu(item)"
-                                                        >
-                                                            <span v-if="isRowActionLoading(onuKey(item), 'delete')" class="inline-flex h-4 w-4 items-center justify-center">
-                                                                <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                                                </svg>
-                                                            </span>
-                                                            Hapus ONU
-                                                        </button>
-                                                    </div>
-                                                </div>
                                             </td>
                                         </tr>
                                     </template>
@@ -2828,6 +2641,238 @@ onMounted(async () => {
                             >
                                 Next
                             </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="regDetailModalOpen && regModalOnu" class="fixed inset-0 z-[85]">
+                    <div class="absolute inset-0 bg-black/55 backdrop-blur-sm" @click="closeRegDetailModal()"></div>
+                    <div class="absolute inset-0 p-3 sm:p-6 flex items-end sm:items-center justify-center">
+                        <div class="w-full max-w-5xl max-h-[92vh] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl overflow-hidden">
+                            <template v-for="item in [regModalOnu]" :key="onuKey(item)">
+                                <div class="px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-white/10 flex items-center justify-between gap-3">
+                                    <div class="min-w-0">
+                                        <div class="text-xs uppercase tracking-wide text-slate-400">Detail ONU</div>
+                                        <div class="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
+                                            {{ item.fsp_onu || `${item.fsp}:${item.onu_id}` }} - {{ item.name || item.sn || 'ONU' }}
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-xs font-bold text-slate-500 hover:text-slate-700 dark:text-slate-300 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800/70 transition"
+                                        @click="closeRegDetailModal()"
+                                    >
+                                        Tutup
+                                    </button>
+                                </div>
+
+                                <div class="px-4 sm:px-5 py-4 sm:py-5 overflow-y-auto space-y-4 max-h-[calc(92vh-66px)]">
+                                    <div v-if="regDetailLoadingKey === onuKey(item)" class="flex items-center gap-3 text-sm text-slate-500">
+                                        <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-500">
+                                            <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                            </svg>
+                                        </span>
+                                        Memuat detail ONU...
+                                    </div>
+
+                                    <div v-else class="space-y-4">
+                                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-600 dark:text-slate-300">
+                                            <div class="min-w-0 space-y-1">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400">Interface</div>
+                                                <div class="font-semibold text-slate-700 dark:text-slate-200 break-all">{{ item.interface || onuKey(item) }}</div>
+                                            </div>
+                                            <div class="min-w-0 space-y-1">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400">Nama</div>
+                                                <div v-if="regEditingKey === onuKey(item)">
+                                                    <input
+                                                        v-model="regEditingName"
+                                                        class="block w-full max-w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
+                                                    />
+                                                </div>
+                                                <div v-else class="font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</div>
+                                            </div>
+                                            <div class="min-w-0 space-y-1">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400">SN</div>
+                                                <div class="font-semibold text-slate-700 dark:text-slate-200 break-all">{{ item.sn || '-' }}</div>
+                                            </div>
+                                            <div class="min-w-0 space-y-1">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400">Status</div>
+                                                <div class="font-semibold text-slate-700 dark:text-slate-200">{{ formatRegStatus(item).label }}</div>
+                                            </div>
+                                            <div class="min-w-0 space-y-1">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400">Power Rx</div>
+                                                <div class="font-semibold" :class="getRxTextClass(item)">
+                                                    {{ extractRxValue(item.rx) !== null ? formatRx(item.rx) : '-' }}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="rounded-xl border border-slate-200/80 dark:border-white/10 bg-slate-50/70 dark:bg-slate-900/40 p-3 sm:p-4 space-y-3">
+                                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                                <div>
+                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400">Histori Rx</div>
+                                                    <div class="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                                                        Periode aktif: {{ rxHistoryRangeLabel(regRxHistoryRange) }}
+                                                    </div>
+                                                </div>
+                                                <div class="grid grid-cols-3 gap-1.5 w-full sm:w-auto sm:flex sm:flex-wrap">
+                                                    <button
+                                                        v-for="opt in regRxHistoryRanges"
+                                                        :key="opt.value"
+                                                        type="button"
+                                                        class="w-full sm:w-auto px-2 py-1.5 text-[11px] rounded-lg border transition"
+                                                        :class="
+                                                            isOnuRxHistoryRangeActive(opt.value)
+                                                                ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300'
+                                                                : 'border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/70'
+                                                        "
+                                                        @click.stop="setOnuRxHistoryRange(item, opt.value)"
+                                                    >
+                                                        {{ opt.label }}
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div class="grid grid-cols-2 sm:flex sm:flex-wrap gap-1.5 sm:gap-x-3 sm:gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                                                <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Total: {{ getOnuRxHistoryMeta(item).count ?? 0 }}</span>
+                                                <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Latest: {{ formatRx(getOnuRxHistoryMeta(item).latest) }}</span>
+                                                <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Min: {{ formatRx(getOnuRxHistoryMeta(item).min) }}</span>
+                                                <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1">Max: {{ formatRx(getOnuRxHistoryMeta(item).max) }}</span>
+                                                <span class="rounded-md bg-white/80 dark:bg-slate-900/50 px-2 py-1 col-span-2 sm:col-span-1">Avg: {{ formatRx(getOnuRxHistoryMeta(item).avg) }}</span>
+                                            </div>
+
+                                            <div v-if="isOnuRxHistoryLoading(item)" class="text-xs text-blue-600 dark:text-blue-300">
+                                                Memuat histori Rx...
+                                            </div>
+                                            <div v-else-if="getOnuRxHistoryError(item)" class="text-xs text-rose-600 dark:text-rose-300">
+                                                {{ getOnuRxHistoryError(item) }}
+                                            </div>
+                                            <div v-else-if="!getOnuRxHistoryRows(item).length" class="text-xs text-slate-500 dark:text-slate-400 italic">
+                                                Belum ada snapshot Rx untuk periode ini.
+                                            </div>
+                                            <div v-else class="space-y-2">
+                                                <div class="sm:hidden space-y-2">
+                                                    <div
+                                                        v-for="(rxItem, idx) in getOnuRxHistoryRows(item)"
+                                                        :key="`${onuKey(item)}-rx-mobile-${idx}-${rxItem.sampled_at}`"
+                                                        class="rounded-lg border border-slate-200/80 dark:border-white/10 bg-white/80 dark:bg-slate-900/30 px-3 py-2.5"
+                                                    >
+                                                        <div class="text-[10px] uppercase tracking-wide text-slate-400">Waktu</div>
+                                                        <div class="text-xs text-slate-600 dark:text-slate-300 break-words">
+                                                            {{ formatSampledAt(rxItem.sampled_at) }}
+                                                        </div>
+                                                        <div class="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Rx</div>
+                                                        <div class="text-sm font-semibold" :class="getRxToneClass(extractRxValue(rxItem.rx_power))">
+                                                            {{ formatRx(rxItem.rx_power) }}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="hidden sm:block overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10">
+                                                    <table class="min-w-full text-xs">
+                                                        <thead class="bg-slate-100/80 dark:bg-slate-800/70 text-slate-500 dark:text-slate-300 uppercase tracking-wide">
+                                                            <tr>
+                                                                <th class="px-3 py-2 text-left">Waktu</th>
+                                                                <th class="px-3 py-2 text-left">Rx</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody class="divide-y divide-slate-100 dark:divide-white/10 bg-white/80 dark:bg-slate-900/30">
+                                                            <tr v-for="(rxItem, idx) in getOnuRxHistoryRows(item)" :key="`${onuKey(item)}-rx-${idx}-${rxItem.sampled_at}`">
+                                                                <td class="px-3 py-2 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                                                                    {{ formatSampledAt(rxItem.sampled_at) }}
+                                                                </td>
+                                                                <td class="px-3 py-2 font-semibold" :class="getRxToneClass(extractRxValue(rxItem.rx_power))">
+                                                                    {{ formatRx(rxItem.rx_power) }}
+                                                                </td>
+                                                            </tr>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="flex flex-wrap gap-2">
+                                            <template v-if="regEditingKey === onuKey(item)">
+                                                <button
+                                                    type="button"
+                                                    class="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                                                    :disabled="isRowActionLoading(onuKey(item), 'rename')"
+                                                    @click.stop="saveEditOnuName(item)"
+                                                >
+                                                    <span v-if="isRowActionLoading(onuKey(item), 'rename')" class="inline-flex h-4 w-4 items-center justify-center">
+                                                        <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                            <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                        </svg>
+                                                    </span>
+                                                    Simpan
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
+                                                    @click.stop="cancelEditOnuName()"
+                                                >
+                                                    Batal
+                                                </button>
+                                            </template>
+                                            <button
+                                                v-else
+                                                type="button"
+                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition"
+                                                @click.stop="startEditOnuName(item)"
+                                            >
+                                                Edit Nama
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                                                :disabled="isRowActionLoading(onuKey(item), 'refresh')"
+                                                @click.stop="refreshRegisteredOnu(item)"
+                                            >
+                                                <span v-if="isRowActionLoading(onuKey(item), 'refresh')" class="inline-flex h-4 w-4 items-center justify-center">
+                                                    <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                    </svg>
+                                                </span>
+                                                Refresh
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                                                :disabled="isRowActionLoading(onuKey(item), 'restart')"
+                                                @click.stop="restartRegisteredOnu(item)"
+                                            >
+                                                <span v-if="isRowActionLoading(onuKey(item), 'restart')" class="inline-flex h-4 w-4 items-center justify-center">
+                                                    <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                    </svg>
+                                                </span>
+                                                Restart
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-100 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                                                :disabled="isRowActionLoading(onuKey(item), 'delete')"
+                                                @click.stop="deleteRegisteredOnu(item)"
+                                            >
+                                                <span v-if="isRowActionLoading(onuKey(item), 'delete')" class="inline-flex h-4 w-4 items-center justify-center">
+                                                    <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                    </svg>
+                                                </span>
+                                                Hapus ONU
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
                         </div>
                     </div>
                 </div>
