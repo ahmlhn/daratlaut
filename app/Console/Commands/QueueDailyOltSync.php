@@ -14,7 +14,7 @@ class QueueDailyOltSync extends Command
                             {--olt= : OLT ID tertentu}
                             {--queue=olt-sync : Nama queue tujuan}';
 
-    protected $description = 'Queue sinkronisasi ONU OLT periodik (setiap 6 jam)';
+    protected $description = 'Queue sinkronisasi ONU OLT harian';
 
     public function handle(): int
     {

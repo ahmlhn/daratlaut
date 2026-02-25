@@ -1505,9 +1505,51 @@ class OltService
     }
 
     /**
-     * Sync all ONUs to database
+     * Deep sync ONU names/detail for all FSP entries.
      */
-    private function syncAllOnusToDbInternal(bool $captureRxHistory = false): array
+    private function syncAllOnuNamesToDb(array $fspList): array
+    {
+        $processed = 0;
+        $updated = 0;
+        $skipped = 0;
+        $errors = 0;
+
+        foreach ($fspList as $fsp) {
+            $offset = 0;
+            $limit = 25;
+            while (true) {
+                $chunk = $this->syncOnuNamesChunk($fsp, $offset, $limit, false);
+
+                $processed += (int) ($chunk['processed'] ?? 0);
+                $updated += (int) ($chunk['updated'] ?? 0);
+                $skipped += (int) ($chunk['skipped'] ?? 0);
+                $errors += (int) ($chunk['errors'] ?? 0);
+
+                if ((bool) ($chunk['done'] ?? true) === true) {
+                    break;
+                }
+
+                $nextOffset = (int) ($chunk['next_offset'] ?? 0);
+                if ($nextOffset <= $offset) {
+                    // Guard against unexpected parser output to avoid infinite loops.
+                    break;
+                }
+                $offset = $nextOffset;
+            }
+        }
+
+        return [
+            'name_sync_processed' => $processed,
+            'name_sync_updated' => $updated,
+            'name_sync_skipped' => $skipped,
+            'name_sync_errors' => $errors,
+        ];
+    }
+
+    /**
+     * Sync all ONUs to database.
+     */
+    private function syncAllOnusToDbInternal(bool $captureRxHistory = false, bool $captureNameSync = false): array
     {
         $fspList = $this->listFsp();
         $count = 0;
@@ -1561,11 +1603,25 @@ class OltService
         // Update FSP cache
         $this->olt->updateFspCache($fspList);
 
+        $nameSync = [
+            'name_sync_processed' => 0,
+            'name_sync_updated' => 0,
+            'name_sync_skipped' => 0,
+            'name_sync_errors' => 0,
+        ];
+        if ($captureNameSync) {
+            $nameSync = $this->syncAllOnuNamesToDb($fspList);
+        }
+
         return [
             'synced_count' => $count,
             'fsp_count' => count($fspList),
             'rx_cache_updated' => $rxCacheUpdated,
             'rx_samples_saved' => $rxSamplesSaved,
+            'name_sync_processed' => (int) ($nameSync['name_sync_processed'] ?? 0),
+            'name_sync_updated' => (int) ($nameSync['name_sync_updated'] ?? 0),
+            'name_sync_skipped' => (int) ($nameSync['name_sync_skipped'] ?? 0),
+            'name_sync_errors' => (int) ($nameSync['name_sync_errors'] ?? 0),
         ];
     }
 
@@ -1574,7 +1630,7 @@ class OltService
      */
     public function syncAllOnusToDb(): int
     {
-        $res = $this->syncAllOnusToDbInternal(false);
+        $res = $this->syncAllOnusToDbInternal(false, false);
         $count = (int) ($res['synced_count'] ?? 0);
 
         if (!$this->suppressActionLog) {
@@ -1592,12 +1648,13 @@ class OltService
      */
     public function syncAllOnusToDbScheduled(): array
     {
-        $res = $this->syncAllOnusToDbInternal(true);
+        $res = $this->syncAllOnusToDbInternal(true, true);
 
         if (!$this->suppressActionLog) {
             $count = (int) ($res['synced_count'] ?? 0);
             $rxCount = (int) ($res['rx_samples_saved'] ?? 0);
-            $this->logAction('sync_registered_all_scheduled', 'done', "Synced {$count} ONUs; Rx samples {$rxCount}");
+            $nameCount = (int) ($res['name_sync_updated'] ?? 0);
+            $this->logAction('sync_registered_all_scheduled', 'done', "Synced {$count} ONUs; Rx samples {$rxCount}; name refresh {$nameCount}");
         }
 
         return $res;

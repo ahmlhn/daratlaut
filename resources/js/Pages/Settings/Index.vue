@@ -61,22 +61,6 @@ const cronSettings = reactive({
     windows_task_command: '',
 });
 
-function normalizeClock(value, fallback = '02:15') {
-    const raw = String(value || '').trim();
-    if (/^([01]\d|2[0-3]):([0-5]\d)$/.test(raw)) return raw;
-    return fallback;
-}
-
-const oltSchedulePreview = computed(() => {
-    const [hour, minute] = normalizeClock(cronSettings.olt_time, '02:15').split(':').map((n) => Number(n));
-    const times = [];
-    for (let step = 0; step < 4; step += 1) {
-        const nextHour = (hour + (step * 6)) % 24;
-        times.push(`${String(nextHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`);
-    }
-    return times.join(', ');
-});
-
 const cronLogs = ref([]);
 const cronLogsLoading = ref(false);
 const cronLogStats = reactive({
@@ -1244,7 +1228,7 @@ onMounted(() => {
                                             </label>
                                             <input v-model="cronSettings.olt_time" type="time" class="input w-full md:w-48">
                                             <p class="text-xs text-gray-500 dark:text-gray-400">
-                                                Rekomendasi: 02:15 WIB saat trafik rendah. Scheduler berjalan tiap 6 jam mengikuti jam server dari start `olt_time`: {{ oltSchedulePreview }}.
+                                                Rekomendasi: 02:15 WIB saat trafik rendah. Scheduler dijalankan 1x sehari mengikuti jam server sesuai `olt_time`.
                                             </p>
                                         </div>
                                     </div>
