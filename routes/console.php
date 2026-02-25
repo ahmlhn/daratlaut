@@ -163,7 +163,7 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
 
             if ($hasOltEnabledColumn && (int) ($row->olt_enabled ?? 0) === 1) {
                 $oltTime = $normalizeClock($hasOltTimeColumn ? (string) ($row->olt_time ?? '') : null, '02:15');
-                Schedule::command('olt:queue-daily-sync', ['--tenant' => (string) $tenantId])
+                Schedule::command('olt:queue-daily-sync', ['--tenant' => (string) $tenantId, '--sync' => true])
                     ->dailyAt($oltTime)
                     ->withoutOverlapping()
                     ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
@@ -192,7 +192,7 @@ $oltDailySyncTime = (string) env('OLT_DAILY_SYNC_TIME', '02:15');
 
 if (($oltDailySyncEnabled || $oltDailySyncLegacyEnabled) && $tenantOltScheduled === 0) {
     $oltDailySyncAt = $normalizeClock($oltDailySyncTime, '02:15');
-    Schedule::command('olt:queue-daily-sync')
+    Schedule::command('olt:queue-daily-sync', ['--sync' => true])
         ->dailyAt($oltDailySyncAt)
         ->withoutOverlapping()
         ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
