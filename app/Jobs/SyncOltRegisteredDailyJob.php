@@ -11,6 +11,8 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 class SyncOltRegisteredDailyJob implements ShouldQueue
@@ -49,8 +51,16 @@ class SyncOltRegisteredDailyJob implements ShouldQueue
             $service = new OltService($this->tenantId);
             $service->setSuppressActionLog(true);
             $service->connect($olt);
-            $count = $service->syncAllOnusToDb();
+            $result = $service->syncAllOnusToDbScheduled();
             $service->disconnect();
+
+            $prunedRows = 0;
+            $retentionError = null;
+            try {
+                $prunedRows = $this->pruneRxHistoryOncePerDay();
+            } catch (Throwable $e) {
+                $retentionError = $e->getMessage();
+            }
 
             OltLog::logAction(
                 $this->tenantId,
@@ -59,8 +69,13 @@ class SyncOltRegisteredDailyJob implements ShouldQueue
                 'sync_daily',
                 'done',
                 [
-                    'mode' => 'scheduled_daily',
-                    'count' => $count,
+                    'mode' => 'scheduled_6h',
+                    'count' => (int) ($result['synced_count'] ?? 0),
+                    'fsp_count' => (int) ($result['fsp_count'] ?? 0),
+                    'rx_cache_updated' => (int) ($result['rx_cache_updated'] ?? 0),
+                    'rx_samples_saved' => (int) ($result['rx_samples_saved'] ?? 0),
+                    'rx_retention_pruned' => (int) $prunedRows,
+                    'rx_retention_error' => $retentionError,
                 ],
                 null,
                 'scheduler'
@@ -81,7 +96,7 @@ class SyncOltRegisteredDailyJob implements ShouldQueue
                 'sync_daily',
                 'error',
                 [
-                    'mode' => 'scheduled_daily',
+                    'mode' => 'scheduled_6h',
                     'message' => $e->getMessage(),
                 ],
                 $e->getMessage(),
@@ -93,5 +108,23 @@ class SyncOltRegisteredDailyJob implements ShouldQueue
             $lock->release();
         }
     }
-}
 
+    private function pruneRxHistoryOncePerDay(): int
+    {
+        if (!Schema::hasTable('noci_olt_rx_logs')) {
+            return 0;
+        }
+
+        $dayKey = now()->format('Ymd');
+        $guardKey = "olt:rx-history-retention:tenant:{$this->tenantId}:{$dayKey}";
+        $acquired = Cache::add($guardKey, 1, now()->endOfDay());
+        if (!$acquired) {
+            return 0;
+        }
+
+        return (int) DB::table('noci_olt_rx_logs')
+            ->where('tenant_id', $this->tenantId)
+            ->where('sampled_at', '<', now()->subDays(90))
+            ->delete();
+    }
+}

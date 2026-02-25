@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-02-20
-Last verified: 2026-02-20
+Last updated: 2026-02-25
+Last verified: 2026-02-25
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -53,6 +53,7 @@ Last verified: 2026-02-20
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-02-25: OLT Laravel menambahkan histori Rx power ONU: migration tabel `noci_olt_rx_logs`, sinkronisasi scheduler kini menyimpan snapshot Rx + update `noci_olt_onu.rx_power`, endpoint baru `GET /api/v1/olts/{id}/onu-rx-history`, UI detail ONU menambah tombol periode (`24 Jam/7 Hari/30 Hari`) + tabel histori Rx, serta jadwal OLT scheduler di `routes/console.php` diubah fixed jam server `00/06/12/18` dengan retensi otomatis 90 hari (1x/hari/tenant). Docs: `AGENTS.md`, `docs/OLT.md`, `docs/RUNBOOK.md`, `docs/CODEMAP.md`.
 - 2026-02-19: Created `backend-laravel/AGENTS.md` as local AI working context and maintenance policy. Docs: AGENTS.md.
 - 2026-02-19: Audited live finance schema, aligned finance controller/models to DB baseline (`noci_fin_*`), and added backend finance permission enforcement. Docs: `docs/finance-schema-audit-2026-02-19.md`.
 - 2026-02-19: Updated Chat Admin customer overview desktop layout to 50:50 columns for `Log Pelanggan` and `Tren Kunjungan Isolir`. Docs: N/A.

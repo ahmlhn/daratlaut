@@ -1225,8 +1225,13 @@ onMounted(() => {
                                                 <input v-model="cronSettings.olt_enabled" :true-value="1" :false-value="0" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
                                                 Aktifkan Sinkron OLT (`olt:queue-daily-sync`)
                                             </label>
-                                            <input v-model="cronSettings.olt_time" type="time" class="input w-full md:w-48">
-                                            <p class="text-xs text-gray-500 dark:text-gray-400">Rekomendasi: 02:15 WIB saat trafik rendah.</p>
+                                            <div class="text-xs font-semibold text-primary-700 dark:text-primary-300">
+                                                Jadwal fixed jam server: 00:00, 06:00, 12:00, 18:00.
+                                            </div>
+                                            <input v-model="cronSettings.olt_time" type="time" class="input w-full md:w-48 opacity-60 cursor-not-allowed" disabled>
+                                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                                                `olt_time` dipertahankan hanya untuk kompatibilitas data lama dan tidak dipakai scheduler aktif.
+                                            </p>
                                         </div>
                                     </div>
 

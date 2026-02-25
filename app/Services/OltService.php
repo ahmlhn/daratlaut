@@ -713,7 +713,8 @@ class OltService
         string $sn,
         string $name,
         bool $setRegisteredAt = true,
-        bool $preserveRegisteredAt = true
+        bool $preserveRegisteredAt = true,
+        ?float $rxPower = null
     ): void
     {
         if (!$this->olt) return;
@@ -747,6 +748,11 @@ class OltService
         static $hasRegisteredAt = null;
         if ($hasRegisteredAt === null) {
             $hasRegisteredAt = Schema::hasColumn($table, 'registered_at');
+        }
+
+        static $hasRxPower = null;
+        if ($hasRxPower === null) {
+            $hasRxPower = Schema::hasColumn($table, 'rx_power');
         }
 
         $key = [
@@ -788,6 +794,10 @@ class OltService
         }
         if ($shouldSetRegisteredAt) {
             $values['registered_at'] = $now;
+        }
+
+        if ($hasRxPower && $rxPower !== null) {
+            $values['rx_power'] = round((float) $rxPower, 2);
         }
 
         try {
@@ -837,6 +847,11 @@ class OltService
             $hasLastSeenAt = Schema::hasColumn($table, 'last_seen_at');
         }
 
+        static $hasRxPower = null;
+        if ($hasRxPower === null) {
+            $hasRxPower = Schema::hasColumn($table, 'rx_power');
+        }
+
         $key = [
             'tenant_id' => $this->tenantId,
             'olt_id' => $this->olt->id,
@@ -865,12 +880,63 @@ class OltService
         $now = now();
         if ($hasLastDetailAt) $values['last_detail_at'] = $now;
         if ($hasLastSeenAt) $values['last_seen_at'] = $now;
+        if ($hasRxPower) {
+            $rx = $this->normalizeRxValue($detail['rx'] ?? ($detail['rx_power'] ?? null));
+            if ($rx !== null) {
+                $values['rx_power'] = round($rx, 2);
+            }
+        }
 
         try {
             DB::table($table)->updateOrInsert($key, $values);
         } catch (Throwable $e) {
             // ignore
         }
+    }
+
+    private function normalizeRxValue(mixed $raw): ?float
+    {
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        if (is_float($raw) || is_int($raw)) {
+            return is_finite((float) $raw) ? (float) $raw : null;
+        }
+
+        if (is_string($raw) && preg_match('/-?\d+(?:\.\d+)?/', $raw, $m)) {
+            $val = (float) $m[0];
+            return is_finite($val) ? $val : null;
+        }
+
+        return null;
+    }
+
+    private function storeRxHistoryBatch(array $rows): int
+    {
+        if (empty($rows)) {
+            return 0;
+        }
+
+        static $historyTableChecked = null;
+        if ($historyTableChecked === null) {
+            $historyTableChecked = Schema::hasTable('noci_olt_rx_logs');
+        }
+        if (!$historyTableChecked) {
+            return 0;
+        }
+
+        $saved = 0;
+        foreach (array_chunk($rows, 500) as $chunk) {
+            try {
+                DB::table('noci_olt_rx_logs')->insert($chunk);
+                $saved += count($chunk);
+            } catch (Throwable $e) {
+                // Best effort; skip failed chunk and continue.
+            }
+        }
+
+        return $saved;
     }
 
     /**
@@ -1441,11 +1507,16 @@ class OltService
     /**
      * Sync all ONUs to database
      */
-    public function syncAllOnusToDb(): int
+    private function syncAllOnusToDbInternal(bool $captureRxHistory = false): array
     {
         $fspList = $this->listFsp();
         $count = 0;
-        
+        $rxCacheUpdated = 0;
+        $rxSamplesSaved = 0;
+        $historyRows = [];
+        $sampledAt = now();
+        $createdAt = now();
+
         foreach ($fspList as $fsp) {
             $onus = $this->loadRegisteredFsp($fsp);
             foreach ($onus as $onu) {
@@ -1456,19 +1527,79 @@ class OltService
                 if ($onuId <= 0) continue;
 
                 $name = trim((string)($onu['name'] ?? ''));
+                $rx = $this->normalizeRxValue($onu['rx'] ?? null);
                 // For bulk sync we avoid per-row existence checks.
-                $this->saveOnuToDb($fsp, $onuId, $sn, $name, false, false);
+                $this->saveOnuToDb($fsp, $onuId, $sn, $name, false, false, $rx);
+                if ($rx !== null) {
+                    $rxCacheUpdated++;
+                    if ($captureRxHistory) {
+                        $historyRows[] = [
+                            'tenant_id' => $this->tenantId,
+                            'olt_id' => (int) $this->olt->id,
+                            'fsp' => $fsp,
+                            'onu_id' => $onuId,
+                            'sn' => $sn,
+                            'rx_power' => round($rx, 2),
+                            'sampled_at' => $sampledAt,
+                            'created_at' => $createdAt,
+                        ];
+                    }
+                }
                 $count++;
             }
+
+            if ($captureRxHistory && count($historyRows) >= 500) {
+                $rxSamplesSaved += $this->storeRxHistoryBatch($historyRows);
+                $historyRows = [];
+            }
         }
-        
+
+        if ($captureRxHistory && !empty($historyRows)) {
+            $rxSamplesSaved += $this->storeRxHistoryBatch($historyRows);
+        }
+
         // Update FSP cache
         $this->olt->updateFspCache($fspList);
-        
+
+        return [
+            'synced_count' => $count,
+            'fsp_count' => count($fspList),
+            'rx_cache_updated' => $rxCacheUpdated,
+            'rx_samples_saved' => $rxSamplesSaved,
+        ];
+    }
+
+    /**
+     * Sync all ONUs to database.
+     */
+    public function syncAllOnusToDb(): int
+    {
+        $res = $this->syncAllOnusToDbInternal(false);
+        $count = (int) ($res['synced_count'] ?? 0);
+
         if (!$this->suppressActionLog) {
             $this->logAction('sync_registered_all', 'done', "Synced {$count} ONUs");
         }
-        
+
         return $count;
+    }
+
+    /**
+     * Scheduled OLT sync mode:
+     * - Sync ONU cache data
+     * - Refresh cached `rx_power`
+     * - Save Rx snapshot history rows
+     */
+    public function syncAllOnusToDbScheduled(): array
+    {
+        $res = $this->syncAllOnusToDbInternal(true);
+
+        if (!$this->suppressActionLog) {
+            $count = (int) ($res['synced_count'] ?? 0);
+            $rxCount = (int) ($res['rx_samples_saved'] ?? 0);
+            $this->logAction('sync_registered_all_scheduled', 'done', "Synced {$count} ONUs; Rx samples {$rxCount}");
+        }
+
+        return $res;
     }
 }

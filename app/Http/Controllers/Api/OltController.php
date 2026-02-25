@@ -984,6 +984,96 @@ class OltController extends Controller
     }
 
     /**
+     * Get Rx history for specific ONU from DB snapshots.
+     */
+    public function getOnuRxHistory(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'fsp' => 'required|string|regex:/^\d+\/\d+\/\d+$/',
+            'onu_id' => 'required|integer|min:1|max:128',
+            'range' => 'nullable|string|in:24h,7d,30d',
+            'limit' => 'nullable|integer|min:1|max:500',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        Olt::forTenant($tenantId)->findOrFail($id);
+
+        $range = strtolower(trim((string) $request->input('range', '24h')));
+        if (!in_array($range, ['24h', '7d', '30d'], true)) {
+            $range = '24h';
+        }
+        $limit = (int) ($request->input('limit') ?? 200);
+        if ($limit < 1) $limit = 1;
+        if ($limit > 500) $limit = 500;
+
+        if (!Schema::hasTable('noci_olt_rx_logs')) {
+            return response()->json([
+                'status' => 'ok',
+                'data' => [],
+                'meta' => [
+                    'range' => $range,
+                    'count' => 0,
+                    'latest' => null,
+                    'min' => null,
+                    'max' => null,
+                    'avg' => null,
+                ],
+            ]);
+        }
+
+        $fsp = (string) $request->input('fsp');
+        $onuId = (int) $request->input('onu_id');
+
+        $baseQuery = DB::table('noci_olt_rx_logs')
+            ->where('tenant_id', $tenantId)
+            ->where('olt_id', $id)
+            ->where('fsp', $fsp)
+            ->where('onu_id', $onuId);
+
+        if ($range === '24h') {
+            $baseQuery->where('sampled_at', '>=', now()->subDay());
+        } elseif ($range === '7d') {
+            $baseQuery->where('sampled_at', '>=', now()->subDays(7));
+        } elseif ($range === '30d') {
+            $baseQuery->where('sampled_at', '>=', now()->subDays(30));
+        }
+
+        $stats = (clone $baseQuery)
+            ->selectRaw('COUNT(*) as total_count, MIN(rx_power) as min_rx, MAX(rx_power) as max_rx, AVG(rx_power) as avg_rx')
+            ->first();
+
+        $rows = (clone $baseQuery)
+            ->orderByDesc('sampled_at')
+            ->limit($limit)
+            ->get(['sampled_at', 'rx_power']);
+
+        $data = $rows->map(function ($row) {
+            return [
+                'sampled_at' => $row->sampled_at,
+                'rx_power' => $row->rx_power !== null ? (float) $row->rx_power : null,
+            ];
+        })->values()->all();
+
+        $latest = null;
+        if (!empty($data) && isset($data[0]['rx_power'])) {
+            $latest = $data[0]['rx_power'];
+        }
+
+        return response()->json([
+            'status' => 'ok',
+            'data' => $data,
+            'meta' => [
+                'range' => $range,
+                'count' => (int) ($stats->total_count ?? 0),
+                'latest' => $latest,
+                'min' => ($stats->min_rx ?? null) !== null ? (float) $stats->min_rx : null,
+                'max' => ($stats->max_rx ?? null) !== null ? (float) $stats->max_rx : null,
+                'avg' => ($stats->avg_rx ?? null) !== null ? round((float) $stats->avg_rx, 2) : null,
+            ],
+        ]);
+    }
+
+    /**
      * Register ONU
      */
     public function registerOnu(Request $request, int $id): JsonResponse

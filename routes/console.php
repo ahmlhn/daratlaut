@@ -94,7 +94,7 @@ if ($opsRemindersEnabled) {
 | Reads per-tenant schedules from table `noci_cron_settings`:
 | - ops:nightly-closing
 | - ops:send-reminders
-| - olt:queue-daily-sync
+| - olt:queue-daily-sync (fixed every 6 hours at server clock: 00/06/12/18)
 | Enable/disable via env OPS_TENANT_SCHEDULE_ENABLED (default: true).
 |
 */
@@ -112,14 +112,9 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
 
     try {
         $hasOltEnabledColumn = Schema::hasColumn('noci_cron_settings', 'olt_enabled');
-        $hasOltTimeColumn = Schema::hasColumn('noci_cron_settings', 'olt_time');
-
         $selectColumns = ['tenant_id', 'nightly_enabled', 'nightly_time', 'reminders_enabled', 'reminders_time', 'reminder_base_url'];
         if ($hasOltEnabledColumn) {
             $selectColumns[] = 'olt_enabled';
-        }
-        if ($hasOltTimeColumn) {
-            $selectColumns[] = 'olt_time';
         }
 
         $rows = DB::table('noci_cron_settings')
@@ -162,13 +157,8 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
             }
 
             if ($hasOltEnabledColumn && (int) ($row->olt_enabled ?? 0) === 1) {
-                $oltTime = $normalizeClock(
-                    $hasOltTimeColumn ? (string) ($row->olt_time ?? '') : '',
-                    '02:15'
-                );
-
                 Schedule::command('olt:queue-daily-sync', ['--tenant' => (string) $tenantId])
-                    ->dailyAt($oltTime)
+                    ->cron('0 0,6,12,18 * * *')
                     ->withoutOverlapping()
                     ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
                 $tenantOltScheduled++;
@@ -187,16 +177,15 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
 | Prioritas utama: jadwal per-tenant dari `noci_cron_settings`.
 | Fallback global (env) tetap disediakan untuk kompatibilitas deployment lama
 | atau saat jadwal tenant belum dikonfigurasi.
+| OLT sync kini fixed server clock: 00:00, 06:00, 12:00, 18:00.
 |
 */
 $oltDailySyncEnabled = filter_var((string) env('OLT_DAILY_SYNC_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
 $oltDailySyncLegacyEnabled = filter_var((string) env('OLT_DAILY_SYNC_ON_ACCESS', 'true'), FILTER_VALIDATE_BOOL);
 
 if (($oltDailySyncEnabled || $oltDailySyncLegacyEnabled) && $tenantOltScheduled === 0) {
-    $oltDailySyncTime = env('OLT_DAILY_SYNC_TIME', '02:15');
-
     Schedule::command('olt:queue-daily-sync')
-        ->dailyAt($oltDailySyncTime)
+        ->cron('0 0,6,12,18 * * *')
         ->withoutOverlapping()
         ->appendOutputTo(storage_path('logs/olt-daily-sync.log'));
 }

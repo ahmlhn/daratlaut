@@ -117,6 +117,24 @@ function formatRx(rx) {
     return `${value.toFixed(2)} dBm`;
 }
 
+function formatSampledAt(value) {
+    if (!value) return '-';
+    const text = String(value).trim();
+    if (!text) return '-';
+
+    const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return text;
+
+    return new Intl.DateTimeFormat('id-ID', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    }).format(date);
+}
+
 function normalizeRegState(value) {
     const raw = String(value || '').trim().toLowerCase();
     if (!raw) return '';
@@ -874,6 +892,157 @@ const regEditingKey = ref('');
 const regEditingName = ref('');
 const rowActionKey = ref('');
 const rowActionType = ref('');
+const regRxHistoryRanges = [
+    { value: '24h', label: '24 Jam' },
+    { value: '7d', label: '7 Hari' },
+    { value: '30d', label: '30 Hari' },
+];
+const regRxHistoryRange = ref('24h');
+const regRxHistoryLoadingKey = ref('');
+const regRxHistoryByKey = ref({});
+const regRxHistoryErrorByKey = ref({});
+
+function sanitizeRxHistoryRange(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === '7d' || raw === '30d') return raw;
+    return '24h';
+}
+
+function rxHistoryErrorKey(key, range) {
+    return `${String(key || '')}::${sanitizeRxHistoryRange(range)}`;
+}
+
+function getRxHistoryCacheEntry(key, range = regRxHistoryRange.value) {
+    const safeKey = String(key || '').trim();
+    if (!safeKey) return null;
+    const safeRange = sanitizeRxHistoryRange(range);
+    const byRange = regRxHistoryByKey.value?.[safeKey];
+    if (!byRange || typeof byRange !== 'object') return null;
+    return byRange[safeRange] || null;
+}
+
+function setRxHistoryCacheEntry(key, range, payload) {
+    const safeKey = String(key || '').trim();
+    if (!safeKey) return;
+    const safeRange = sanitizeRxHistoryRange(range);
+    const nextByKey = { ...(regRxHistoryByKey.value || {}) };
+    const byRange = { ...(nextByKey[safeKey] || {}) };
+    byRange[safeRange] = payload;
+    nextByKey[safeKey] = byRange;
+    regRxHistoryByKey.value = nextByKey;
+}
+
+function clearRxHistoryCache(key = '') {
+    const safeKey = String(key || '').trim();
+    if (!safeKey) {
+        regRxHistoryByKey.value = {};
+        regRxHistoryErrorByKey.value = {};
+        regRxHistoryLoadingKey.value = '';
+        return;
+    }
+
+    const nextCache = { ...(regRxHistoryByKey.value || {}) };
+    delete nextCache[safeKey];
+    regRxHistoryByKey.value = nextCache;
+
+    const nextErr = { ...(regRxHistoryErrorByKey.value || {}) };
+    Object.keys(nextErr).forEach((k) => {
+        if (k.startsWith(`${safeKey}::`)) delete nextErr[k];
+    });
+    regRxHistoryErrorByKey.value = nextErr;
+
+    if (regRxHistoryLoadingKey.value === safeKey) regRxHistoryLoadingKey.value = '';
+}
+
+function getOnuRxHistoryRows(onu) {
+    const entry = getRxHistoryCacheEntry(onuKey(onu), regRxHistoryRange.value);
+    const list = entry?.data;
+    return Array.isArray(list) ? list : [];
+}
+
+function getOnuRxHistoryMeta(onu) {
+    const entry = getRxHistoryCacheEntry(onuKey(onu), regRxHistoryRange.value);
+    const meta = entry?.meta;
+    return meta && typeof meta === 'object' ? meta : {};
+}
+
+function getOnuRxHistoryError(onu) {
+    const key = rxHistoryErrorKey(onuKey(onu), regRxHistoryRange.value);
+    return String(regRxHistoryErrorByKey.value?.[key] || '');
+}
+
+function isOnuRxHistoryLoading(onu) {
+    return regRxHistoryLoadingKey.value === onuKey(onu);
+}
+
+function isOnuRxHistoryRangeActive(range) {
+    return sanitizeRxHistoryRange(range) === sanitizeRxHistoryRange(regRxHistoryRange.value);
+}
+
+function rxHistoryRangeLabel(value) {
+    const safe = sanitizeRxHistoryRange(value);
+    const found = regRxHistoryRanges.find((it) => it.value === safe);
+    return found?.label || '24 Jam';
+}
+
+async function loadOnuRxHistory(onu, { range = '24h', force = false, silent = false } = {}) {
+    if (!selectedOltId.value) return;
+    const key = onuKey(onu);
+    const safeRange = sanitizeRxHistoryRange(range);
+    const cached = getRxHistoryCacheEntry(key, safeRange);
+    if (!force && cached) return;
+
+    regRxHistoryLoadingKey.value = key;
+    const errKey = rxHistoryErrorKey(key, safeRange);
+    const nextErr = { ...(regRxHistoryErrorByKey.value || {}) };
+    delete nextErr[errKey];
+    regRxHistoryErrorByKey.value = nextErr;
+
+    try {
+        const params = new URLSearchParams({
+            fsp: String(onu.fsp || ''),
+            onu_id: String(onu.onu_id || ''),
+            range: safeRange,
+            limit: '200',
+        });
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/onu-rx-history?${params}`);
+        if (data.status !== 'ok') throw new Error(data.message || 'Gagal memuat histori Rx');
+
+        const rows = Array.isArray(data.data) ? data.data : [];
+        const normalizedRows = rows.map((it) => ({
+            sampled_at: String(it?.sampled_at || ''),
+            rx_power: extractRxValue(it?.rx_power),
+        }));
+        const meta = data.meta && typeof data.meta === 'object' ? data.meta : {};
+
+        setRxHistoryCacheEntry(key, safeRange, {
+            data: normalizedRows,
+            meta: {
+                range: sanitizeRxHistoryRange(meta.range || safeRange),
+                count: Number(meta.count || 0) || 0,
+                latest: extractRxValue(meta.latest),
+                min: extractRxValue(meta.min),
+                max: extractRxValue(meta.max),
+                avg: extractRxValue(meta.avg),
+            },
+            loaded_at: Date.now(),
+        });
+    } catch (e) {
+        const updatedErr = { ...(regRxHistoryErrorByKey.value || {}) };
+        updatedErr[errKey] = String(e?.message || 'Gagal memuat histori Rx.');
+        regRxHistoryErrorByKey.value = updatedErr;
+        if (!silent) setRegStatus(updatedErr[errKey], 'error');
+    } finally {
+        if (regRxHistoryLoadingKey.value === key) regRxHistoryLoadingKey.value = '';
+    }
+}
+
+function setOnuRxHistoryRange(onu, range) {
+    const safeRange = sanitizeRxHistoryRange(range);
+    if (regRxHistoryRange.value === safeRange && getRxHistoryCacheEntry(onuKey(onu), safeRange)) return;
+    regRxHistoryRange.value = safeRange;
+    loadOnuRxHistory(onu, { range: safeRange, force: false, silent: true }).catch(() => {});
+}
 
 function upsertRegisteredAfterRegister({ fsp, onu_id, sn, name }) {
     const safeFsp = String(fsp || '').trim();
@@ -1513,7 +1682,9 @@ async function toggleRegDetail(onu) {
         return;
     }
     regExpandedKey.value = key;
+    regRxHistoryRange.value = '24h';
     await loadOnuDetail(onu, { force: false, silent: true });
+    await loadOnuRxHistory(onu, { range: regRxHistoryRange.value, force: false, silent: true });
 }
 
 async function loadOnuDetail(onu, { force = false, silent = false, throwOnError = false } = {}) {
@@ -1613,6 +1784,7 @@ async function refreshRegisteredOnu(onu) {
     try {
         setRegStatus('Merefresh detail ONU...', 'loading');
         await loadOnuDetail(onu, { force: true, silent: true, throwOnError: true });
+        await loadOnuRxHistory(onu, { range: regRxHistoryRange.value, force: true, silent: true });
         setRegStatus('Detail ONU di-refresh.', 'success');
     } catch (e) {
         setRegStatus(e.message || 'Gagal refresh', 'error');
@@ -1664,6 +1836,7 @@ async function deleteRegisteredOnu(onu) {
 
         registered.value = registered.value.filter(it => onuKey(it) !== key);
         if (regExpandedKey.value === key) regExpandedKey.value = '';
+        clearRxHistoryCache(key);
         setRegStatus('ONU berhasil dihapus.', 'success');
         if (isTeknisi.value) teknisiWriteReady.value = true;
     } catch (e) {
@@ -1828,6 +2001,8 @@ async function onOltChanged(newId, prevId) {
     regLiveLoadingFsp.value = {};
     regExpandedKey.value = '';
     regDetails.value = {};
+    regRxHistoryRange.value = '24h';
+    clearRxHistoryCache();
     cancelEditOnuName();
     setRegStatus(newId ? 'Pilih F/S/P dulu.' : '', 'info');
 
@@ -2373,6 +2548,71 @@ onMounted(async () => {
                                                             <div class="font-semibold" :class="getRxTextClass(item)">
                                                                 {{ extractRxValue(item.rx) !== null ? formatRx(item.rx) : '-' }}
                                                             </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div class="rounded-xl border border-slate-200/80 dark:border-white/10 bg-slate-50/70 dark:bg-slate-900/40 p-3 space-y-3">
+                                                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                                            <div>
+                                                                <div class="text-[10px] uppercase tracking-wide text-slate-400">Histori Rx</div>
+                                                                <div class="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                                                                    Periode aktif: {{ rxHistoryRangeLabel(regRxHistoryRange) }}
+                                                                </div>
+                                                            </div>
+                                                            <div class="flex flex-wrap gap-1.5">
+                                                                <button
+                                                                    v-for="opt in regRxHistoryRanges"
+                                                                    :key="opt.value"
+                                                                    type="button"
+                                                                    class="px-2.5 py-1 text-[11px] rounded-lg border transition"
+                                                                    :class="
+                                                                        isOnuRxHistoryRangeActive(opt.value)
+                                                                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300'
+                                                                            : 'border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/70'
+                                                                    "
+                                                                    @click.stop="setOnuRxHistoryRange(item, opt.value)"
+                                                                >
+                                                                    {{ opt.label }}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div class="text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
+                                                            <span>Total: {{ getOnuRxHistoryMeta(item).count ?? 0 }}</span>
+                                                            <span>Latest: {{ formatRx(getOnuRxHistoryMeta(item).latest) }}</span>
+                                                            <span>Min: {{ formatRx(getOnuRxHistoryMeta(item).min) }}</span>
+                                                            <span>Max: {{ formatRx(getOnuRxHistoryMeta(item).max) }}</span>
+                                                            <span>Avg: {{ formatRx(getOnuRxHistoryMeta(item).avg) }}</span>
+                                                        </div>
+
+                                                        <div v-if="isOnuRxHistoryLoading(item)" class="text-xs text-blue-600 dark:text-blue-300">
+                                                            Memuat histori Rx...
+                                                        </div>
+                                                        <div v-else-if="getOnuRxHistoryError(item)" class="text-xs text-rose-600 dark:text-rose-300">
+                                                            {{ getOnuRxHistoryError(item) }}
+                                                        </div>
+                                                        <div v-else-if="!getOnuRxHistoryRows(item).length" class="text-xs text-slate-500 dark:text-slate-400 italic">
+                                                            Belum ada snapshot Rx untuk periode ini.
+                                                        </div>
+                                                        <div v-else class="overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10">
+                                                            <table class="min-w-full text-xs">
+                                                                <thead class="bg-slate-100/80 dark:bg-slate-800/70 text-slate-500 dark:text-slate-300 uppercase tracking-wide">
+                                                                    <tr>
+                                                                        <th class="px-3 py-2 text-left">Waktu</th>
+                                                                        <th class="px-3 py-2 text-left">Rx</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody class="divide-y divide-slate-100 dark:divide-white/10 bg-white/80 dark:bg-slate-900/30">
+                                                                    <tr v-for="(rxItem, idx) in getOnuRxHistoryRows(item)" :key="`${onuKey(item)}-rx-${idx}-${rxItem.sampled_at}`">
+                                                                        <td class="px-3 py-2 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                                                                            {{ formatSampledAt(rxItem.sampled_at) }}
+                                                                        </td>
+                                                                        <td class="px-3 py-2 font-semibold" :class="getRxToneClass(extractRxValue(rxItem.rx_power))">
+                                                                            {{ formatRx(rxItem.rx_power) }}
+                                                                        </td>
+                                                                    </tr>
+                                                                </tbody>
+                                                            </table>
                                                         </div>
                                                     </div>
 
