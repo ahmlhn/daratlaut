@@ -671,7 +671,9 @@ class OltController extends Controller
                 try {
                     $list = $service->loadRegisteredFsp($fsp);
                     if (!empty($list)) {
-                        $items = array_merge($items, $list);
+                        foreach ($list as $row) {
+                            $items[] = $row;
+                        }
                     }
                 } catch (RuntimeException $e) {
                     $failed[] = ['fsp' => $fsp, 'error' => $e->getMessage()];

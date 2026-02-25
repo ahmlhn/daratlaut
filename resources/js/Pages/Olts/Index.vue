@@ -876,6 +876,7 @@ const regLoadingText = ref('');
 const regFilterFsp = ref('');
 const regLoadedFsp = ref({});
 const regLiveLoadingFsp = ref({});
+let regAllRequestToken = 0;
 const regStatus = ref({ tone: 'info', message: '' });
 const regSearch = ref('');
 const regSearchMode = ref(false);
@@ -1184,7 +1185,7 @@ function compareString(a, b, dir) {
 function sortRegisteredList(list) {
     const dir = regSortDir.value === 'desc' ? -1 : 1;
     const key = regSortKey.value || 'interface';
-    const items = Array.isArray(list) ? list.slice() : [];
+    const items = Array.isArray(list) ? list : [];
 
     return items.sort((a, b) => {
         if (key === 'interface') {
@@ -1266,6 +1267,17 @@ function hasRegisteredFspData(fsp) {
     return registered.value.some(it => String(it?.fsp || '') === safeFsp);
 }
 
+function collectRegisteredFspSet(list) {
+    const set = new Set();
+    const items = Array.isArray(list) ? list : [];
+    items.forEach((it) => {
+        const fsp = String(it?.fsp || '').trim();
+        if (!fsp) return;
+        set.add(fsp);
+    });
+    return set;
+}
+
 function mergeRegisteredFsp(fsp, items, replace = true) {
     const safeFsp = String(fsp || '').trim();
     if (!safeFsp) return;
@@ -1296,6 +1308,49 @@ function mergeRegisteredFsp(fsp, items, replace = true) {
         }
 
         next.push(it);
+    });
+
+    registered.value = next;
+}
+
+function mergeRegisteredFspBatch(replaceByFsp) {
+    const raw = replaceByFsp && typeof replaceByFsp === 'object' ? replaceByFsp : {};
+    const targets = Object.keys(raw)
+        .map((fsp) => String(fsp || '').trim())
+        .filter(Boolean);
+    if (!targets.length) return;
+
+    const targetSet = new Set(targets);
+    const current = Array.isArray(registered.value) ? registered.value : [];
+    const prevByFsp = {};
+
+    current.forEach((it) => {
+        const fsp = String(it?.fsp || '').trim();
+        if (!targetSet.has(fsp)) return;
+        if (!prevByFsp[fsp]) prevByFsp[fsp] = {};
+        prevByFsp[fsp][onuKey(it)] = it;
+    });
+
+    const next = current.filter((it) => !targetSet.has(String(it?.fsp || '').trim()));
+    const existing = new Set(next.map((it) => onuKey(it)));
+
+    targets.forEach((fsp) => {
+        const incoming = Array.isArray(raw[fsp]) ? raw[fsp] : [];
+        const prevDetails = prevByFsp[fsp] || {};
+        incoming.forEach((it) => {
+            const key = onuKey(it);
+            if (existing.has(key)) return;
+
+            const prev = prevDetails[key];
+            if (prev) {
+                if (!it.name && prev.name) it.name = prev.name;
+                if (!it.online_duration && prev.online_duration) it.online_duration = prev.online_duration;
+                if ((it.rx === null || it.rx === undefined || it.rx === '') && prev.rx) it.rx = prev.rx;
+            }
+
+            next.push(it);
+            existing.add(key);
+        });
     });
 
     registered.value = next;
@@ -1401,19 +1456,31 @@ async function loadRegisteredAll({ force = false, silent = false } = {}) {
         return;
     }
 
-    // Cache-first for targets without any local data (native parity).
-    for (const fsp of targets) {
-        if (hasRegisteredFspData(fsp)) continue;
+    const requestToken = ++regAllRequestToken;
+
+    // Cache-first (single call): avoid N requests when "Semua F/S/P" is selected.
+    if (!regSearchMode.value && (force || !registered.value.length)) {
         try {
-            await loadRegisteredCache({ fsp });
+            await loadRegisteredCache();
         } catch {
             // ignore cache failures; live may still work
         }
     }
 
-    regLoading.value = true;
-    regLoadingText.value = 'Memuat data FSP...';
-    if (!silent) setRegStatus('Memuat data FSP...', 'info');
+    const hasLocalData = Array.isArray(registered.value) && registered.value.length > 0;
+    const showBlockingLoader = !hasLocalData;
+
+    if (showBlockingLoader) {
+        regLoading.value = true;
+        regLoadingText.value = 'Memuat data FSP...';
+    }
+    if (!silent) {
+        if (hasLocalData) {
+            setRegStatus(`Menampilkan cache ONU (${registered.value.length}), sinkron OLT berjalan...`, 'loading');
+        } else {
+            setRegStatus('Memuat data FSP dari OLT...', 'info');
+        }
+    }
 
     try {
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/registered-all`, {
@@ -1421,6 +1488,7 @@ async function loadRegisteredAll({ force = false, silent = false } = {}) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ fsp_list: targets }),
         });
+        if (requestToken !== regAllRequestToken) return;
         if (data.status !== 'ok') throw new Error(data.message || 'Gagal memuat data FSP');
 
         const items = Array.isArray(data.data) ? data.data : [];
@@ -1432,14 +1500,18 @@ async function loadRegisteredAll({ force = false, silent = false } = {}) {
             grouped[fsp].push(it);
         });
 
+        const loadedFspSet = collectRegisteredFspSet(registered.value);
+        const replaceByFsp = {};
+        let replacedCount = 0;
         targets.forEach((fsp) => {
             const list = grouped[fsp] || [];
-            const hadCache = hasRegisteredFspData(fsp);
+            const hadCache = loadedFspSet.has(fsp);
             const shouldReplace = list.length > 0 || !hadCache;
-            if (shouldReplace) {
-                mergeRegisteredFsp(fsp, list, true);
-            }
+            if (!shouldReplace) return;
+            replaceByFsp[fsp] = list;
+            replacedCount++;
         });
+        if (replacedCount > 0) mergeRegisteredFspBatch(replaceByFsp);
 
         const loaded = { ...(regLoadedFsp.value || {}) };
         targets.forEach((fsp) => {
@@ -1447,12 +1519,24 @@ async function loadRegisteredAll({ force = false, silent = false } = {}) {
         });
         regLoadedFsp.value = loaded;
 
-        if (!silent) setRegStatus(`Load FSP selesai (${targets.length}).`, 'success');
+        if (!silent) {
+            const failed = Array.isArray(data.failed) ? data.failed : [];
+            const failedCount = failed.length;
+            if (failedCount > 0) {
+                setRegStatus(`Load FSP selesai ${replacedCount}/${targets.length}, gagal ${failedCount}.`, 'info');
+            } else {
+                setRegStatus(`Load FSP selesai (${targets.length}).`, 'success');
+            }
+        }
     } catch (e) {
+        if (requestToken !== regAllRequestToken) return;
         if (!silent) setRegStatus(e.message || 'Gagal memuat data FSP.', 'error');
     } finally {
-        regLoading.value = false;
-        regLoadingText.value = '';
+        if (requestToken !== regAllRequestToken) return;
+        if (showBlockingLoader) {
+            regLoading.value = false;
+            regLoadingText.value = '';
+        }
     }
 }
 
