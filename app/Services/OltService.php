@@ -306,6 +306,76 @@ class OltService
     }
 
     /**
+     * Persist manual registered load result into DB cache and Rx history snapshot.
+     *
+     * @return array{synced_count:int,rx_cache_updated:int,rx_samples_saved:int}
+     */
+    public function saveManualRegisteredSnapshot(string $fsp, array $items, bool $captureRxHistory = true, $sampledAt = null): array
+    {
+        $safeFsp = trim((string) $fsp);
+        $syncedCount = 0;
+        $rxCacheUpdated = 0;
+        $rxSamplesSaved = 0;
+        $historyRows = [];
+        $sampledAtValue = $sampledAt ?: now();
+        $createdAtValue = now();
+
+        foreach ($items as $onu) {
+            if (!is_array($onu)) {
+                continue;
+            }
+
+            $onuId = (int) ($onu['onu_id'] ?? 0);
+            if ($onuId <= 0) {
+                continue;
+            }
+
+            $onuFsp = trim((string) ($onu['fsp'] ?? $safeFsp));
+            if ($onuFsp === '') {
+                continue;
+            }
+
+            $sn = trim((string) ($onu['sn'] ?? ''));
+            $name = trim((string) ($onu['name'] ?? ''));
+            $rx = $this->normalizeRxValue($onu['rx'] ?? null);
+
+            if ($sn !== '') {
+                // Manual load should refresh cache row and latest rx_power.
+                $this->saveOnuToDb($onuFsp, $onuId, $sn, $name, false, false, $rx);
+                $syncedCount++;
+                if ($rx !== null) {
+                    $rxCacheUpdated++;
+                }
+            }
+
+            if (!$captureRxHistory || $rx === null) {
+                continue;
+            }
+
+            $historyRows[] = [
+                'tenant_id' => $this->tenantId,
+                'olt_id' => (int) ($this->olt?->id ?? 0),
+                'fsp' => $onuFsp,
+                'onu_id' => $onuId,
+                'sn' => ($sn !== '') ? $sn : null,
+                'rx_power' => round($rx, 2),
+                'sampled_at' => $sampledAtValue,
+                'created_at' => $createdAtValue,
+            ];
+        }
+
+        if ($captureRxHistory && !empty($historyRows) && ($this->olt?->id ?? 0) > 0) {
+            $rxSamplesSaved = $this->storeRxHistoryBatch($historyRows);
+        }
+
+        return [
+            'synced_count' => $syncedCount,
+            'rx_cache_updated' => $rxCacheUpdated,
+            'rx_samples_saved' => $rxSamplesSaved,
+        ];
+    }
+
+    /**
      * Get ONU detail info
      */
     public function getOnuDetail(string $fsp, int $onuId): array

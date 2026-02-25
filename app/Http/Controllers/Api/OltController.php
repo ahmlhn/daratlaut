@@ -498,6 +498,7 @@ class OltController extends Controller
             $service = new OltService($tenantId);
             $service->connect($olt);
             $items = $service->loadRegisteredFsp($fsp);
+            $service->saveManualRegisteredSnapshot($fsp, $items, true);
             $service->disconnect();
 
             // Merge cache data (native parity): fill name/online_duration/vlan from DB cache.
@@ -666,11 +667,13 @@ class OltController extends Controller
         try {
             $service = new OltService($tenantId);
             $service->connect($olt);
+            $sampledAt = now();
 
             foreach ($fspList as $fsp) {
                 try {
                     $list = $service->loadRegisteredFsp($fsp);
                     if (!empty($list)) {
+                        $service->saveManualRegisteredSnapshot($fsp, $list, true, $sampledAt);
                         foreach ($list as $row) {
                             $items[] = $row;
                         }
