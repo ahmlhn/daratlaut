@@ -2678,8 +2678,8 @@ onMounted(async () => {
                 <Teleport to="body">
                     <div v-if="regDetailModalOpen && regModalOnu" class="fixed inset-0 z-[85]">
                         <div class="absolute inset-0 bg-transparent" @click="closeRegDetailModal()"></div>
-                        <div class="absolute top-1/2 left-1/2 w-[96%] sm:w-[94%] max-w-5xl max-h-[90vh] -translate-x-1/2 -translate-y-1/2">
-                            <div class="h-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 shadow-xl overflow-hidden">
+                        <div class="absolute top-1/2 left-1/2 w-[96%] sm:w-[94%] max-w-5xl -translate-x-1/2 -translate-y-1/2">
+                            <div class="max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 shadow-xl overflow-hidden flex flex-col">
                                 <template v-for="item in [regModalOnu]" :key="onuKey(item)">
                                 <div class="px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-white/10 flex items-center justify-between gap-3">
                                     <div class="min-w-0">
@@ -2697,7 +2697,7 @@ onMounted(async () => {
                                     </button>
                                 </div>
 
-                                <div class="px-4 sm:px-5 py-4 sm:py-5 overflow-y-auto space-y-4 max-h-[calc(92vh-66px)]">
+                                <div class="flex-1 min-h-0 px-4 sm:px-5 py-4 sm:py-5 overflow-y-auto space-y-4">
                                     <div v-if="regDetailLoadingKey === onuKey(item)" class="flex items-center gap-3 text-sm text-slate-500">
                                         <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-500">
                                             <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -2850,84 +2850,89 @@ onMounted(async () => {
                                             </div>
                                         </div>
 
-                                        <div class="flex flex-wrap gap-2">
-                                            <template v-if="regEditingKey === onuKey(item)">
-                                                <button
-                                                    type="button"
-                                                    class="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                                    :disabled="isRowActionLoading(onuKey(item), 'rename')"
-                                                    @click.stop="saveEditOnuName(item)"
-                                                >
-                                                    <span v-if="isRowActionLoading(onuKey(item), 'rename')" class="inline-flex h-4 w-4 items-center justify-center">
-                                                        <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                            <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                                        </svg>
-                                                    </span>
-                                                    Simpan
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
-                                                    @click.stop="cancelEditOnuName()"
-                                                >
-                                                    Batal
-                                                </button>
-                                            </template>
-                                            <button
-                                                v-else
-                                                type="button"
-                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition"
-                                                @click.stop="startEditOnuName(item)"
-                                            >
-                                                Edit Nama
-                                            </button>
-
+                                    </div>
+                                </div>
+                                <div
+                                    v-if="regDetailLoadingKey !== onuKey(item)"
+                                    class="shrink-0 px-4 sm:px-5 py-3 border-t border-slate-100 dark:border-white/10 bg-white/95 dark:bg-slate-900/95"
+                                >
+                                    <div class="flex flex-wrap gap-2">
+                                        <template v-if="regEditingKey === onuKey(item)">
                                             <button
                                                 type="button"
-                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                                :disabled="isRowActionLoading(onuKey(item), 'refresh')"
-                                                @click.stop="refreshRegisteredOnu(item)"
+                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                                                :disabled="isRowActionLoading(onuKey(item), 'rename')"
+                                                @click.stop="saveEditOnuName(item)"
                                             >
-                                                <span v-if="isRowActionLoading(onuKey(item), 'refresh')" class="inline-flex h-4 w-4 items-center justify-center">
+                                                <span v-if="isRowActionLoading(onuKey(item), 'rename')" class="inline-flex h-4 w-4 items-center justify-center">
                                                     <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
                                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                                                         <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
                                                     </svg>
                                                 </span>
-                                                Refresh
+                                                Simpan
                                             </button>
-
                                             <button
                                                 type="button"
-                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                                :disabled="isRowActionLoading(onuKey(item), 'restart')"
-                                                @click.stop="restartRegisteredOnu(item)"
+                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
+                                                @click.stop="cancelEditOnuName()"
                                             >
-                                                <span v-if="isRowActionLoading(onuKey(item), 'restart')" class="inline-flex h-4 w-4 items-center justify-center">
-                                                    <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                                    </svg>
-                                                </span>
-                                                Restart
+                                                Batal
                                             </button>
+                                        </template>
+                                        <button
+                                            v-else
+                                            type="button"
+                                            class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition"
+                                            @click.stop="startEditOnuName(item)"
+                                        >
+                                            Edit Nama
+                                        </button>
 
-                                            <button
-                                                type="button"
-                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-100 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                                :disabled="isRowActionLoading(onuKey(item), 'delete')"
-                                                @click.stop="deleteRegisteredOnu(item)"
-                                            >
-                                                <span v-if="isRowActionLoading(onuKey(item), 'delete')" class="inline-flex h-4 w-4 items-center justify-center">
-                                                    <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                                    </svg>
-                                                </span>
-                                                Hapus ONU
-                                            </button>
-                                        </div>
+                                        <button
+                                            type="button"
+                                            class="px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                                            :disabled="isRowActionLoading(onuKey(item), 'refresh')"
+                                            @click.stop="refreshRegisteredOnu(item)"
+                                        >
+                                            <span v-if="isRowActionLoading(onuKey(item), 'refresh')" class="inline-flex h-4 w-4 items-center justify-center">
+                                                <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                </svg>
+                                            </span>
+                                            Refresh
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            class="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                                            :disabled="isRowActionLoading(onuKey(item), 'restart')"
+                                            @click.stop="restartRegisteredOnu(item)"
+                                        >
+                                            <span v-if="isRowActionLoading(onuKey(item), 'restart')" class="inline-flex h-4 w-4 items-center justify-center">
+                                                <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                </svg>
+                                            </span>
+                                            Restart
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            class="px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-100 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                                            :disabled="isRowActionLoading(onuKey(item), 'delete')"
+                                            @click.stop="deleteRegisteredOnu(item)"
+                                        >
+                                            <span v-if="isRowActionLoading(onuKey(item), 'delete')" class="inline-flex h-4 w-4 items-center justify-center">
+                                                <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                </svg>
+                                            </span>
+                                            Hapus ONU
+                                        </button>
                                     </div>
                                 </div>
                                 </template>
