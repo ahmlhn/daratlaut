@@ -53,6 +53,7 @@ Last verified: 2026-02-25
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-02-25: Histori Rx pada modal detail ONU OLT (`resources/js/Pages/Olts/Index.vue`) disederhanakan menjadi tampilan tabel saja (tanpa card mobile), ditambah pagination `Prev/Next` dan dropdown jumlah baris (`10/20/50/100`) untuk kontrol data yang ditampilkan per halaman. Docs: `docs/OLT.md`.
 - 2026-02-25: Fix modal detail ONU OLT agar benar-benar berdiri sendiri dari scroll halaman: modal kini dirender via `Teleport` ke `body` di `resources/js/Pages/Olts/Index.vue`, sehingga `position: fixed` tidak lagi ikut konteks container `fade-in` (transform). Docs: N/A.
 - 2026-02-25: Penyesuaian modal detail ONU OLT (`resources/js/Pages/Olts/Index.vue`): hilangkan backdrop hitam transparan (overlay jadi transparan) dan posisi modal dibuat center-screen konsisten di mobile/desktop agar tidak bergeser ke bawah. Docs: N/A.
 - 2026-02-25: UI detail ONU pada tabel registered OLT (`resources/js/Pages/Olts/Index.vue`) diubah dari inline expand menjadi popup modal. Klik baris ONU kini membuka modal detail (info ONU, histori Rx, edit nama, refresh/restart/hapus), dan modal ditutup saat ganti filter/FSP/search/OLT agar state tetap konsisten. Docs: `docs/OLT.md`.

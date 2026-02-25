@@ -903,6 +903,9 @@ const regRxHistoryRange = ref('24h');
 const regRxHistoryLoadingKey = ref('');
 const regRxHistoryByKey = ref({});
 const regRxHistoryErrorByKey = ref({});
+const regRxHistoryPage = ref(1);
+const regRxHistoryPageSize = ref(10);
+const regRxHistoryPageSizeOptions = [10, 20, 50, 100];
 
 function sanitizeRxHistoryRange(value) {
     const raw = String(value || '').trim().toLowerCase();
@@ -1043,6 +1046,7 @@ function setOnuRxHistoryRange(onu, range) {
     const safeRange = sanitizeRxHistoryRange(range);
     if (regRxHistoryRange.value === safeRange && getRxHistoryCacheEntry(onuKey(onu), safeRange)) return;
     regRxHistoryRange.value = safeRange;
+    regRxHistoryPage.value = 1;
     loadOnuRxHistory(onu, { range: safeRange, force: false, silent: true }).catch(() => {});
 }
 
@@ -1261,10 +1265,33 @@ const regModalOnu = computed(() => {
     if (!key) return null;
     return registered.value.find((it) => onuKey(it) === key) || null;
 });
+const regActiveRxHistoryRows = computed(() => {
+    const onu = regModalOnu.value;
+    if (!onu) return [];
+    return getOnuRxHistoryRows(onu);
+});
+const regRxHistoryTotal = computed(() => regActiveRxHistoryRows.value.length);
+const regRxHistoryTotalPages = computed(() => Math.max(1, Math.ceil(regRxHistoryTotal.value / regRxHistoryPageSize.value)));
+const regRxHistoryPageStart = computed(() => (Math.max(1, regRxHistoryPage.value) - 1) * regRxHistoryPageSize.value);
+const regRxHistoryPageRows = computed(() =>
+    regActiveRxHistoryRows.value.slice(regRxHistoryPageStart.value, regRxHistoryPageStart.value + regRxHistoryPageSize.value)
+);
+const regRxHistoryPageEnd = computed(() =>
+    Math.min(regRxHistoryPageStart.value + regRxHistoryPageRows.value.length, regRxHistoryTotal.value)
+);
 
 watch(regTotalPages, () => {
     if (regPage.value > regTotalPages.value) regPage.value = regTotalPages.value;
     if (regPage.value < 1) regPage.value = 1;
+});
+
+watch(regRxHistoryTotalPages, () => {
+    if (regRxHistoryPage.value > regRxHistoryTotalPages.value) regRxHistoryPage.value = regRxHistoryTotalPages.value;
+    if (regRxHistoryPage.value < 1) regRxHistoryPage.value = 1;
+});
+
+watch(regRxHistoryPageSize, () => {
+    regRxHistoryPage.value = 1;
 });
 
 watch(regModalOnu, (onu) => {
@@ -1777,6 +1804,7 @@ function setRowActionLoading(key, type, active) {
 function closeRegDetailModal() {
     regDetailModalOpen.value = false;
     regExpandedKey.value = '';
+    regRxHistoryPage.value = 1;
     cancelEditOnuName();
 }
 
@@ -1789,6 +1817,7 @@ async function toggleRegDetail(onu) {
     regExpandedKey.value = key;
     regDetailModalOpen.value = true;
     regRxHistoryRange.value = '24h';
+    regRxHistoryPage.value = 1;
     await loadOnuDetail(onu, { force: false, silent: true });
     await loadOnuRxHistory(onu, { range: regRxHistoryRange.value, force: false, silent: true });
 }
@@ -2109,6 +2138,7 @@ async function onOltChanged(newId, prevId) {
     regExpandedKey.value = '';
     regDetails.value = {};
     regRxHistoryRange.value = '24h';
+    regRxHistoryPage.value = 1;
     clearRxHistoryCache();
     cancelEditOnuName();
     setRegStatus(newId ? 'Pilih F/S/P dulu.' : '', 'info');
@@ -2750,27 +2780,30 @@ onMounted(async () => {
                                             <div v-else-if="getOnuRxHistoryError(item)" class="text-xs text-rose-600 dark:text-rose-300">
                                                 {{ getOnuRxHistoryError(item) }}
                                             </div>
-                                            <div v-else-if="!getOnuRxHistoryRows(item).length" class="text-xs text-slate-500 dark:text-slate-400 italic">
+                                            <div v-else-if="regRxHistoryTotal === 0" class="text-xs text-slate-500 dark:text-slate-400 italic">
                                                 Belum ada snapshot Rx untuk periode ini.
                                             </div>
-                                            <div v-else class="space-y-2">
-                                                <div class="sm:hidden space-y-2">
-                                                    <div
-                                                        v-for="(rxItem, idx) in getOnuRxHistoryRows(item)"
-                                                        :key="`${onuKey(item)}-rx-mobile-${idx}-${rxItem.sampled_at}`"
-                                                        class="rounded-lg border border-slate-200/80 dark:border-white/10 bg-white/80 dark:bg-slate-900/30 px-3 py-2.5"
-                                                    >
-                                                        <div class="text-[10px] uppercase tracking-wide text-slate-400">Waktu</div>
-                                                        <div class="text-xs text-slate-600 dark:text-slate-300 break-words">
-                                                            {{ formatSampledAt(rxItem.sampled_at) }}
-                                                        </div>
-                                                        <div class="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Rx</div>
-                                                        <div class="text-sm font-semibold" :class="getRxToneClass(extractRxValue(rxItem.rx_power))">
-                                                            {{ formatRx(rxItem.rx_power) }}
-                                                        </div>
+                                            <div v-else class="space-y-3">
+                                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                                    <div class="text-[11px] text-slate-500 dark:text-slate-400">
+                                                        Menampilkan {{ regRxHistoryPageStart + 1 }}-{{ regRxHistoryPageEnd }} dari {{ regRxHistoryTotal }} data
                                                     </div>
+                                                    <label class="inline-flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                                                        <span>Tampilkan</span>
+                                                        <select
+                                                            v-model.number="regRxHistoryPageSize"
+                                                            class="h-8 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
+                                                            @click.stop
+                                                        >
+                                                            <option v-for="opt in regRxHistoryPageSizeOptions" :key="`rx-size-${opt}`" :value="opt">
+                                                                {{ opt }}
+                                                            </option>
+                                                        </select>
+                                                        <span>baris</span>
+                                                    </label>
                                                 </div>
-                                                <div class="hidden sm:block overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10">
+
+                                                <div class="overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10">
                                                     <table class="min-w-full text-xs">
                                                         <thead class="bg-slate-100/80 dark:bg-slate-800/70 text-slate-500 dark:text-slate-300 uppercase tracking-wide">
                                                             <tr>
@@ -2779,7 +2812,7 @@ onMounted(async () => {
                                                             </tr>
                                                         </thead>
                                                         <tbody class="divide-y divide-slate-100 dark:divide-white/10 bg-white/80 dark:bg-slate-900/30">
-                                                            <tr v-for="(rxItem, idx) in getOnuRxHistoryRows(item)" :key="`${onuKey(item)}-rx-${idx}-${rxItem.sampled_at}`">
+                                                            <tr v-for="(rxItem, idx) in regRxHistoryPageRows" :key="`${onuKey(item)}-rx-${idx}-${rxItem.sampled_at}`">
                                                                 <td class="px-3 py-2 text-slate-600 dark:text-slate-300 whitespace-nowrap">
                                                                     {{ formatSampledAt(rxItem.sampled_at) }}
                                                                 </td>
@@ -2789,6 +2822,30 @@ onMounted(async () => {
                                                             </tr>
                                                         </tbody>
                                                     </table>
+                                                </div>
+
+                                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                                    <div class="text-[11px] text-slate-500 dark:text-slate-400">
+                                                        Halaman {{ regRxHistoryPage }} / {{ regRxHistoryTotalPages }}
+                                                    </div>
+                                                    <div class="flex items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                                                            :disabled="regRxHistoryPage <= 1"
+                                                            @click.stop="regRxHistoryPage = Math.max(1, regRxHistoryPage - 1)"
+                                                        >
+                                                            Prev
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                                                            :disabled="regRxHistoryPage >= regRxHistoryTotalPages"
+                                                            @click.stop="regRxHistoryPage = Math.min(regRxHistoryTotalPages, regRxHistoryPage + 1)"
+                                                        >
+                                                            Next
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
