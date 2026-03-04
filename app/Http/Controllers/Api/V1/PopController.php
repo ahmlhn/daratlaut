@@ -8,6 +8,7 @@ use App\Models\ActionLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class PopController extends Controller
 {
@@ -221,19 +222,27 @@ class PopController extends Controller
     {
         $tenantId = (int) $request->attributes->get('tenant_id', (int) $request->input('tenant_id', 1));
         $includeInactive = $request->boolean('include_inactive');
+        $hasIsActiveColumn = Schema::hasColumn('noci_pops', 'is_active');
 
         $query = Pop::forTenant($tenantId)
             ->orderBy('pop_name');
 
-        if (!$includeInactive) {
+        if ($hasIsActiveColumn && !$includeInactive) {
             $query->active();
         }
 
-        $pops = $query->get([
+        $select = [
             'id',
             \Illuminate\Support\Facades\DB::raw('pop_name as name'),
-            'is_active',
-        ]);
+        ];
+
+        if ($hasIsActiveColumn) {
+            $select[] = 'is_active';
+        } else {
+            $select[] = \Illuminate\Support\Facades\DB::raw('1 as is_active');
+        }
+
+        $pops = $query->get($select);
 
         return response()->json(['data' => $pops]);
     }
