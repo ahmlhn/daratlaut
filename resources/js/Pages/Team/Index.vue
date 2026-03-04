@@ -9,12 +9,14 @@ const stats = ref({ total: 0, active: 0, inactive: 0, by_role: {} });
 const pops = ref([]);
 const availableRoles = ref([]);
 const errorMessage = ref('');
+const popLoading = ref(false);
 
 const loading = ref(false);
 const showForm = ref(false);
 const isEditing = ref(false);
 const currentItem = ref(null);
 const processing = ref(false);
+let popsIncludeInactiveLoaded = false;
 
 const page = usePage();
 const permissions = computed(() => page.props.auth.user?.permissions || []);
@@ -56,6 +58,52 @@ const roleColors = {
 
 const API_BASE = '/api/v1';
 
+function normalizeBoolean(value, fallback = false) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+        if (['0', 'false', 'no', 'off', ''].includes(normalized)) return false;
+    }
+
+    return fallback;
+}
+
+function normalizePopId(value) {
+    if (value === null || value === undefined || value === '') return null;
+
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeTeamItem(item = {}) {
+    return {
+        ...item,
+        pop_id: normalizePopId(item.pop_id),
+        is_active: normalizeBoolean(item.is_active, true),
+        can_login: normalizeBoolean(item.can_login, false),
+    };
+}
+
+function normalizePopOption(item = {}) {
+    return {
+        ...item,
+        id: normalizePopId(item.id),
+        is_active: normalizeBoolean(item.is_active, true),
+    };
+}
+
+function popName(popId) {
+    const normalizedPopId = normalizePopId(popId);
+    if (normalizedPopId === null) return '-';
+
+    const pop = pops.value.find((item) => item.id === normalizedPopId);
+    if (!pop) return '-';
+
+    return pop.is_active ? pop.name : `${pop.name} (Nonaktif)`;
+}
+
 async function loadData() {
     loading.value = true;
     errorMessage.value = '';
@@ -84,7 +132,7 @@ async function loadData() {
             return;
         }
 
-        team.value = result?.data || [];
+        team.value = (result?.data || []).map((item) => normalizeTeamItem(item));
         pagination.value = result?.meta || { current_page: 1, last_page: 1, total: 0 };
     } catch (error) {
         console.error('Error loading team:', error);
@@ -107,17 +155,33 @@ async function loadStats() {
     }
 }
 
-async function loadPops() {
+async function loadPops(options = {}) {
+    const includeInactive = options.includeInactive === true;
+
+    if (includeInactive && popsIncludeInactiveLoaded && pops.value.length > 0) {
+        return;
+    }
+
+    popLoading.value = true;
     try {
-        const response = await fetch(`${API_BASE}/pops/dropdown`, {
+        const params = new URLSearchParams();
+        if (includeInactive) {
+            params.set('include_inactive', '1');
+        }
+
+        const query = params.toString();
+        const response = await fetch(`${API_BASE}/pops/dropdown${query ? `?${query}` : ''}`, {
             credentials: 'same-origin',
             headers: { 'Accept': 'application/json' },
         });
         if (!response.ok) return;
         const result = await response.json();
-        pops.value = result.data || [];
+        pops.value = (result.data || []).map((item) => normalizePopOption(item));
+        popsIncludeInactiveLoaded = includeInactive || popsIncludeInactiveLoaded;
     } catch (error) {
         console.error('Error loading pops:', error);
+    } finally {
+        popLoading.value = false;
     }
 }
 
@@ -150,7 +214,8 @@ function changePage(page) {
     loadData();
 }
 
-function openCreateForm() {
+async function openCreateForm() {
+    await loadPops({ includeInactive: true });
     isEditing.value = false;
     currentItem.value = {
         name: '',
@@ -166,10 +231,11 @@ function openCreateForm() {
     showForm.value = true;
 }
 
-function openEditForm(item) {
+async function openEditForm(item) {
+    await loadPops({ includeInactive: true });
     isEditing.value = true;
     currentItem.value = { 
-        ...item,
+        ...normalizeTeamItem(item),
         password: '', // Reset password field
     };
     showForm.value = true;
@@ -252,7 +318,7 @@ async function toggleStatus(item) {
 onMounted(() => {
     loadData();
     loadStats();
-    loadPops();
+    loadPops({ includeInactive: true });
     loadRoles();
 });
 </script>
@@ -377,7 +443,7 @@ onMounted(() => {
                                     </span>
                                 </td>
                                 <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                                    {{ pops.find(p => p.id === item.pop_id)?.name || '-' }}
+                                    {{ popName(item.pop_id) }}
                                 </td>
                                 <td class="px-6 py-4">
                                     <!-- Protected Toggle -->
@@ -480,9 +546,11 @@ onMounted(() => {
                                     </div>
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1.5">POP (Lokasi)</label>
-                                        <select v-model="currentItem.pop_id" class="input w-full">
+                                        <select v-model="currentItem.pop_id" class="input w-full" :disabled="popLoading">
                                             <option :value="null">Semua POP</option>
-                                            <option v-for="p in pops" :key="p.id" :value="p.id">{{ p.name }}</option>
+                                            <option v-for="p in pops" :key="p.id" :value="p.id">
+                                                {{ p.is_active ? p.name : `${p.name} (Nonaktif)` }}
+                                            </option>
                                         </select>
                                     </div>
                                 </div>

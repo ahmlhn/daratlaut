@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-02-25
-Last verified: 2026-02-25
+Last updated: 2026-03-04
+Last verified: 2026-03-04
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -53,6 +53,7 @@ Last verified: 2026-02-25
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-03-04: Halaman Tim kini memuat dropdown POP edit dari DB dengan daftar POP lengkap termasuk POP nonaktif; `resources/js/Pages/Team/Index.vue` menunggu opsi POP termuat dan menormalisasi `pop_id`, sedangkan `app/Http/Controllers/Api/V1/PopController.php` menambah dukungan query `include_inactive=1` pada endpoint dropdown. Docs: N/A.
 - 2026-02-25: Scheduler cron OLT kini mengikuti timezone aplikasi dari env bawaan `APP_TIMEZONE` (via `config('app.timezone')`) di `routes/console.php`; event tenant tetap memakai jam `olt_time` dari Cron Scheduler, dan fallback global tetap memakai `OLT_DAILY_SYNC_TIME` dengan timezone yang sama. `OLT_SCHEDULE_TIMEZONE` dihapus dari `.env.example`. Docs: N/A.
 - 2026-02-25: Perbaikan reliabilitas cron OLT untuk penyimpanan Rx history. Command `olt:queue-daily-sync` menambah opsi `--sync` (eksekusi langsung tanpa queue worker), scheduler OLT tenant/fallback di `routes/console.php` kini menjalankan command dengan `--sync`, dan logging cron membedakan mode `sync` vs `queued` beserta jumlah sukses/gagal per tenant. Docs: `docs/OLT.md`, `docs/RUNBOOK.md`, `docs/CODEMAP.md`.
 - 2026-02-25: Modal detail ONU OLT (`resources/js/Pages/Olts/Index.vue`) kini memakai layout `header + body scroll + footer tetap`; tombol aksi (`Edit Nama`, `Refresh`, `Restart`, `Hapus ONU`) dipindah ke footer modal agar tidak ikut terscroll saat isi detail/histori panjang. Docs: N/A.
