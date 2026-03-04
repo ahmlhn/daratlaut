@@ -12,6 +12,23 @@ use ZipArchive;
 
 final class SystemUpdateService
 {
+    private function prepareLongRunningTask(?string $logMessage = null): void
+    {
+        if ($logMessage !== null && $logMessage !== '') {
+            $this->appendLog($logMessage);
+        }
+
+        if (function_exists('ignore_user_abort')) {
+            @ignore_user_abort(true);
+        }
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(0);
+        }
+
+        @ini_set('max_execution_time', '0');
+    }
+
     private function cfg(string $key, mixed $default = null): mixed
     {
         return config('system_update.' . $key, $default);
@@ -871,6 +888,8 @@ final class SystemUpdateService
 
     public function downloadConfiguredPackage(): array
     {
+        $this->prepareLongRunningTask();
+
         if (!class_exists(ZipArchive::class)) {
             throw new RuntimeException('ZipArchive extension is not available on this server.');
         }
@@ -933,6 +952,8 @@ final class SystemUpdateService
 
     public function start(): array
     {
+        $this->prepareLongRunningTask();
+
         return $this->withLockedState(function (array $state) {
             try {
                 $pkg = $state['package'] ?? null;
@@ -942,6 +963,8 @@ final class SystemUpdateService
 
                 $zipPath = (string) $pkg['zip_path'];
                 $extractDir = $this->workDir() . DIRECTORY_SEPARATOR . 'extract-' . ($pkg['id'] ?? bin2hex(random_bytes(4)));
+
+                $this->appendLog('Preparing package: ' . (string) ($pkg['filename'] ?? basename($zipPath)));
 
                 // Fresh extract dir.
                 $this->rmrf($extractDir);
@@ -1018,6 +1041,8 @@ final class SystemUpdateService
 
     public function step(): array
     {
+        $this->prepareLongRunningTask();
+
         return $this->withLockedState(function (array $state) {
             try {
                 $stage = (string) ($state['stage'] ?? 'idle');
@@ -1053,6 +1078,8 @@ final class SystemUpdateService
 
     private function copyNextChunk(array $state): array
     {
+        $this->prepareLongRunningTask();
+
         $root = (string) ($state['package_root'] ?? '');
         $manifestPath = (string) ($state['manifest_path'] ?? '');
         $m = $state['manifest'] ?? null;
@@ -1120,6 +1147,8 @@ final class SystemUpdateService
 
     private function runNextFinalize(array $state): array
     {
+        $this->prepareLongRunningTask();
+
         $f = $state['finalize'] ?? null;
         if (!is_array($f)) {
             throw new RuntimeException('Finalize plan missing.');
@@ -1285,6 +1314,8 @@ final class SystemUpdateService
             \RecursiveIteratorIterator::LEAVES_ONLY
         );
 
+        $seen = 0;
+
         foreach ($it as $file) {
             if (!$file instanceof \SplFileInfo) continue;
             if (!$file->isFile()) continue;
@@ -1305,6 +1336,11 @@ final class SystemUpdateService
             }
 
             $files[] = $rel;
+            $seen++;
+
+            if ($seen % 500 === 0 && function_exists('set_time_limit')) {
+                @set_time_limit(0);
+            }
         }
 
         sort($files);

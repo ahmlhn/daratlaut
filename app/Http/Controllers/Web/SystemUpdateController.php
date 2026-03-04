@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\Services\SystemUpdateService;
+use App\Support\SystemUpdateToggle;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -13,19 +14,39 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class SystemUpdateController extends Controller
 {
+    private function normalizeRole(?string $role): string
+    {
+        $role = strtolower(trim((string) $role));
+        if ($role === 'svp lapangan') {
+            return 'svp_lapangan';
+        }
+
+        return $role;
+    }
+
     private function assertEnabled(): void
     {
-        abort_unless((bool) config('system_update.enabled', false), 404);
+        abort_unless(SystemUpdateToggle::enabled(), 404);
     }
 
     private function assertAllowed(Request $request): void
     {
+        $user = $request->user();
         $allowed = config('system_update.allow_roles', ['owner', 'admin']);
         if (!is_array($allowed)) $allowed = ['owner', 'admin'];
-        $allowed = array_map(fn ($r) => strtolower(trim((string) $r)), $allowed);
+        $allowed = array_map(fn ($r) => $this->normalizeRole((string) $r), $allowed);
 
-        $role = strtolower(trim((string) ($request->user()?->role ?? session('level', ''))));
-        abort_unless($role !== '' && in_array($role, $allowed, true), 403);
+        $role = $this->normalizeRole((string) ($user?->role ?? session('level', '')));
+        $allowedLegacy = $role !== '' && in_array($role, $allowed, true);
+        $allowedPermission = $user
+            && method_exists($user, 'can')
+            && (
+                $user->can('manage system update')
+                || $user->can('manage settings')
+                || $user->can('manage roles')
+            );
+
+        abort_unless($allowedLegacy || $allowedPermission, 403);
     }
 
     private function jsonError(SystemUpdateService $svc, string $context, \Throwable $e): JsonResponse
