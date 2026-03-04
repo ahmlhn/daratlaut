@@ -53,6 +53,7 @@ Last verified: 2026-03-04
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-03-04: Laravel Pulse ditambahkan ke sistem: dependency `laravel/pulse` + migration Pulse tables dipublish, route `/pulse` diamankan dengan `auth` dan gate `viewPulse` berbasis role/permission user `NociUser`, sidebar admin menambah menu Pulse full-page, dan dashboard Pulse dikustom ringan dengan layout full-width + tombol kembali ke dashboard. Docs: `docs/PULSE.md`.
 - 2026-03-04: Kompatibilitas dropdown POP diperbaiki untuk schema lama yang belum punya kolom `noci_pops.is_active`; `app/Models/Pop.php` kini hanya memfilter aktif jika kolom tersedia, dan `app/Http/Controllers/Api/V1/PopController.php` mengembalikan fallback `is_active=1` agar edit Tim tetap bisa memuat POP teknisi dari DB lama. Docs: N/A.
 - 2026-03-04: Halaman Tim kini memuat dropdown POP edit dari DB dengan daftar POP lengkap termasuk POP nonaktif; `resources/js/Pages/Team/Index.vue` menunggu opsi POP termuat dan menormalisasi `pop_id`, sedangkan `app/Http/Controllers/Api/V1/PopController.php` menambah dukungan query `include_inactive=1` pada endpoint dropdown. Docs: N/A.
 - 2026-02-25: Scheduler cron OLT kini mengikuti timezone aplikasi dari env bawaan `APP_TIMEZONE` (via `config('app.timezone')`) di `routes/console.php`; event tenant tetap memakai jam `olt_time` dari Cron Scheduler, dan fallback global tetap memakai `OLT_DAILY_SYNC_TIME` dengan timezone yang sama. `OLT_SCHEDULE_TIMEZONE` dihapus dari `.env.example`. Docs: N/A.

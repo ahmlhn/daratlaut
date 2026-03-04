@@ -212,6 +212,7 @@ const baseNavigationGroups = [
     items: [
       { name: 'Paket Layanan', href: '/plans', icon: 'tag', featureKey: 'plans', permissionsAny: ['view plans'] },
       { name: 'Pengaturan', href: '/settings', icon: 'cog', featureKey: 'settings', permissionsAny: ['manage settings', 'manage roles'] },
+      { name: 'Pulse', href: '/pulse', icon: 'chart', featureKey: 'settings', permissionsAny: ['manage settings', 'manage roles'], fullPage: true },
     ]
   },
   {
@@ -377,7 +378,7 @@ const breadcrumbs = computed(() => {
           <!-- Group items -->
           <div class="space-y-1">
             <component
-              :is="item.external ? 'a' : Link"
+              :is="item.external || item.fullPage ? 'a' : Link"
               v-for="item in group.items"
               :key="item.name"
               :href="item.href"
