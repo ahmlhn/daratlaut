@@ -226,17 +226,40 @@ class TeknisiController extends Controller
         $nameCol = $this->recapGroupsNameColumn();
         if ($nameCol === null) return [];
 
-        $query = DB::table('noci_recap_groups')->where('tenant_id', $tenantId);
+        $hasPopId = Schema::hasColumn('noci_recap_groups', 'pop_id');
+        $canJoinPop = $hasPopId
+            && Schema::hasTable('noci_pops')
+            && Schema::hasColumn('noci_pops', 'id')
+            && Schema::hasColumn('noci_pops', 'tenant_id')
+            && Schema::hasColumn('noci_pops', 'pop_name');
+
+        $query = DB::table('noci_recap_groups as rg')->where('rg.tenant_id', $tenantId);
         if (Schema::hasColumn('noci_recap_groups', 'is_active')) {
-            $query->where('is_active', 1);
+            $query->where('rg.is_active', 1);
+        }
+        if ($canJoinPop) {
+            $query->leftJoin('noci_pops as p', function ($join) {
+                $join->on('p.id', '=', 'rg.pop_id')
+                    ->on('p.tenant_id', '=', 'rg.tenant_id');
+            });
+        }
+
+        if ($canJoinPop) {
+            $query->orderByRaw("CASE WHEN p.pop_name IS NULL OR p.pop_name = '' THEN 1 ELSE 0 END")
+                ->orderBy('p.pop_name');
+        }
+        if (Schema::hasColumn('noci_recap_groups', 'is_default')) {
+            $query->orderByDesc('rg.is_default');
         }
 
         $rows = $query
-            ->orderBy($nameCol)
+            ->orderBy('rg.' . $nameCol)
             ->get([
-                'id',
-                'group_id',
-                DB::raw($nameCol . ' as name'),
+                'rg.id',
+                'rg.group_id',
+                DB::raw('rg.' . $nameCol . ' as name'),
+                $hasPopId ? 'rg.pop_id' : DB::raw('NULL as pop_id'),
+                $canJoinPop ? DB::raw('p.pop_name as pop_name') : DB::raw('NULL as pop_name'),
             ]);
 
         $data = [];
@@ -248,6 +271,8 @@ class TeknisiController extends Controller
                 'id' => (int) ($row->id ?? 0),
                 'name' => $name,
                 'group_id' => $groupId,
+                'pop_id' => !empty($row->pop_id) ? (int) $row->pop_id : null,
+                'pop_name' => trim((string) ($row->pop_name ?? '')),
             ];
         }
         return $data;
@@ -334,7 +359,210 @@ class TeknisiController extends Controller
         ];
     }
 
-    private function defaultRecapGroupInput(int $tenantId): string
+    private function findRecapGroupIdByGroupId(int $tenantId, string $groupId, ?int $preferPopId = null): ?int
+    {
+        $groupId = trim($groupId);
+        if ($groupId === '') return null;
+        if (!Schema::hasTable('noci_recap_groups')) return null;
+        if (!Schema::hasColumn('noci_recap_groups', 'group_id')) return null;
+
+        $base = DB::table('noci_recap_groups')
+            ->where('tenant_id', $tenantId)
+            ->where('group_id', $groupId);
+        if (Schema::hasColumn('noci_recap_groups', 'is_active')) {
+            $base->where('is_active', 1);
+        }
+
+        $hasPopId = Schema::hasColumn('noci_recap_groups', 'pop_id');
+        if ($hasPopId && $preferPopId !== null) {
+            $query = clone $base;
+            $query->where('pop_id', $preferPopId);
+            if (Schema::hasColumn('noci_recap_groups', 'is_default')) {
+                $query->orderByDesc('is_default');
+            }
+            $row = $query->orderBy('id')->first(['id']);
+            if ($row && !empty($row->id)) return (int) $row->id;
+        }
+
+        if ($hasPopId) {
+            $query = clone $base;
+            $query->whereNull('pop_id');
+            if (Schema::hasColumn('noci_recap_groups', 'is_default')) {
+                $query->orderByDesc('is_default');
+            }
+            $row = $query->orderBy('id')->first(['id']);
+            if ($row && !empty($row->id)) return (int) $row->id;
+        }
+
+        if (Schema::hasColumn('noci_recap_groups', 'is_default')) {
+            $base->orderByDesc('is_default');
+        }
+        $row = $base->orderBy('id')->first(['id']);
+        if (!$row || empty($row->id)) return null;
+
+        return (int) $row->id;
+    }
+
+    private function resolveTechnicianPopContext(Request $request, int $tenantId, string $techName): array
+    {
+        $context = ['pop_id' => null, 'pop_name' => ''];
+        $normalizedTechName = strtolower(trim($techName));
+        $userId = (int) ($request->user()?->id ?? 0);
+
+        $hydrateByPopId = function (?int $popId) use (&$context, $tenantId): bool {
+            $popId = (int) ($popId ?? 0);
+            if ($popId <= 0) return false;
+
+            if (
+                Schema::hasTable('noci_pops')
+                && Schema::hasColumn('noci_pops', 'id')
+                && Schema::hasColumn('noci_pops', 'tenant_id')
+            ) {
+                $select = ['id'];
+                if (Schema::hasColumn('noci_pops', 'pop_name')) $select[] = 'pop_name';
+                $row = DB::table('noci_pops')
+                    ->where('tenant_id', $tenantId)
+                    ->where('id', $popId)
+                    ->first($select);
+
+                if ($row) {
+                    $context['pop_id'] = (int) ($row->id ?? $popId);
+                    if (property_exists($row, 'pop_name')) {
+                        $context['pop_name'] = trim((string) ($row->pop_name ?? ''));
+                    }
+                    return true;
+                }
+            }
+
+            $context['pop_id'] = $popId;
+            return true;
+        };
+
+        $hydrateByPopName = function (?string $popName) use (&$context, $tenantId): bool {
+            $popName = trim((string) $popName);
+            if ($popName === '') return false;
+
+            if (
+                Schema::hasTable('noci_pops')
+                && Schema::hasColumn('noci_pops', 'id')
+                && Schema::hasColumn('noci_pops', 'tenant_id')
+                && Schema::hasColumn('noci_pops', 'pop_name')
+            ) {
+                $row = DB::table('noci_pops')
+                    ->where('tenant_id', $tenantId)
+                    ->whereRaw('LOWER(TRIM(pop_name)) = ?', [strtolower($popName)])
+                    ->first(['id', 'pop_name']);
+                if ($row) {
+                    $context['pop_id'] = (int) ($row->id ?? 0) ?: null;
+                    $context['pop_name'] = trim((string) ($row->pop_name ?? $popName));
+                    return true;
+                }
+            }
+
+            $context['pop_name'] = $popName;
+            return true;
+        };
+
+        $techRoles = ['teknisi', 'svp lapangan', 'svp_lapangan'];
+
+        if (
+            Schema::hasTable('noci_team')
+            && Schema::hasColumn('noci_team', 'tenant_id')
+            && Schema::hasColumn('noci_team', 'pop_id')
+        ) {
+            $select = ['pop_id'];
+
+            if ($userId > 0 && Schema::hasColumn('noci_team', 'user_id')) {
+                $query = DB::table('noci_team')
+                    ->where('tenant_id', $tenantId)
+                    ->where('user_id', $userId);
+                if (Schema::hasColumn('noci_team', 'is_active')) {
+                    $query->where('is_active', 1);
+                }
+                if (Schema::hasColumn('noci_team', 'role')) {
+                    $query->whereIn('role', $techRoles);
+                }
+                $row = $query->orderByDesc('id')->first($select);
+                if ($row && !empty($row->pop_id) && $hydrateByPopId((int) $row->pop_id)) {
+                    return $context;
+                }
+            }
+
+            if ($normalizedTechName !== '' && Schema::hasColumn('noci_team', 'name')) {
+                $query = DB::table('noci_team')
+                    ->where('tenant_id', $tenantId)
+                    ->whereRaw('LOWER(TRIM(name)) = ?', [$normalizedTechName]);
+                if (Schema::hasColumn('noci_team', 'is_active')) {
+                    $query->where('is_active', 1);
+                }
+                if (Schema::hasColumn('noci_team', 'role')) {
+                    $query->whereIn('role', $techRoles);
+                }
+                $row = $query->orderByDesc('id')->first($select);
+                if ($row && !empty($row->pop_id) && $hydrateByPopId((int) $row->pop_id)) {
+                    return $context;
+                }
+            }
+        }
+
+        if (
+            Schema::hasTable('noci_users')
+            && Schema::hasColumn('noci_users', 'tenant_id')
+            && Schema::hasColumn('noci_users', 'default_pop')
+        ) {
+            $hasName = Schema::hasColumn('noci_users', 'name');
+
+            if ($userId > 0) {
+                $select = ['default_pop'];
+                if ($hasName) $select[] = 'name';
+                $row = DB::table('noci_users')
+                    ->where('tenant_id', $tenantId)
+                    ->where('id', $userId)
+                    ->first($select);
+                if ($row) {
+                    $defaultPop = trim((string) ($row->default_pop ?? ''));
+                    $rowName = $hasName ? strtolower(trim((string) ($row->name ?? ''))) : '';
+                    $canUseUserPop = $normalizedTechName === '' || $rowName === '' || $rowName === $normalizedTechName;
+                    if ($defaultPop !== '' && $canUseUserPop && $hydrateByPopName($defaultPop)) {
+                        return $context;
+                    }
+                }
+            }
+
+            if ($normalizedTechName !== '' && $hasName) {
+                $query = DB::table('noci_users')
+                    ->where('tenant_id', $tenantId)
+                    ->whereRaw('LOWER(TRIM(name)) = ?', [$normalizedTechName]);
+                if (Schema::hasColumn('noci_users', 'role')) {
+                    $query->whereIn('role', $techRoles);
+                }
+                if (Schema::hasColumn('noci_users', 'status')) {
+                    $query->where(function ($q) {
+                        $q->whereNull('status')
+                            ->orWhereRaw('LOWER(TRIM(status)) <> ?', ['inactive']);
+                    });
+                }
+                $row = $query->orderByDesc('id')->first(['default_pop']);
+                if ($row) {
+                    $defaultPop = trim((string) ($row->default_pop ?? ''));
+                    if ($defaultPop !== '' && $hydrateByPopName($defaultPop)) {
+                        return $context;
+                    }
+                }
+            }
+        }
+
+        if ($context['pop_id'] === null && $context['pop_name'] === '') {
+            $requestPop = trim((string) $request->input('tech_pop', ''));
+            if ($requestPop !== '') {
+                $hydrateByPopName($requestPop);
+            }
+        }
+
+        return $context;
+    }
+
+    private function defaultRecapGroupFromWaConfig(int $tenantId): string
     {
         if (!Schema::hasTable('noci_conf_wa')) return '';
 
@@ -355,6 +583,54 @@ class TeknisiController extends Controller
         }
 
         return '';
+    }
+
+    private function defaultRecapGroupInput(Request $request, int $tenantId, string $techName): string
+    {
+        $tech = $this->resolveTechnicianPopContext($request, $tenantId, $techName);
+        $popId = !empty($tech['pop_id']) ? (int) $tech['pop_id'] : null;
+
+        if ($popId !== null) {
+            if (
+                Schema::hasTable('noci_recap_groups')
+                && Schema::hasColumn('noci_recap_groups', 'group_id')
+                && Schema::hasColumn('noci_recap_groups', 'pop_id')
+            ) {
+                $query = DB::table('noci_recap_groups')
+                    ->where('tenant_id', $tenantId)
+                    ->where('pop_id', $popId);
+                if (Schema::hasColumn('noci_recap_groups', 'is_active')) {
+                    $query->where('is_active', 1);
+                }
+                if (Schema::hasColumn('noci_recap_groups', 'is_default')) {
+                    $query->orderByDesc('is_default');
+                }
+                $row = $query->orderBy('id')->first(['id', 'group_id']);
+                if ($row && !empty($row->id)) {
+                    return (string) ((int) $row->id);
+                }
+            }
+
+            if (
+                Schema::hasTable('noci_pops')
+                && Schema::hasColumn('noci_pops', 'tenant_id')
+                && Schema::hasColumn('noci_pops', 'id')
+                && Schema::hasColumn('noci_pops', 'group_id')
+            ) {
+                $popGroupId = trim((string) (DB::table('noci_pops')
+                    ->where('tenant_id', $tenantId)
+                    ->where('id', $popId)
+                    ->value('group_id') ?? ''));
+
+                if ($popGroupId !== '') {
+                    $mappedId = $this->findRecapGroupIdByGroupId($tenantId, $popGroupId, $popId);
+                    if ($mappedId !== null) return (string) $mappedId;
+                    return $popGroupId;
+                }
+            }
+        }
+
+        return $this->defaultRecapGroupFromWaConfig($tenantId);
     }
 
     private function normalizeWaGroupId(string $raw): string
@@ -835,7 +1111,7 @@ class TeknisiController extends Controller
 
         // Get recap groups for dropdown (supports legacy/new schema variants).
         $groups = $this->getRecapGroups($tenantId);
-        $defaultGroupInput = $this->defaultRecapGroupInput($tenantId);
+        $defaultGroupInput = $this->defaultRecapGroupInput($request, $tenantId, $techName);
 
         $expenseTotal = 0;
         foreach ($expenses as $item) {
@@ -1065,7 +1341,8 @@ class TeknisiController extends Controller
 
         $groupInput = trim((string) ($validated['group_id'] ?? ''));
         if ($groupInput === '') {
-            $groupInput = $this->defaultRecapGroupInput($tenantId);
+            $techName = trim((string) ($validated['tech_name'] ?? $this->actorName($request)));
+            $groupInput = $this->defaultRecapGroupInput($request, $tenantId, $techName);
         }
         if ($groupInput === '') {
             return response()->json(['success' => false, 'message' => 'Pilih Group Rekap terlebih dahulu'], 422);

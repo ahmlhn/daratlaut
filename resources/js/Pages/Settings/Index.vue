@@ -40,7 +40,7 @@ const popForm = reactive({ id: 0, pop_name: '', wa_number: '', group_id: '' });
 const editingPop = ref(false);
 
 const recapGroups = ref([]);
-const recapForm = reactive({ id: 0, name: '', group_id: '' });
+const recapForm = reactive({ id: 0, name: '', group_id: '', pop_id: '' });
 const editingRecap = ref(false);
 
 const feeSettings = reactive({ teknisi_fee_install: 0, sales_fee_install: 0, expense_categories: [] });
@@ -482,10 +482,12 @@ async function deletePop(p) {
 }
 
 // ===== Recap Group CRUD =====
-function editRecap(r) { Object.assign(recapForm, { id: r.id, name: r.name, group_id: r.group_id }); editingRecap.value = true; }
-function cancelRecap() { Object.assign(recapForm, { id: 0, name: '', group_id: '' }); editingRecap.value = false; }
+function editRecap(r) { Object.assign(recapForm, { id: r.id, name: r.name, group_id: r.group_id, pop_id: r.pop_id ? String(r.pop_id) : '' }); editingRecap.value = true; }
+function cancelRecap() { Object.assign(recapForm, { id: 0, name: '', group_id: '', pop_id: '' }); editingRecap.value = false; }
 async function saveRecap() {
-    const res = await api('/recap-groups', { method: 'POST', body: JSON.stringify(recapForm) });
+    if (!recapForm.pop_id) { alert('Pilih POP terlebih dahulu'); return; }
+    const payload = { ...recapForm, pop_id: recapForm.pop_id ? Number(recapForm.pop_id) : null };
+    const res = await api('/recap-groups', { method: 'POST', body: JSON.stringify(payload) });
     if (res.status === 'error') { alert(res.message); return; }
     cancelRecap();
     const d = await api('/recap-groups'); recapGroups.value = d.data || [];
@@ -1100,6 +1102,15 @@ onMounted(() => {
                                         <input v-model="recapForm.name" type="text" class="input w-full" placeholder="Contoh: Rekap Jakarta...">
                                     </div>
                                     <div class="flex-1 w-full">
+                                        <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">POP Default</label>
+                                        <select v-model="recapForm.pop_id" class="input w-full">
+                                            <option value="">-- Pilih POP --</option>
+                                            <option v-for="p in pops" :key="`recap-pop-${p.id}`" :value="String(p.id)">
+                                                {{ p.pop_name }}
+                                            </option>
+                                        </select>
+                                    </div>
+                                    <div class="flex-1 w-full">
                                         <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Group ID WhatsApp</label>
                                         <input v-model="recapForm.group_id" type="text" class="input w-full" placeholder="xxxx@g.us">
                                     </div>
@@ -1118,6 +1129,7 @@ onMounted(() => {
                                         <thead class="bg-gray-50/80 dark:bg-dark-900/60 text-[11px] uppercase font-black tracking-widest text-gray-500 sticky top-0">
                                             <tr>
                                                 <th class="px-4 py-3">Nama Group</th>
+                                                <th class="px-4 py-3">POP</th>
                                                 <th class="px-4 py-3">Group ID</th>
                                                 <th class="px-4 py-3 text-right">Aksi</th>
                                             </tr>
@@ -1125,6 +1137,7 @@ onMounted(() => {
                                         <tbody class="text-sm divide-y divide-gray-200 dark:divide-white/10 bg-white dark:bg-dark-950">
                                             <tr v-for="r in recapGroups" :key="r.id" class="hover:bg-gray-50/80 dark:hover:bg-white/5">
                                                 <td class="px-4 py-3 text-gray-900 dark:text-white">{{ r.name }}</td>
+                                                <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ r.pop_name || '-' }}</td>
                                                 <td class="px-4 py-3 text-gray-500 dark:text-gray-400 font-mono text-xs">{{ r.group_id }}</td>
                                                 <td class="px-4 py-3 text-right space-x-3">
                                                     <button @click="editRecap(r)" class="text-sm font-semibold text-primary-600 hover:text-primary-800">Edit</button>
@@ -1132,7 +1145,7 @@ onMounted(() => {
                                                 </td>
                                             </tr>
                                             <tr v-if="recapGroups.length === 0">
-                                                <td colspan="3" class="px-4 py-10 text-center text-gray-500 dark:text-gray-400">Belum ada group</td>
+                                                <td colspan="4" class="px-4 py-10 text-center text-gray-500 dark:text-gray-400">Belum ada group</td>
                                             </tr>
                                         </tbody>
                                     </table>

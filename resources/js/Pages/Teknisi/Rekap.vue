@@ -590,7 +590,7 @@ onMounted(() => {
               <select v-model="selectedGroupId" class="w-full h-11 bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-sm font-semibold rounded-xl px-3 shadow-sm outline-none text-slate-700 dark:text-slate-200">
                 <option value="">-- Pilih Grup --</option>
                 <option v-for="grp in groups" :key="`${grp.id}-${grp.group_id}`" :value="String(grp.id ?? grp.group_id ?? '')">
-                  {{ grp.name }} ({{ grp.group_id }})
+                  {{ grp.name }}{{ grp.pop_name ? ` - ${grp.pop_name}` : '' }} ({{ grp.group_id }})
                 </option>
               </select>
               <div v-if="defaultGroupInput" class="text-[10px] text-slate-400 mt-2">

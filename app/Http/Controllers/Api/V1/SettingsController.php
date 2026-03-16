@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pop;
-use App\Models\RecapGroup;
 use App\Support\PublicRedirectLink;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -279,13 +279,101 @@ class SettingsController extends Controller
 
     // ========== Recap Group Management ==========
 
+    private function recapGroupsNameColumn(): ?string
+    {
+        if (!Schema::hasTable('noci_recap_groups')) return null;
+        if (Schema::hasColumn('noci_recap_groups', 'name')) return 'name';
+        if (Schema::hasColumn('noci_recap_groups', 'group_name')) return 'group_name';
+        return null;
+    }
+
+    private function ensureRecapGroupsPopColumn(): void
+    {
+        if (!Schema::hasTable('noci_recap_groups')) return;
+        if (Schema::hasColumn('noci_recap_groups', 'pop_id')) return;
+
+        Schema::table('noci_recap_groups', function (Blueprint $table) {
+            $table->unsignedBigInteger('pop_id')->nullable()->after('group_id');
+            $table->index(['tenant_id', 'pop_id'], 'idx_recap_groups_tenant_pop');
+        });
+    }
+
+    private function recapGroupsHasPopIdColumn(): bool
+    {
+        return Schema::hasTable('noci_recap_groups')
+            && Schema::hasColumn('noci_recap_groups', 'pop_id');
+    }
+
     private function getRecapGroupsData(int $tid): array
     {
         try {
-            $t = DB::select("SHOW TABLES LIKE 'noci_recap_groups'");
-            if (empty($t)) return [];
-            return RecapGroup::forTenant($tid)->orderBy('name')->get()->toArray();
-        } catch (\Exception $e) { return []; }
+            if (!Schema::hasTable('noci_recap_groups')) return [];
+
+            try {
+                $this->ensureRecapGroupsPopColumn();
+            } catch (\Throwable) {
+                // Ignore when DB user can't alter table in production.
+            }
+
+            $nameCol = $this->recapGroupsNameColumn();
+            if ($nameCol === null || !Schema::hasColumn('noci_recap_groups', 'group_id')) return [];
+
+            $hasPopId = $this->recapGroupsHasPopIdColumn();
+            $canJoinPop = $hasPopId
+                && Schema::hasTable('noci_pops')
+                && Schema::hasColumn('noci_pops', 'id')
+                && Schema::hasColumn('noci_pops', 'tenant_id')
+                && Schema::hasColumn('noci_pops', 'pop_name');
+
+            $query = DB::table('noci_recap_groups as rg')
+                ->where('rg.tenant_id', $tid);
+
+            if ($canJoinPop) {
+                $query->leftJoin('noci_pops as p', function ($join) {
+                    $join->on('p.id', '=', 'rg.pop_id')
+                        ->on('p.tenant_id', '=', 'rg.tenant_id');
+                });
+            }
+
+            $select = [
+                'rg.id',
+                'rg.group_id',
+                DB::raw('rg.' . $nameCol . ' as name'),
+                $hasPopId ? 'rg.pop_id' : DB::raw('NULL as pop_id'),
+                $canJoinPop ? DB::raw('p.pop_name as pop_name') : DB::raw('NULL as pop_name'),
+            ];
+            if (Schema::hasColumn('noci_recap_groups', 'is_default')) {
+                $select[] = 'rg.is_default';
+            }
+            if (Schema::hasColumn('noci_recap_groups', 'is_active')) {
+                $select[] = 'rg.is_active';
+            }
+
+            $rows = $query
+                ->orderBy('name')
+                ->get($select);
+
+            $data = [];
+            foreach ($rows as $row) {
+                $name = trim((string) ($row->name ?? ''));
+                $groupId = trim((string) ($row->group_id ?? ''));
+                if ($name === '' || $groupId === '') continue;
+
+                $data[] = [
+                    'id' => (int) ($row->id ?? 0),
+                    'name' => $name,
+                    'group_id' => $groupId,
+                    'pop_id' => !empty($row->pop_id) ? (int) $row->pop_id : null,
+                    'pop_name' => trim((string) ($row->pop_name ?? '')),
+                    'is_default' => property_exists($row, 'is_default') ? (int) ($row->is_default ?? 0) : 0,
+                    'is_active' => property_exists($row, 'is_active') ? (int) ($row->is_active ?? 1) : 1,
+                ];
+            }
+
+            return $data;
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     public function getRecapGroups(Request $request): JsonResponse
@@ -296,26 +384,159 @@ class SettingsController extends Controller
     public function saveRecapGroup(Request $request): JsonResponse
     {
         $tid = $this->tenantId($request);
-        $id = (int) $request->input('id', 0);
-        $name = trim($request->input('name', ''));
-        $groupId = trim($request->input('group_id', ''));
-        if (empty($name) || empty($groupId)) return response()->json(['status' => 'error', 'message' => 'Nama dan Group ID wajib'], 422);
+        if (!Schema::hasTable('noci_recap_groups')) {
+            return response()->json(['status' => 'error', 'message' => 'Tabel Group Rekap tidak ditemukan'], 500);
+        }
 
-        $dup = RecapGroup::forTenant($tid)->where('name', $name);
+        try {
+            $this->ensureRecapGroupsPopColumn();
+        } catch (\Throwable) {
+            // Continue without pop mapping column when schema alter is not permitted.
+        }
+
+        $nameCol = $this->recapGroupsNameColumn();
+        if ($nameCol === null || !Schema::hasColumn('noci_recap_groups', 'group_id')) {
+            return response()->json(['status' => 'error', 'message' => 'Schema Group Rekap belum kompatibel'], 500);
+        }
+        $hasPopId = $this->recapGroupsHasPopIdColumn();
+
+        $validated = $request->validate([
+            'id' => 'nullable|integer|min:1',
+            'name' => 'required|string|max:100',
+            'group_id' => 'required|string|max:100',
+            'pop_id' => $hasPopId ? 'required|integer|min:1' : 'nullable|integer|min:1',
+        ]);
+
+        $id = (int) ($validated['id'] ?? 0);
+        $name = trim((string) ($validated['name'] ?? ''));
+        $groupId = trim((string) ($validated['group_id'] ?? ''));
+        $popId = !empty($validated['pop_id']) ? (int) $validated['pop_id'] : null;
+
+        if ($name === '' || $groupId === '') {
+            return response()->json(['status' => 'error', 'message' => 'Nama dan Group ID wajib'], 422);
+        }
+
+        if ($popId !== null && !Pop::forTenant($tid)->where('id', $popId)->exists()) {
+            return response()->json(['status' => 'error', 'message' => 'POP tidak valid untuk tenant ini'], 422);
+        }
+
+        $dup = DB::table('noci_recap_groups')
+            ->where('tenant_id', $tid)
+            ->where($nameCol, $name);
         if ($id > 0) $dup->where('id', '!=', $id);
-        if ($dup->exists()) return response()->json(['status' => 'error', 'message' => 'Nama sudah ada'], 422);
+        if ($dup->exists()) {
+            return response()->json(['status' => 'error', 'message' => 'Nama sudah ada'], 422);
+        }
+
+        if ($hasPopId && $popId !== null) {
+            $dupPop = DB::table('noci_recap_groups')
+                ->where('tenant_id', $tid)
+                ->where('pop_id', $popId);
+            if ($id > 0) $dupPop->where('id', '!=', $id);
+            if ($dupPop->exists()) {
+                return response()->json(['status' => 'error', 'message' => 'POP sudah memiliki default group rekap'], 422);
+            }
+        }
+
+        $previous = null;
+        if ($id > 0) {
+            $prevSelect = ['id', 'group_id'];
+            if ($hasPopId) $prevSelect[] = 'pop_id';
+            $previous = DB::table('noci_recap_groups')
+                ->where('tenant_id', $tid)
+                ->where('id', $id)
+                ->first($prevSelect);
+            if (!$previous) {
+                return response()->json(['status' => 'error', 'message' => 'Group tidak ditemukan'], 404);
+            }
+        }
+
+        $payload = [
+            $nameCol => $name,
+            'group_id' => $groupId,
+        ];
+        if ($hasPopId) $payload['pop_id'] = $popId;
+        if (Schema::hasColumn('noci_recap_groups', 'updated_at')) {
+            $payload['updated_at'] = now();
+        }
 
         if ($id > 0) {
-            RecapGroup::forTenant($tid)->where('id', $id)->update(['name' => $name, 'group_id' => $groupId]);
+            DB::table('noci_recap_groups')
+                ->where('tenant_id', $tid)
+                ->where('id', $id)
+                ->update($payload);
         } else {
-            RecapGroup::create(['tenant_id' => $tid, 'name' => $name, 'group_id' => $groupId]);
+            $insert = array_merge($payload, ['tenant_id' => $tid]);
+            if (Schema::hasColumn('noci_recap_groups', 'created_at')) {
+                $insert['created_at'] = now();
+            }
+            DB::table('noci_recap_groups')->insert($insert);
         }
+
+        if (Schema::hasTable('noci_pops') && Schema::hasColumn('noci_pops', 'group_id')) {
+            if ($hasPopId) {
+                $prevPopId = $previous && property_exists($previous, 'pop_id') && !empty($previous->pop_id)
+                    ? (int) $previous->pop_id
+                    : null;
+                $prevGroupId = trim((string) ($previous->group_id ?? ''));
+
+                if ($prevPopId !== null && ($popId === null || $popId !== $prevPopId)) {
+                    $current = trim((string) (Pop::forTenant($tid)->where('id', $prevPopId)->value('group_id') ?? ''));
+                    if ($current !== '' && $current === $prevGroupId) {
+                        Pop::forTenant($tid)->where('id', $prevPopId)->update(['group_id' => null]);
+                    }
+                }
+
+                if ($popId !== null) {
+                    Pop::forTenant($tid)->where('id', $popId)->update(['group_id' => $groupId]);
+                }
+            } elseif ($popId !== null) {
+                // Legacy fallback when recap_groups.pop_id column is unavailable.
+                Pop::forTenant($tid)->where('id', $popId)->update(['group_id' => $groupId]);
+            }
+        }
+
         return response()->json(['status' => 'success']);
     }
 
     public function deleteRecapGroup(Request $request, int $id): JsonResponse
     {
-        RecapGroup::forTenant($this->tenantId($request))->where('id', $id)->delete();
+        $tid = $this->tenantId($request);
+        if (!Schema::hasTable('noci_recap_groups')) {
+            return response()->json(['status' => 'error', 'message' => 'Tabel Group Rekap tidak ditemukan'], 500);
+        }
+
+        $hasPopId = $this->recapGroupsHasPopIdColumn();
+        $select = ['id', 'group_id'];
+        if ($hasPopId) $select[] = 'pop_id';
+
+        $row = DB::table('noci_recap_groups')
+            ->where('tenant_id', $tid)
+            ->where('id', $id)
+            ->first($select);
+        if (!$row) {
+            return response()->json(['status' => 'error', 'message' => 'Group tidak ditemukan'], 404);
+        }
+
+        DB::table('noci_recap_groups')
+            ->where('tenant_id', $tid)
+            ->where('id', $id)
+            ->delete();
+
+        if (
+            $hasPopId
+            && !empty($row->pop_id)
+            && Schema::hasTable('noci_pops')
+            && Schema::hasColumn('noci_pops', 'group_id')
+        ) {
+            $popId = (int) $row->pop_id;
+            $groupId = trim((string) ($row->group_id ?? ''));
+            $current = trim((string) (Pop::forTenant($tid)->where('id', $popId)->value('group_id') ?? ''));
+            if ($groupId !== '' && $current === $groupId) {
+                Pop::forTenant($tid)->where('id', $popId)->update(['group_id' => null]);
+            }
+        }
+
         return response()->json(['status' => 'success']);
     }
 
