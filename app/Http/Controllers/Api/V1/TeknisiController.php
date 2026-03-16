@@ -835,6 +835,7 @@ class TeknisiController extends Controller
 
         // Get recap groups for dropdown (supports legacy/new schema variants).
         $groups = $this->getRecapGroups($tenantId);
+        $defaultGroupInput = $this->defaultRecapGroupInput($tenantId);
 
         $expenseTotal = 0;
         foreach ($expenses as $item) {
@@ -846,6 +847,7 @@ class TeknisiController extends Controller
             'jobs' => $jobs,
             'expenses' => $expenses,
             'groups' => $groups,
+            'default_group_input' => $defaultGroupInput,
             'summary' => [
                 'total_jobs' => count($jobs),
                 'total_revenue' => $jobs->sum('harga'),

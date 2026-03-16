@@ -33,6 +33,7 @@ const showGroupModal = ref(false)
 const selectedGroupId = ref('')
 const proofFile = ref(null)
 const sendingGroup = ref(false)
+const defaultGroupInput = ref('')
 
 function notify(message, type = 'error') {
   const msg = String(message || '').trim() || 'Terjadi kesalahan'
@@ -55,6 +56,39 @@ function toDateInput(date) {
 function isBlankValue(value) {
   const v = String(value || '').trim().toLowerCase()
   return v === '' || v === '-' || v === 'null'
+}
+
+function normalizeWaGroupId(raw) {
+  const value = String(raw || '').trim().replace(/\s+/g, '')
+  if (!value) return ''
+  if (value.includes('@')) {
+    const match = value.match(/^([0-9A-Za-z._:-]{5,})@g\.us$/i)
+    return match ? `${match[1]}@g.us` : ''
+  }
+  if (!/^[0-9A-Za-z._:-]{5,}$/.test(value)) return ''
+  return `${value}@g.us`
+}
+
+function findDefaultGroupOptionValue() {
+  const input = String(defaultGroupInput.value || '').trim()
+  const list = Array.isArray(groups.value) ? groups.value : []
+  if (!input || list.length === 0) return ''
+
+  if (/^\d+$/.test(input)) {
+    const byId = list.find((grp) => String(grp?.id ?? '') === input)
+    if (byId) return String(byId?.id ?? '').trim()
+  }
+
+  const normalizedInput = normalizeWaGroupId(input)
+  if (normalizedInput) {
+    const byGroupId = list.find((grp) => normalizeWaGroupId(grp?.group_id || '') === normalizedInput)
+    if (byGroupId) return String(byGroupId?.id ?? byGroupId?.group_id ?? '').trim()
+  }
+
+  const byRawGroupId = list.find((grp) => String(grp?.group_id || '').trim() === input)
+  if (byRawGroupId) return String(byRawGroupId?.id ?? byRawGroupId?.group_id ?? '').trim()
+
+  return ''
 }
 
 function formatRupiah(value) {
@@ -226,6 +260,7 @@ async function loadRekap() {
 
     jobs.value = Array.isArray(data.jobs) ? data.jobs : []
     groups.value = Array.isArray(data.groups) ? data.groups : []
+    defaultGroupInput.value = String(data.default_group_input || '').trim()
 
     const loadedExpenses = normalizeExpenseItems(data.expenses)
     expenses.value = loadedExpenses
@@ -238,6 +273,7 @@ async function loadRekap() {
   } catch (e) {
     jobs.value = []
     groups.value = []
+    defaultGroupInput.value = ''
     expenses.value = []
     syncingExpenseInput.value = true
     expenseInput.value = ''
@@ -292,9 +328,16 @@ function copyRekap() {
 }
 
 function openRekapGroupModal() {
-  if (!selectedGroupId.value && Array.isArray(groups.value) && groups.value.length > 0) {
-    const first = groups.value[0]
-    selectedGroupId.value = String(first?.id ?? first?.group_id ?? '').trim()
+  if (!selectedGroupId.value) {
+    const preferred = findDefaultGroupOptionValue()
+    if (preferred) {
+      selectedGroupId.value = preferred
+    } else if (Array.isArray(groups.value) && groups.value.length > 0) {
+      const first = groups.value[0]
+      selectedGroupId.value = String(first?.id ?? first?.group_id ?? '').trim()
+    } else if (defaultGroupInput.value) {
+      selectedGroupId.value = defaultGroupInput.value
+    }
   }
   showGroupModal.value = true
 }
@@ -334,7 +377,9 @@ async function uploadRekapProofIfAny() {
 
 async function sendRekapToGroup() {
   const chosenGroup = String(selectedGroupId.value || '').trim()
-  if (!chosenGroup && Array.isArray(groups.value) && groups.value.length > 0) {
+  const fallbackGroup = String(defaultGroupInput.value || '').trim()
+  const groupForSend = chosenGroup || fallbackGroup
+  if (!groupForSend) {
     notify('Pilih grup terlebih dahulu', 'error')
     return
   }
@@ -342,7 +387,7 @@ async function sendRekapToGroup() {
   try {
     const proof = await uploadRekapProofIfAny()
     const payload = {
-      group_id: chosenGroup,
+      group_id: groupForSend,
       message: rekapPreview.value,
       recap_date: selectedDate.value,
       tech_name: props.techName,
@@ -548,6 +593,9 @@ onMounted(() => {
                   {{ grp.name }} ({{ grp.group_id }})
                 </option>
               </select>
+              <div v-if="defaultGroupInput" class="text-[10px] text-slate-400 mt-2">
+                Default laporan: {{ defaultGroupInput }}
+              </div>
             </div>
             <div v-else>
               <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Group ID WhatsApp</label>
