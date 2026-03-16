@@ -292,6 +292,10 @@ function copyRekap() {
 }
 
 function openRekapGroupModal() {
+  if (!selectedGroupId.value && Array.isArray(groups.value) && groups.value.length > 0) {
+    const first = groups.value[0]
+    selectedGroupId.value = String(first?.id ?? first?.group_id ?? '').trim()
+  }
   showGroupModal.value = true
 }
 
@@ -329,7 +333,8 @@ async function uploadRekapProofIfAny() {
 }
 
 async function sendRekapToGroup() {
-  if (!selectedGroupId.value) {
+  const chosenGroup = String(selectedGroupId.value || '').trim()
+  if (!chosenGroup && Array.isArray(groups.value) && groups.value.length > 0) {
     notify('Pilih grup terlebih dahulu', 'error')
     return
   }
@@ -337,7 +342,7 @@ async function sendRekapToGroup() {
   try {
     const proof = await uploadRekapProofIfAny()
     const payload = {
-      group_id: selectedGroupId.value,
+      group_id: chosenGroup,
       message: rekapPreview.value,
       recap_date: selectedDate.value,
       tech_name: props.techName,
@@ -350,7 +355,7 @@ async function sendRekapToGroup() {
       method: 'POST',
       body: JSON.stringify(payload),
     })
-    notify('Laporan selesai', 'success')
+    notify(data?.message || 'Laporan selesai', 'success')
     closeRekapGroupModal(true)
   } catch (e) {
     notify(e?.message || 'Gagal mengirim laporan', 'error')
@@ -535,12 +540,19 @@ onMounted(() => {
             </button>
           </div>
           <div class="p-6 space-y-4 overflow-y-auto">
-            <div>
+            <div v-if="groups.length > 0">
               <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Pilih Grup WhatsApp</label>
               <select v-model="selectedGroupId" class="w-full h-11 bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-sm font-semibold rounded-xl px-3 shadow-sm outline-none text-slate-700 dark:text-slate-200">
                 <option value="">-- Pilih Grup --</option>
-                <option v-for="grp in groups" :key="`${grp.id}-${grp.group_id}`" :value="grp.group_id">{{ grp.name }}</option>
+                <option v-for="grp in groups" :key="`${grp.id}-${grp.group_id}`" :value="String(grp.id ?? grp.group_id ?? '')">
+                  {{ grp.name }} ({{ grp.group_id }})
+                </option>
               </select>
+            </div>
+            <div v-else>
+              <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Group ID WhatsApp</label>
+              <input v-model="selectedGroupId" type="text" class="w-full h-11 bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-sm font-semibold rounded-xl px-3 shadow-sm outline-none text-slate-700 dark:text-slate-200" placeholder="120363123456789@g.us">
+              <div class="text-[10px] text-slate-400 mt-2">Daftar grup rekap kosong. Isi manual atau atur group rekap di menu Settings.</div>
             </div>
             <div>
               <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Isi Laporan</label>

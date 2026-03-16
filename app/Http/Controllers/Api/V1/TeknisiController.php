@@ -334,6 +334,51 @@ class TeknisiController extends Controller
         ];
     }
 
+    private function defaultRecapGroupInput(int $tenantId): string
+    {
+        if (!Schema::hasTable('noci_conf_wa')) return '';
+
+        $select = [];
+        if (Schema::hasColumn('noci_conf_wa', 'recap_group_id')) $select[] = 'recap_group_id';
+        if (Schema::hasColumn('noci_conf_wa', 'group_id')) $select[] = 'group_id';
+        if (count($select) === 0) return '';
+
+        $row = DB::table('noci_conf_wa')
+            ->where('tenant_id', $tenantId)
+            ->first($select);
+        if (!$row) return '';
+
+        foreach (['recap_group_id', 'group_id'] as $col) {
+            if (!property_exists($row, $col)) continue;
+            $value = trim((string) ($row->{$col} ?? ''));
+            if ($value !== '') return $value;
+        }
+
+        return '';
+    }
+
+    private function normalizeWaGroupId(string $raw): string
+    {
+        $value = trim($raw);
+        if ($value === '') return '';
+
+        $value = (string) preg_replace('/\s+/', '', $value);
+        if ($value === '') return '';
+
+        if (str_contains($value, '@')) {
+            if (!preg_match('/^([0-9A-Za-z._:-]{5,})@g\.us$/i', $value, $m)) {
+                return '';
+            }
+            return (string) ($m[1] . '@g.us');
+        }
+
+        if (!preg_match('/^[0-9A-Za-z._:-]{5,}$/', $value)) {
+            return '';
+        }
+
+        return $value . '@g.us';
+    }
+
     private function toAbsoluteUrl(Request $request, string $raw): string
     {
         $value = trim($raw);
@@ -998,7 +1043,7 @@ class TeknisiController extends Controller
     public function sendRekapToGroup(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'group_id' => 'required',
+            'group_id' => 'nullable|string|max:255',
             'message' => 'required|string',
             'recap_date' => 'nullable|date',
             'tech_name' => 'nullable|string|max:100',
@@ -1012,18 +1057,30 @@ class TeknisiController extends Controller
         if ($tenantId <= 0) {
             return response()->json(['success' => false, 'message' => 'Tenant context missing'], 403);
         }
-        if ($resp = $this->requireAnyPermission($request, ['send teknisi recap'])) {
+        if ($resp = $this->requireAnyPermission($request, ['send teknisi recap', 'edit teknisi'])) {
             return $resp;
         }
 
-        $resolved = $this->resolveRecapGroupTarget($tenantId, (string) $validated['group_id']);
+        $groupInput = trim((string) ($validated['group_id'] ?? ''));
+        if ($groupInput === '') {
+            $groupInput = $this->defaultRecapGroupInput($tenantId);
+        }
+        if ($groupInput === '') {
+            return response()->json(['success' => false, 'message' => 'Pilih Group Rekap terlebih dahulu'], 422);
+        }
+
+        $resolved = $this->resolveRecapGroupTarget($tenantId, $groupInput);
         if (!$resolved || $this->isBlankValue($resolved['group_id'] ?? '')) {
             return response()->json(['success' => false, 'message' => 'Group tidak ditemukan'], 404);
         }
 
-        $targetGroup = trim((string) ($resolved['group_id'] ?? ''));
-        if (!preg_match('/^\d{5,}@g\.us$/', $targetGroup)) {
-            return response()->json(['success' => false, 'message' => 'Format ID grup tidak valid'], 422);
+        $targetGroup = $this->normalizeWaGroupId((string) ($resolved['group_id'] ?? ''));
+        if ($targetGroup === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Format ID grup tidak valid',
+                'error' => 'Gunakan format contoh: 120363123456789@g.us',
+            ], 422);
         }
 
         $message = trim((string) ($validated['message'] ?? ''));

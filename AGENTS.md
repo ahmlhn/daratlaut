@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-03-04
-Last verified: 2026-03-04
+Last updated: 2026-03-17
+Last verified: 2026-03-17
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -53,6 +53,7 @@ Last verified: 2026-03-04
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-03-17: Fitur kirim laporan grup pada Rekap Teknisi diperkuat: route Settings untuk `GET/POST /api/v1/settings/recap-groups` ditambahkan agar manajemen grup rekap berfungsi, endpoint `POST /api/v1/teknisi/rekap/send` kini mendukung fallback group dari `noci_conf_wa` (`recap_group_id`/`group_id`) + normalisasi format ID grup (`@g.us`) + akses permission `send teknisi recap` atau `edit teknisi`, dan modal kirim di `resources/js/Pages/Teknisi/Rekap.vue` auto-pilih grup pertama serta menyediakan input manual saat daftar grup kosong. Docs: N/A.
 - 2026-03-04: Perbaikan modul System Update: `app/Http/Controllers/Web/SystemUpdateController.php` kini menghormati toggle `SYSTEM_UPDATE_ENABLED` yang aman untuk config cache dan mengizinkan akses berbasis permission (`manage system update` / `manage settings` / `manage roles`) selain role legacy; `app/Services/SystemUpdateService.php` menonaktifkan batas waktu eksekusi untuk tahap update berat (`download/start/step/finalize`) agar prepare/copy paket besar tidak mudah timeout. Docs: N/A.
 - 2026-03-04: Laravel Pulse ditambahkan ke sistem: dependency `laravel/pulse` + migration Pulse tables dipublish, route `/pulse` diamankan dengan `auth` dan gate `viewPulse` berbasis role/permission user `NociUser`, sidebar admin menambah menu Pulse full-page, dan dashboard Pulse dikustom ringan dengan layout full-width + tombol kembali ke dashboard. Docs: `docs/PULSE.md`.
 - 2026-03-04: Kompatibilitas dropdown POP diperbaiki untuk schema lama yang belum punya kolom `noci_pops.is_active`; `app/Models/Pop.php` kini hanya memfilter aktif jika kolom tersedia, dan `app/Http/Controllers/Api/V1/PopController.php` mengembalikan fallback `is_active=1` agar edit Tim tetap bisa memuat POP teknisi dari DB lama. Docs: N/A.
