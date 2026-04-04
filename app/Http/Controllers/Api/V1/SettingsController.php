@@ -651,6 +651,14 @@ class SettingsController extends Controller
             $basePath = base_path();
             $artisanPath = base_path('artisan');
             $quotedBase = '"' . str_replace('"', '\"', $basePath) . '"';
+            $queueConnection = trim((string) env('OLT_DAILY_SYNC_QUEUE_CONNECTION', 'database'));
+            if ($queueConnection === '') {
+                $queueConnection = 'database';
+            }
+            $queueName = trim((string) env('OLT_DAILY_SYNC_QUEUE', 'olt-sync'));
+            if ($queueName === '') {
+                $queueName = 'olt-sync';
+            }
 
             return array_merge($defaults, [
                 'project_path' => $basePath,
@@ -659,6 +667,9 @@ class SettingsController extends Controller
                 // cPanel wrappers can mis-parse absolute artisan path; use project dir + artisan command.
                 'cron_line_cpanel' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >/dev/null 2>&1',
                 'windows_task_command' => 'php "' . $artisanPath . '" schedule:run',
+                'queue_worker_connection' => $queueConnection,
+                'queue_worker_queue' => $queueName,
+                'queue_worker_command' => 'php "' . $artisanPath . '" queue:work ' . $queueConnection . ' --queue=' . $queueName . ' --tries=2 --timeout=7200',
             ]);
         }
 
@@ -669,6 +680,14 @@ class SettingsController extends Controller
         $basePath = base_path();
         $artisanPath = base_path('artisan');
         $quotedBase = '"' . str_replace('"', '\"', $basePath) . '"';
+        $queueConnection = trim((string) env('OLT_DAILY_SYNC_QUEUE_CONNECTION', 'database'));
+        if ($queueConnection === '') {
+            $queueConnection = 'database';
+        }
+        $queueName = trim((string) env('OLT_DAILY_SYNC_QUEUE', 'olt-sync'));
+        if ($queueName === '') {
+            $queueName = 'olt-sync';
+        }
 
         return [
             'nightly_enabled' => (bool) ($row->nightly_enabled ?? $defaults['nightly_enabled']),
@@ -685,6 +704,9 @@ class SettingsController extends Controller
             'cron_line_linux' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >> /dev/null 2>&1',
             'cron_line_cpanel' => '* * * * * cd ' . $quotedBase . ' && php artisan schedule:run >/dev/null 2>&1',
             'windows_task_command' => 'php "' . $artisanPath . '" schedule:run',
+            'queue_worker_connection' => $queueConnection,
+            'queue_worker_queue' => $queueName,
+            'queue_worker_command' => 'php "' . $artisanPath . '" queue:work ' . $queueConnection . ' --queue=' . $queueName . ' --tries=2 --timeout=7200',
         ];
     }
 

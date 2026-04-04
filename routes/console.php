@@ -117,6 +117,10 @@ try {
 }
 
 $opsTenantScheduleEnabled = filter_var((string) env('OPS_TENANT_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
+$oltDailySyncQueueConnection = trim((string) env('OLT_DAILY_SYNC_QUEUE_CONNECTION', 'database'));
+if ($oltDailySyncQueueConnection === '') {
+    $oltDailySyncQueueConnection = 'database';
+}
 $tenantOltScheduled = 0;
 
 if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
@@ -172,7 +176,7 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
 
             if ($hasOltEnabledColumn && (int) ($row->olt_enabled ?? 0) === 1) {
                 $oltTime = $normalizeClock($hasOltTimeColumn ? (string) ($row->olt_time ?? '') : null, '02:15');
-                Schedule::command('olt:queue-daily-sync', ['--tenant' => (string) $tenantId, '--sync' => true])
+                Schedule::command('olt:queue-daily-sync', ['--tenant' => (string) $tenantId, '--connection' => $oltDailySyncQueueConnection])
                     ->dailyAt($oltTime)
                     ->timezone($oltScheduleTimezone)
                     ->withoutOverlapping()
@@ -197,12 +201,11 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
 |
 */
 $oltDailySyncEnabled = filter_var((string) env('OLT_DAILY_SYNC_SCHEDULE_ENABLED', 'true'), FILTER_VALIDATE_BOOL);
-$oltDailySyncLegacyEnabled = filter_var((string) env('OLT_DAILY_SYNC_ON_ACCESS', 'true'), FILTER_VALIDATE_BOOL);
 $oltDailySyncTime = (string) env('OLT_DAILY_SYNC_TIME', '02:15');
 
-if (($oltDailySyncEnabled || $oltDailySyncLegacyEnabled) && $tenantOltScheduled === 0) {
+if ($oltDailySyncEnabled && $tenantOltScheduled === 0) {
     $oltDailySyncAt = $normalizeClock($oltDailySyncTime, '02:15');
-    Schedule::command('olt:queue-daily-sync', ['--sync' => true])
+    Schedule::command('olt:queue-daily-sync', ['--connection' => $oltDailySyncQueueConnection])
         ->dailyAt($oltDailySyncAt)
         ->timezone($oltScheduleTimezone)
         ->withoutOverlapping()

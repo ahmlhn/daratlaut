@@ -59,6 +59,9 @@ const cronSettings = reactive({
     cron_line_linux: '',
     cron_line_cpanel: '',
     windows_task_command: '',
+    queue_worker_connection: 'database',
+    queue_worker_queue: 'olt-sync',
+    queue_worker_command: '',
 });
 
 const cronLogs = ref([]);
@@ -270,6 +273,9 @@ async function loadAll(opts = {}) {
                 cron_line_linux: data.cron_settings.cron_line_linux || '',
                 cron_line_cpanel: data.cron_settings.cron_line_cpanel || '',
                 windows_task_command: data.cron_settings.windows_task_command || '',
+                queue_worker_connection: data.cron_settings.queue_worker_connection || 'database',
+                queue_worker_queue: data.cron_settings.queue_worker_queue || 'olt-sync',
+                queue_worker_command: data.cron_settings.queue_worker_command || '',
             });
         }
         if (Array.isArray(data.cron_logs)) {
@@ -552,6 +558,9 @@ async function saveCron() {
                 cron_line_linux: res.data.cron_line_linux || cronSettings.cron_line_linux,
                 cron_line_cpanel: res.data.cron_line_cpanel || cronSettings.cron_line_cpanel,
                 windows_task_command: res.data.windows_task_command || cronSettings.windows_task_command,
+                queue_worker_connection: res.data.queue_worker_connection || cronSettings.queue_worker_connection,
+                queue_worker_queue: res.data.queue_worker_queue || cronSettings.queue_worker_queue,
+                queue_worker_command: res.data.queue_worker_command || cronSettings.queue_worker_command,
             });
         }
         alert('Pengaturan cron tersimpan!');
@@ -1390,6 +1399,7 @@ onMounted(() => {
                             <div class="px-6 py-6 sm:px-8 space-y-4">
                                 <ol class="list-decimal pl-5 space-y-2 text-sm text-gray-700 dark:text-gray-300">
                                     <li>Pastikan command scheduler dijalankan tiap menit (`schedule:run`).</li>
+                                    <li>Pastikan queue worker OLT aktif terus-menerus agar job sinkron OLT yang dijadwalkan benar-benar diproses.</li>
                                     <li>Pastikan timezone server sesuai target operasional (disarankan Asia/Jakarta).</li>
                                     <li>Setelah cron server aktif, jadwal per tenant akan mengikuti pengaturan di panel ini.</li>
                                 </ol>
@@ -1411,6 +1421,16 @@ onMounted(() => {
                                         <p class="text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Windows Task Scheduler</p>
                                         <code class="block text-xs sm:text-sm break-all text-gray-800 dark:text-gray-200">{{ cronSettings.windows_task_command || 'php artisan schedule:run' }}</code>
                                         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Buat task yang jalan tiap 1 menit di folder project Laravel.</p>
+                                    </div>
+
+                                    <div class="border-t border-gray-200/70 dark:border-white/10 pt-3">
+                                        <p class="text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Queue Worker OLT</p>
+                                        <code class="block text-xs sm:text-sm break-all text-gray-800 dark:text-gray-200">{{ cronSettings.queue_worker_command || 'php artisan queue:work database --queue=olt-sync --tries=2 --timeout=7200' }}</code>
+                                        <button @click="copyText(cronSettings.queue_worker_command || 'php artisan queue:work database --queue=olt-sync --tries=2 --timeout=7200', 'Command queue worker OLT disalin!')" class="btn btn-secondary mt-2">Copy</button>
+                                        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                                            Jalankan worker ini terus-menerus pada connection <strong>{{ cronSettings.queue_worker_connection || 'database' }}</strong>
+                                            untuk queue <strong>{{ cronSettings.queue_worker_queue || 'olt-sync' }}</strong>.
+                                        </p>
                                     </div>
                                 </div>
                             </div>

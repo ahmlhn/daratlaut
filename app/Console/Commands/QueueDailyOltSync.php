@@ -6,6 +6,7 @@ use App\Jobs\SyncOltRegisteredDailyJob;
 use App\Models\Olt;
 use App\Support\CronExecutionLogger;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 class QueueDailyOltSync extends Command
@@ -14,6 +15,7 @@ class QueueDailyOltSync extends Command
                             {--tenant= : Tenant ID tertentu}
                             {--olt= : OLT ID tertentu}
                             {--sync : Jalankan sinkronisasi langsung (tanpa queue worker)}
+                            {--connection= : Nama queue connection tujuan}
                             {--queue=olt-sync : Nama queue tujuan}';
 
     protected $description = 'Sinkronisasi ONU OLT harian (langsung atau via queue)';
@@ -25,11 +27,41 @@ class QueueDailyOltSync extends Command
         $oltOpt = $this->option('olt');
         $runSync = (bool) $this->option('sync');
         $queue = (string) ($this->option('queue') ?: 'olt-sync');
+        $queueConnection = null;
         $startedAt = now();
 
-        if (!$runSync && (string) config('queue.default') === 'sync') {
-            $this->warn('QUEUE_CONNECTION=sync. Job tidak benar-benar diantrikan (jalan langsung).');
-            $this->warn('Set QUEUE_CONNECTION=database dan jalankan queue worker untuk mode antrian.');
+        if (!$runSync) {
+            $queueConnection = trim((string) ($this->option('connection') ?: env('OLT_DAILY_SYNC_QUEUE_CONNECTION', 'database')));
+            if ($queueConnection === '') {
+                $queueConnection = 'database';
+            }
+
+            $connections = (array) config('queue.connections', []);
+            if (!isset($connections[$queueConnection])) {
+                $this->error("Queue connection '{$queueConnection}' tidak ditemukan di config/queue.php.");
+                return self::FAILURE;
+            }
+
+            $driver = (string) ($connections[$queueConnection]['driver'] ?? '');
+            if ($driver === 'sync') {
+                $this->error("Queue connection '{$queueConnection}' memakai driver sync, sehingga job tetap berjalan inline.");
+                $this->error('Gunakan queue connection async seperti database/redis dan jalankan queue worker.');
+                return self::FAILURE;
+            }
+
+            if ($driver === 'database') {
+                $jobsTable = (string) ($connections[$queueConnection]['table'] ?? 'jobs');
+                $dbConnection = $connections[$queueConnection]['connection'] ?? null;
+                $hasJobsTable = $dbConnection
+                    ? Schema::connection((string) $dbConnection)->hasTable($jobsTable)
+                    : Schema::hasTable($jobsTable);
+
+                if (!$hasJobsTable) {
+                    $this->error("Queue table '{$jobsTable}' untuk connection '{$queueConnection}' tidak ditemukan.");
+                    $this->error('Jalankan migration queue jobs sebelum menjadwalkan sinkron OLT via worker.');
+                    return self::FAILURE;
+                }
+            }
         }
 
         $query = Olt::query()->active()->orderBy('id');
@@ -63,6 +95,7 @@ class QueueDailyOltSync extends Command
                     'skipped',
                     'Tidak ada OLT aktif untuk diproses.',
                     [
+                        'connection' => $queueConnection,
                         'queue' => $queue,
                         'olt_filter' => $oltOpt !== null && $oltOpt !== '' ? (int) $oltOpt : null,
                         'job_count' => 0,
@@ -77,7 +110,7 @@ class QueueDailyOltSync extends Command
         if ($runSync) {
             $this->info('Mode: sync langsung (tanpa queue worker).');
         } else {
-            $this->info("Mode: dispatch queue ({$queue})");
+            $this->info("Mode: dispatch queue worker ({$queueConnection}:{$queue})");
         }
         $this->info('Proses sinkronisasi OLT harian...');
 
@@ -96,7 +129,9 @@ class QueueDailyOltSync extends Command
                 if ($runSync) {
                     SyncOltRegisteredDailyJob::dispatchSync($tenantId, $oltId);
                 } else {
-                    SyncOltRegisteredDailyJob::dispatch($tenantId, $oltId)->onQueue($queue);
+                    SyncOltRegisteredDailyJob::dispatch($tenantId, $oltId)
+                        ->onConnection($queueConnection)
+                        ->onQueue($queue);
                 }
                 $successCount++;
                 $tenantSuccessCounts[$tenantId] = (int) ($tenantSuccessCounts[$tenantId] ?? 0) + 1;
@@ -116,7 +151,7 @@ class QueueDailyOltSync extends Command
         } else {
             $this->info("Total job didispatch: {$count}");
             if ($count > 0) {
-                $this->warn('Pastikan queue worker aktif agar job benar-benar dieksekusi.');
+                $this->warn("Pastikan queue worker aktif pada connection '{$queueConnection}' queue '{$queue}'.");
             }
         }
 
@@ -141,6 +176,7 @@ class QueueDailyOltSync extends Command
                 $message,
                 [
                     'mode' => $runSync ? 'sync' : 'queued',
+                    'connection' => $queueConnection,
                     'queue' => $queue,
                     'olt_filter' => $oltOpt !== null && $oltOpt !== '' ? (int) $oltOpt : null,
                     'job_count' => (int) $jobCount,
