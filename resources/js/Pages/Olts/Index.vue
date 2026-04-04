@@ -1818,8 +1818,8 @@ async function toggleRegDetail(onu) {
     regDetailModalOpen.value = true;
     regRxHistoryRange.value = '24h';
     regRxHistoryPage.value = 1;
-    await loadOnuDetail(onu, { force: false, silent: true });
-    await loadOnuRxHistory(onu, { range: regRxHistoryRange.value, force: false, silent: true });
+    await loadOnuDetail(onu, { force: true, silent: true });
+    await loadOnuRxHistory(onu, { range: regRxHistoryRange.value, force: true, silent: true });
 }
 
 async function loadOnuDetail(onu, { force = false, silent = false, throwOnError = false } = {}) {

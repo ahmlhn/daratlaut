@@ -424,6 +424,9 @@ class OltService
         if ($sn !== '') {
             $this->saveOnuDetailToDb($sn, $fsp, $onuId, $detail);
         }
+        if ($rx !== null) {
+            $this->storeSingleRxHistorySample($fsp, $onuId, $sn, $rx);
+        }
 
         return $detail;
     }
@@ -962,6 +965,32 @@ class OltService
         } catch (Throwable $e) {
             // ignore
         }
+    }
+
+    private function storeSingleRxHistorySample(string $fsp, int $onuId, ?string $sn, mixed $rxPower, $sampledAt = null): int
+    {
+        $safeFsp = trim($fsp);
+        if ($safeFsp === '' || $onuId <= 0 || ($this->olt?->id ?? 0) <= 0) {
+            return 0;
+        }
+
+        $rx = $this->normalizeRxValue($rxPower);
+        if ($rx === null) {
+            return 0;
+        }
+
+        $safeSn = trim((string) ($sn ?? ''));
+
+        return $this->storeRxHistoryBatch([[
+            'tenant_id' => $this->tenantId,
+            'olt_id' => (int) $this->olt->id,
+            'fsp' => $safeFsp,
+            'onu_id' => $onuId,
+            'sn' => $safeSn !== '' ? $safeSn : null,
+            'rx_power' => round($rx, 2),
+            'sampled_at' => $sampledAt ?: now(),
+            'created_at' => now(),
+        ]]);
     }
 
     private function normalizeRxValue(mixed $raw): ?float
