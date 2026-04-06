@@ -158,7 +158,7 @@ class QueueDailyOltSync extends Command
         foreach ($tenantCounts as $tenantId => $jobCount) {
             $tenantSuccess = (int) ($tenantSuccessCounts[$tenantId] ?? 0);
             $tenantFailed = (int) ($tenantFailedCounts[$tenantId] ?? 0);
-            $status = 'success';
+            $status = $runSync ? 'success' : 'queued';
             if ($tenantFailed > 0 && $tenantSuccess > 0) {
                 $status = 'partial';
             } elseif ($tenantFailed > 0 && $tenantSuccess === 0) {

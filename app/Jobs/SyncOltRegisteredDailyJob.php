@@ -9,6 +9,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -30,6 +31,18 @@ class SyncOltRegisteredDailyJob implements ShouldQueue
         public int $tenantId,
         public int $oltId
     ) {
+    }
+
+    public function middleware(): array
+    {
+        return [
+            // Force scheduled OLT sync jobs to run one-at-a-time even if multiple
+            // queue workers are listening on the same queue.
+            (new WithoutOverlapping('olt:daily-sync:serial'))
+                ->shared()
+                ->releaseAfter(30)
+                ->expireAfter($this->timeout + 300),
+        ];
     }
 
     public function handle(): void

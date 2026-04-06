@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-04-04
-Last verified: 2026-04-04
+Last updated: 2026-04-06
+Last verified: 2026-04-06
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -53,6 +53,11 @@ Last verified: 2026-04-04
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-06: Log cron mode queue untuk sinkron OLT kini memakai status `queued` saat dispatch berhasil penuh, bukan `success`: `app/Console/Commands/QueueDailyOltSync.php` mengubah status log tenant queued, `app/Http/Controllers/Api/V1/SettingsController.php` menambah dukungan status/statistik `queued` pada data Cron Scheduler, dan `resources/js/Pages/Settings/Index.vue` menampilkan filter, badge, dan kartu statistik `queued` di panel log cron. Docs: N/A.
+- 2026-04-06: Panel Cron Scheduler di Settings kini juga menampilkan snapshot queue worker OLT saat ini: `app/Http/Controllers/Api/V1/SettingsController.php` menambah `olt_sync_queue_items` dan `olt_sync_queue_stats` dari tabel `jobs` (status `queued/processing` berdasarkan `reserved_at`), dan `resources/js/Pages/Settings/Index.vue` menampilkan ringkasan serta tabel antrian worker OLT di panel yang sama dengan hasil final `sync_daily`. Docs: N/A.
+- 2026-04-06: Cron Scheduler di halaman Settings kini menampilkan hasil job sinkron OLT per OLT: `app/Http/Controllers/Api/V1/SettingsController.php` menambah data/endpoint `cron_olt_options` dan `olt_sync_logs` dari `noci_olt_logs` (`action=sync_daily`) beserta stats `done/error`, `routes/api.php` menambah route `GET /api/v1/settings/cron/olt-sync-logs`, dan `resources/js/Pages/Settings/Index.vue` menambah tabel/filter khusus hasil `sync_daily` per OLT di panel Cron Scheduler. Docs: N/A.
+- 2026-04-06: Job sinkron OLT terjadwal kini dipaksa bergantian di level queue worker: `app/Jobs/SyncOltRegisteredDailyJob.php` menambah middleware `WithoutOverlapping` dengan lock global bersama agar hanya satu job sync OLT aktif pada satu waktu walau ada lebih dari satu worker pada queue `olt-sync`. Docs: N/A.
+- 2026-04-04: Tambah command repair `olt:rebind-history` untuk audit dan memindahkan histori/log OLT dari `olt_id` lama ke `olt_id` baru setelah OLT dihapus lalu dibuat ulang; command menampilkan hitungan histori, overlap SN, dan job queue stale dalam mode dry-run sebelum eksekusi. Docs: N/A.
 - 2026-04-04: Sinkron OLT terjadwal direfaktor agar benar-benar lewat queue worker: `routes/console.php` tidak lagi menjadwalkan `--sync` dan kini meneruskan `--connection` (default env `OLT_DAILY_SYNC_QUEUE_CONNECTION`, fallback `database`); `app/Console/Commands/QueueDailyOltSync.php` menambah opsi `--connection`, memaksa dispatch ke connection async non-`sync`, dan memvalidasi koneksi/queue table sebelum enqueue; `app/Http/Controllers/Api/V1/SettingsController.php` + `resources/js/Pages/Settings/Index.vue` menampilkan instruksi command queue worker OLT; `.env.example` menambah `OLT_DAILY_SYNC_QUEUE_CONNECTION=database`. Docs: N/A.
 - 2026-04-04: Fitur sinkron OLT saat akses halaman dihapus dari codebase: alias middleware `olt.daily.sync`, `app/Http/Middleware/TriggerOltDailySyncOnAccess.php`, dan `app/Services/OltDailySyncDispatcher.php` dihapus; `routes/console.php` kini hanya memakai `OLT_DAILY_SYNC_SCHEDULE_ENABLED` untuk fallback global scheduler; `.env.example` menghapus env `OLT_DAILY_SYNC_ON_ACCESS`. Docs: N/A.
 - 2026-04-04: Modal detail ONU OLT tidak lagi langsung menampilkan histori Rx saat dibuka; `resources/js/Pages/Olts/Index.vue` kini default menutup panel histori dan hanya memuat/menampilkan data saat tombol `Riwayat Rx` diklik, serta refresh detail hanya me-refresh histori bila panel tersebut sedang terbuka. Docs: N/A.

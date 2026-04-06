@@ -61,6 +61,11 @@ class SettingsController extends Controller
             'cron_settings' => $cronSettings,
             'cron_logs' => $this->getCronLogsData($tid),
             'cron_log_stats' => $this->getCronLogStatsData($tid, '7d'),
+            'cron_olt_options' => $this->getCronOltOptionsData($tid),
+            'olt_sync_logs' => $this->getOltSyncLogsData($tid),
+            'olt_sync_log_stats' => $this->getOltSyncLogStatsData($tid, '7d'),
+            'olt_sync_queue_items' => $this->getOltSyncQueueItemsData($tid),
+            'olt_sync_queue_stats' => $this->getOltSyncQueueStatsData($tid),
             'public_url' => $publicUrl,
             'gateway_status' => $gatewayStatus,
             'redirect_links' => $redirectLinks,
@@ -821,7 +826,7 @@ class SettingsController extends Controller
         if ($limit > 200) $limit = 200;
 
         $validJobs = ['nightly_closing', 'ops_reminders', 'olt_daily_sync'];
-        $validStatuses = ['success', 'partial', 'failed', 'skipped', 'dry_run'];
+        $validStatuses = ['queued', 'success', 'partial', 'failed', 'skipped', 'dry_run'];
 
         $query = DB::table('noci_cron_logs')->where('tenant_id', $tid);
         if (in_array($job, $validJobs, true)) {
@@ -869,6 +874,7 @@ class SettingsController extends Controller
     {
         $stats = [
             'total' => 0,
+            'queued' => 0,
             'success' => 0,
             'partial' => 0,
             'failed' => 0,
@@ -902,7 +908,260 @@ class SettingsController extends Controller
             }
         }
 
-        $stats['total'] = $stats['success'] + $stats['partial'] + $stats['failed'] + $stats['skipped'] + $stats['dry_run'];
+        $stats['total'] = $stats['queued'] + $stats['success'] + $stats['partial'] + $stats['failed'] + $stats['skipped'] + $stats['dry_run'];
+        return $stats;
+    }
+
+    private function getCronOltOptionsData(int $tid): array
+    {
+        if (!Schema::hasTable('noci_olts')) {
+            return [];
+        }
+
+        $query = DB::table('noci_olts')
+            ->where('tenant_id', $tid)
+            ->orderBy('nama_olt');
+
+        if (Schema::hasColumn('noci_olts', 'is_active')) {
+            $query->where('is_active', true);
+        }
+
+        return $query
+            ->get(['id', 'nama_olt'])
+            ->map(fn ($row) => [
+                'id' => (int) ($row->id ?? 0),
+                'nama_olt' => (string) ($row->nama_olt ?? ''),
+            ])
+            ->values()
+            ->all();
+    }
+
+    private function applyOltSyncLogRangeFilter($query, string $range): void
+    {
+        $range = strtolower(trim($range));
+        if ($range === '') {
+            return;
+        }
+
+        if ($range === '24h') {
+            $query->where('created_at', '>=', now()->subDay());
+        } elseif ($range === '7d') {
+            $query->where('created_at', '>=', now()->subDays(7));
+        } elseif ($range === '30d') {
+            $query->where('created_at', '>=', now()->subDays(30));
+        }
+    }
+
+    private function getOltSyncLogsData(int $tid, array $filters = []): array
+    {
+        if (!Schema::hasTable('noci_olt_logs')) {
+            return [];
+        }
+
+        $status = strtolower(trim((string) ($filters['status'] ?? '')));
+        $range = strtolower(trim((string) ($filters['range'] ?? '7d')));
+        $limit = (int) ($filters['limit'] ?? 25);
+        $oltId = (int) ($filters['olt_id'] ?? 0);
+        if ($limit < 1) $limit = 1;
+        if ($limit > 200) $limit = 200;
+
+        $validStatuses = ['done', 'error'];
+
+        $query = DB::table('noci_olt_logs')
+            ->where('tenant_id', $tid)
+            ->where('action', 'sync_daily');
+
+        if ($oltId > 0) {
+            $query->where('olt_id', $oltId);
+        }
+        if (in_array($status, $validStatuses, true)) {
+            $query->where('status', $status);
+        }
+
+        $this->applyOltSyncLogRangeFilter($query, $range);
+
+        return $query
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get()
+            ->map(function ($row) {
+                $summary = [];
+                if (!empty($row->summary_json)) {
+                    $decoded = json_decode((string) $row->summary_json, true);
+                    if (is_array($decoded)) {
+                        $summary = $decoded;
+                    }
+                }
+
+                return [
+                    'id' => (int) ($row->id ?? 0),
+                    'tenant_id' => (int) ($row->tenant_id ?? 0),
+                    'created_at' => $row->created_at ?? null,
+                    'olt_id' => (int) ($row->olt_id ?? 0),
+                    'olt_name' => (string) ($row->olt_name ?? ''),
+                    'status' => strtolower(trim((string) ($row->status ?? ''))),
+                    'actor' => (string) ($row->actor ?? ''),
+                    'summary' => $summary,
+                    'synced_count' => (int) ($summary['count'] ?? 0),
+                    'fsp_count' => (int) ($summary['fsp_count'] ?? 0),
+                    'rx_cache_updated' => (int) ($summary['rx_cache_updated'] ?? 0),
+                    'rx_samples_saved' => (int) ($summary['rx_samples_saved'] ?? 0),
+                    'name_sync_updated' => (int) ($summary['name_sync_updated'] ?? 0),
+                    'error_message' => (string) ($summary['message'] ?? ''),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function getOltSyncLogStatsData(int $tid, string $range = '7d', int $oltId = 0): array
+    {
+        $stats = [
+            'total' => 0,
+            'done' => 0,
+            'error' => 0,
+        ];
+
+        if (!Schema::hasTable('noci_olt_logs')) {
+            return $stats;
+        }
+
+        $query = DB::table('noci_olt_logs')
+            ->where('tenant_id', $tid)
+            ->where('action', 'sync_daily');
+
+        if ($oltId > 0) {
+            $query->where('olt_id', $oltId);
+        }
+
+        $this->applyOltSyncLogRangeFilter($query, $range);
+
+        $rows = $query
+            ->selectRaw('status, COUNT(*) as total')
+            ->groupBy('status')
+            ->get();
+
+        foreach ($rows as $row) {
+            $key = strtolower(trim((string) ($row->status ?? '')));
+            if (array_key_exists($key, $stats)) {
+                $stats[$key] = (int) ($row->total ?? 0);
+            }
+        }
+
+        $stats['total'] = $stats['done'] + $stats['error'];
+
+        return $stats;
+    }
+
+    private function getOltSyncQueueName(): string
+    {
+        $queueName = trim((string) env('OLT_DAILY_SYNC_QUEUE', 'olt-sync'));
+        return $queueName !== '' ? $queueName : 'olt-sync';
+    }
+
+    private function getOltSyncQueueItemsData(int $tid, array $filters = []): array
+    {
+        if (!Schema::hasTable('jobs')) {
+            return [];
+        }
+
+        $queueName = $this->getOltSyncQueueName();
+        $oltId = (int) ($filters['olt_id'] ?? 0);
+        $status = strtolower(trim((string) ($filters['queue_status'] ?? '')));
+        $limit = (int) ($filters['queue_limit'] ?? 25);
+        if ($limit < 1) $limit = 1;
+        if ($limit > 200) $limit = 200;
+
+        $oltNames = collect($this->getCronOltOptionsData($tid))
+            ->mapWithKeys(fn ($row) => [(int) ($row['id'] ?? 0) => (string) ($row['nama_olt'] ?? '')])
+            ->all();
+
+        $items = [];
+        foreach (DB::table('jobs')->where('queue', $queueName)->orderByDesc('id')->cursor() as $row) {
+            $payload = json_decode((string) ($row->payload ?? ''), true);
+            $command = (string) ($payload['data']['command'] ?? '');
+            if ($command === '') {
+                continue;
+            }
+
+            preg_match('/tenantId\";i:(\d+)/', $command, $tenantMatch);
+            preg_match('/oltId\";i:(\d+)/', $command, $oltMatch);
+            $jobTenantId = isset($tenantMatch[1]) ? (int) $tenantMatch[1] : 0;
+            $jobOltId = isset($oltMatch[1]) ? (int) $oltMatch[1] : 0;
+            if ($jobTenantId !== $tid || $jobOltId <= 0) {
+                continue;
+            }
+            if ($oltId > 0 && $jobOltId !== $oltId) {
+                continue;
+            }
+
+            $queueStatus = !empty($row->reserved_at) ? 'processing' : 'queued';
+            if ($status !== '' && !in_array($status, ['queued', 'processing'], true)) {
+                $status = '';
+            }
+            if ($status !== '' && $queueStatus !== $status) {
+                continue;
+            }
+
+            $items[] = [
+                'id' => (int) ($row->id ?? 0),
+                'queue' => (string) ($row->queue ?? ''),
+                'olt_id' => $jobOltId,
+                'olt_name' => $oltNames[$jobOltId] ?? ('OLT #' . $jobOltId),
+                'status' => $queueStatus,
+                'attempts' => (int) ($row->attempts ?? 0),
+                'created_at' => !empty($row->created_at) ? date('Y-m-d H:i:s', (int) $row->created_at) : null,
+                'available_at' => !empty($row->available_at) ? date('Y-m-d H:i:s', (int) $row->available_at) : null,
+                'reserved_at' => !empty($row->reserved_at) ? date('Y-m-d H:i:s', (int) $row->reserved_at) : null,
+            ];
+
+            if (count($items) >= $limit) {
+                break;
+            }
+        }
+
+        return $items;
+    }
+
+    private function getOltSyncQueueStatsData(int $tid, int $oltId = 0): array
+    {
+        $stats = [
+            'total' => 0,
+            'queued' => 0,
+            'processing' => 0,
+        ];
+
+        if (!Schema::hasTable('jobs')) {
+            return $stats;
+        }
+
+        $queueName = $this->getOltSyncQueueName();
+
+        foreach (DB::table('jobs')->where('queue', $queueName)->select('payload', 'reserved_at')->cursor() as $row) {
+            $payload = json_decode((string) ($row->payload ?? ''), true);
+            $command = (string) ($payload['data']['command'] ?? '');
+            if ($command === '') {
+                continue;
+            }
+
+            preg_match('/tenantId\";i:(\d+)/', $command, $tenantMatch);
+            preg_match('/oltId\";i:(\d+)/', $command, $oltMatch);
+            $jobTenantId = isset($tenantMatch[1]) ? (int) $tenantMatch[1] : 0;
+            $jobOltId = isset($oltMatch[1]) ? (int) $oltMatch[1] : 0;
+            if ($jobTenantId !== $tid || $jobOltId <= 0) {
+                continue;
+            }
+            if ($oltId > 0 && $jobOltId !== $oltId) {
+                continue;
+            }
+
+            $status = !empty($row->reserved_at) ? 'processing' : 'queued';
+            $stats[$status]++;
+        }
+
+        $stats['total'] = $stats['queued'] + $stats['processing'];
+
         return $stats;
     }
 
@@ -922,6 +1181,34 @@ class SettingsController extends Controller
                 'limit' => $limit,
             ]),
             'stats' => $this->getCronLogStatsData($tid, $range, $job),
+        ]);
+    }
+
+    public function getOltSyncLogs(Request $request): JsonResponse
+    {
+        $tid = $this->tenantId($request);
+        $status = strtolower(trim((string) $request->query('status', '')));
+        $range = strtolower(trim((string) $request->query('range', '7d')));
+        $limit = (int) $request->query('limit', 25);
+        $oltId = (int) $request->query('olt_id', 0);
+        $queueStatus = strtolower(trim((string) $request->query('queue_status', '')));
+        $queueLimit = (int) $request->query('queue_limit', 25);
+
+        return response()->json([
+            'options' => $this->getCronOltOptionsData($tid),
+            'data' => $this->getOltSyncLogsData($tid, [
+                'status' => $status,
+                'range' => $range,
+                'limit' => $limit,
+                'olt_id' => $oltId,
+            ]),
+            'stats' => $this->getOltSyncLogStatsData($tid, $range, $oltId),
+            'queue_items' => $this->getOltSyncQueueItemsData($tid, [
+                'olt_id' => $oltId,
+                'queue_status' => $queueStatus,
+                'queue_limit' => $queueLimit,
+            ]),
+            'queue_stats' => $this->getOltSyncQueueStatsData($tid, $oltId),
         ]);
     }
 

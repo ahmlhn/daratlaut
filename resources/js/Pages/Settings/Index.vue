@@ -68,6 +68,7 @@ const cronLogs = ref([]);
 const cronLogsLoading = ref(false);
 const cronLogStats = reactive({
     total: 0,
+    queued: 0,
     success: 0,
     partial: 0,
     failed: 0,
@@ -79,6 +80,28 @@ const cronLogFilter = reactive({
     status: '',
     range: '7d',
     limit: 50,
+});
+const cronOltOptions = ref([]);
+const oltSyncLogs = ref([]);
+const oltSyncLogsLoading = ref(false);
+const oltSyncLogStats = reactive({
+    total: 0,
+    done: 0,
+    error: 0,
+});
+const oltSyncQueueItems = ref([]);
+const oltSyncQueueStats = reactive({
+    total: 0,
+    queued: 0,
+    processing: 0,
+});
+const oltSyncLogFilter = reactive({
+    olt_id: '',
+    status: '',
+    range: '7d',
+    limit: 25,
+    queue_status: '',
+    queue_limit: 25,
 });
 
 const publicUrl = ref('');
@@ -284,11 +307,35 @@ async function loadAll(opts = {}) {
         if (data.cron_log_stats && typeof data.cron_log_stats === 'object') {
             Object.assign(cronLogStats, {
                 total: Number(data.cron_log_stats.total || 0),
+                queued: Number(data.cron_log_stats.queued || 0),
                 success: Number(data.cron_log_stats.success || 0),
                 partial: Number(data.cron_log_stats.partial || 0),
                 failed: Number(data.cron_log_stats.failed || 0),
                 skipped: Number(data.cron_log_stats.skipped || 0),
                 dry_run: Number(data.cron_log_stats.dry_run || 0),
+            });
+        }
+        if (Array.isArray(data.cron_olt_options)) {
+            cronOltOptions.value = data.cron_olt_options;
+        }
+        if (Array.isArray(data.olt_sync_logs)) {
+            oltSyncLogs.value = data.olt_sync_logs;
+        }
+        if (data.olt_sync_log_stats && typeof data.olt_sync_log_stats === 'object') {
+            Object.assign(oltSyncLogStats, {
+                total: Number(data.olt_sync_log_stats.total || 0),
+                done: Number(data.olt_sync_log_stats.done || 0),
+                error: Number(data.olt_sync_log_stats.error || 0),
+            });
+        }
+        if (Array.isArray(data.olt_sync_queue_items)) {
+            oltSyncQueueItems.value = data.olt_sync_queue_items;
+        }
+        if (data.olt_sync_queue_stats && typeof data.olt_sync_queue_stats === 'object') {
+            Object.assign(oltSyncQueueStats, {
+                total: Number(data.olt_sync_queue_stats.total || 0),
+                queued: Number(data.olt_sync_queue_stats.queued || 0),
+                processing: Number(data.olt_sync_queue_stats.processing || 0),
             });
         }
         // Public URL
@@ -306,6 +353,7 @@ async function loadAll(opts = {}) {
     // Load logs separately
     loadLogs();
     loadCronLogs();
+    loadOltSyncLogs();
     loadInstallVars();
     loadRedirectLinks();
     loadRedirectEvents();
@@ -335,6 +383,7 @@ async function loadCronLogs() {
 
         Object.assign(cronLogStats, {
             total: Number(data.stats?.total || 0),
+            queued: Number(data.stats?.queued || 0),
             success: Number(data.stats?.success || 0),
             partial: Number(data.stats?.partial || 0),
             failed: Number(data.stats?.failed || 0),
@@ -344,9 +393,45 @@ async function loadCronLogs() {
     } catch (e) {
         console.error('Load cron logs error:', e);
         cronLogs.value = [];
-        Object.assign(cronLogStats, { total: 0, success: 0, partial: 0, failed: 0, skipped: 0, dry_run: 0 });
+        Object.assign(cronLogStats, { total: 0, queued: 0, success: 0, partial: 0, failed: 0, skipped: 0, dry_run: 0 });
     } finally {
         cronLogsLoading.value = false;
+    }
+}
+
+async function loadOltSyncLogs() {
+    oltSyncLogsLoading.value = true;
+    try {
+        const params = new URLSearchParams();
+        if (oltSyncLogFilter.olt_id) params.set('olt_id', String(oltSyncLogFilter.olt_id));
+        if (oltSyncLogFilter.status) params.set('status', oltSyncLogFilter.status);
+        if (oltSyncLogFilter.range) params.set('range', oltSyncLogFilter.range);
+        if (oltSyncLogFilter.limit) params.set('limit', String(oltSyncLogFilter.limit));
+        if (oltSyncLogFilter.queue_status) params.set('queue_status', oltSyncLogFilter.queue_status);
+        if (oltSyncLogFilter.queue_limit) params.set('queue_limit', String(oltSyncLogFilter.queue_limit));
+
+        const data = await api(`/cron/olt-sync-logs?${params.toString()}`);
+        cronOltOptions.value = Array.isArray(data.options) ? data.options : [];
+        oltSyncLogs.value = Array.isArray(data.data) ? data.data : [];
+        oltSyncQueueItems.value = Array.isArray(data.queue_items) ? data.queue_items : [];
+        Object.assign(oltSyncLogStats, {
+            total: Number(data.stats?.total || 0),
+            done: Number(data.stats?.done || 0),
+            error: Number(data.stats?.error || 0),
+        });
+        Object.assign(oltSyncQueueStats, {
+            total: Number(data.queue_stats?.total || 0),
+            queued: Number(data.queue_stats?.queued || 0),
+            processing: Number(data.queue_stats?.processing || 0),
+        });
+    } catch (e) {
+        console.error('Load OLT sync logs error:', e);
+        oltSyncLogs.value = [];
+        oltSyncQueueItems.value = [];
+        Object.assign(oltSyncLogStats, { total: 0, done: 0, error: 0 });
+        Object.assign(oltSyncQueueStats, { total: 0, queued: 0, processing: 0 });
+    } finally {
+        oltSyncLogsLoading.value = false;
     }
 }
 
@@ -748,12 +833,52 @@ function cronJobLabel(jobKey) {
 }
 function cronStatusClass(status) {
     const s = String(status || '').toLowerCase();
+    if (s === 'queued') return 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300';
     if (s === 'success') return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300';
     if (s === 'partial') return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300';
     if (s === 'failed') return 'bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300';
     if (s === 'dry_run') return 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300';
     if (s === 'skipped') return 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300';
     return 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300';
+}
+function oltSyncStatusClass(status) {
+    const s = String(status || '').toLowerCase();
+    if (s === 'done') return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300';
+    if (s === 'error') return 'bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300';
+    return 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300';
+}
+function oltSyncStatusLabel(status) {
+    const s = String(status || '').toLowerCase();
+    if (s === 'done') return 'Berhasil';
+    if (s === 'error') return 'Gagal';
+    return s || '-';
+}
+function oltSyncQueueStatusClass(status) {
+    const s = String(status || '').toLowerCase();
+    if (s === 'queued') return 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300';
+    if (s === 'processing') return 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300';
+    return 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-300';
+}
+function oltSyncQueueStatusLabel(status) {
+    const s = String(status || '').toLowerCase();
+    if (s === 'queued') return 'Queued';
+    if (s === 'processing') return 'Processing';
+    return s || '-';
+}
+function fmtOltSyncSummary(log) {
+    if (!log || typeof log !== 'object') return '-';
+    const status = String(log.status || '').toLowerCase();
+    if (status === 'error') {
+        return log.error_message || 'Sinkron gagal tanpa detail error.';
+    }
+    const parts = [
+        `ONU=${fmtNum(log.synced_count || 0)}`,
+        `FSP=${fmtNum(log.fsp_count || 0)}`,
+        `Rx tersimpan=${fmtNum(log.rx_samples_saved || 0)}`,
+        `Cache Rx=${fmtNum(log.rx_cache_updated || 0)}`,
+        `Nama update=${fmtNum(log.name_sync_updated || 0)}`,
+    ];
+    return parts.join(' | ');
 }
 function statusColor(s) {
     s = (s || '').toLowerCase();
@@ -1277,10 +1402,14 @@ onMounted(() => {
                             </div>
 
                             <div class="px-6 py-6 sm:px-8 space-y-6">
-                                <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+                                <div class="grid grid-cols-2 md:grid-cols-7 gap-3">
                                     <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-3 text-center">
                                         <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Total</p>
                                         <p class="text-lg font-black text-gray-900 dark:text-white">{{ fmtNum(cronLogStats.total) }}</p>
+                                    </div>
+                                    <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-3 text-center">
+                                        <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Queued</p>
+                                        <p class="text-lg font-black text-sky-600 dark:text-sky-300">{{ fmtNum(cronLogStats.queued) }}</p>
                                     </div>
                                     <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-3 text-center">
                                         <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Success</p>
@@ -1314,6 +1443,7 @@ onMounted(() => {
                                         </select>
                                         <select v-model="cronLogFilter.status" @change="loadCronLogs" class="input text-sm !rounded-xl">
                                             <option value="">Semua Status</option>
+                                            <option value="queued">queued</option>
                                             <option value="success">success</option>
                                             <option value="partial">partial</option>
                                             <option value="failed">failed</option>
@@ -1383,6 +1513,168 @@ onMounted(() => {
                                             </tr>
                                             <tr v-if="cronLogs.length === 0">
                                                 <td colspan="5" class="px-4 py-12 text-center text-gray-500 dark:text-gray-400">Belum ada log cron untuk tenant ini.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card p-0 overflow-hidden rounded-2xl">
+                            <div class="px-6 py-5 sm:px-8 border-b border-gray-200/70 dark:border-white/10 bg-white/60 dark:bg-dark-900/40 backdrop-blur">
+                                <h3 class="text-base sm:text-lg font-bold tracking-tight text-gray-900 dark:text-white">Hasil Job Sinkron OLT per OLT</h3>
+                                <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Menampilkan hasil akhir job `sync_daily` per OLT: berhasil atau gagal, beserta ringkasan Rx yang tersimpan.</p>
+                            </div>
+
+                            <div class="px-6 py-6 sm:px-8 space-y-4">
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950 p-4">
+                                        <p class="text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Job</p>
+                                        <p class="text-lg font-black text-gray-900 dark:text-white">{{ fmtNum(oltSyncLogStats.total) }}</p>
+                                    </div>
+                                    <div class="rounded-2xl border border-emerald-200/70 dark:border-emerald-500/20 bg-emerald-50/70 dark:bg-emerald-500/10 p-4">
+                                        <p class="text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Berhasil</p>
+                                        <p class="text-lg font-black text-emerald-700 dark:text-emerald-300">{{ fmtNum(oltSyncLogStats.done) }}</p>
+                                    </div>
+                                    <div class="rounded-2xl border border-red-200/70 dark:border-red-500/20 bg-red-50/70 dark:bg-red-500/10 p-4">
+                                        <p class="text-xs font-bold uppercase tracking-wide text-red-700 dark:text-red-300">Gagal</p>
+                                        <p class="text-lg font-black text-red-700 dark:text-red-300">{{ fmtNum(oltSyncLogStats.error) }}</p>
+                                    </div>
+                                </div>
+
+                                <div class="rounded-2xl border border-gray-200/70 dark:border-white/10 bg-gray-50/70 dark:bg-dark-950 p-4 space-y-4">
+                                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                        <div>
+                                            <p class="text-sm font-bold text-gray-900 dark:text-white">Status Queue Worker Saat Ini</p>
+                                            <p class="text-xs text-gray-500 dark:text-gray-400">Snapshot job OLT yang masih menunggu atau sedang diproses oleh queue worker.</p>
+                                        </div>
+                                        <div class="grid grid-cols-3 gap-2 text-center">
+                                            <div class="rounded-xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-900 px-3 py-2">
+                                                <p class="text-[11px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Total</p>
+                                                <p class="text-base font-black text-gray-900 dark:text-white">{{ fmtNum(oltSyncQueueStats.total) }}</p>
+                                            </div>
+                                            <div class="rounded-xl border border-amber-200/70 dark:border-amber-500/20 bg-amber-50/70 dark:bg-amber-500/10 px-3 py-2">
+                                                <p class="text-[11px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">Queued</p>
+                                                <p class="text-base font-black text-amber-700 dark:text-amber-300">{{ fmtNum(oltSyncQueueStats.queued) }}</p>
+                                            </div>
+                                            <div class="rounded-xl border border-sky-200/70 dark:border-sky-500/20 bg-sky-50/70 dark:bg-sky-500/10 px-3 py-2">
+                                                <p class="text-[11px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-300">Processing</p>
+                                                <p class="text-base font-black text-sky-700 dark:text-sky-300">{{ fmtNum(oltSyncQueueStats.processing) }}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                                        <select v-model="oltSyncLogFilter.queue_status" @change="loadOltSyncLogs" class="input text-sm !rounded-xl">
+                                            <option value="">Semua Queue State</option>
+                                            <option value="queued">Queued</option>
+                                            <option value="processing">Processing</option>
+                                        </select>
+                                        <select v-model.number="oltSyncLogFilter.queue_limit" @change="loadOltSyncLogs" class="input text-sm !rounded-xl">
+                                            <option :value="10">10</option>
+                                            <option :value="25">25</option>
+                                            <option :value="50">50</option>
+                                            <option :value="100">100</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="overflow-x-auto max-h-[18rem] rounded-2xl border border-gray-200/70 dark:border-white/10 bg-white dark:bg-dark-950">
+                                        <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+                                            <thead class="bg-white/70 dark:bg-dark-950/60 sticky top-0">
+                                                <tr class="text-[11px] uppercase font-black tracking-widest text-gray-500 dark:text-gray-400">
+                                                    <th class="px-4 py-3 text-left">Queue Time</th>
+                                                    <th class="px-4 py-3 text-left">OLT</th>
+                                                    <th class="px-4 py-3 text-left">State</th>
+                                                    <th class="px-4 py-3 text-left">Attempts</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y divide-gray-200 dark:divide-white/10">
+                                                <tr v-for="item in oltSyncQueueItems" :key="`olt-sync-queue-${item.id}`" class="hover:bg-gray-50/80 dark:hover:bg-white/5">
+                                                    <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                                                        <div>{{ fmtDate(item.created_at) }}</div>
+                                                        <div v-if="item.reserved_at" class="text-[11px] text-gray-500 dark:text-gray-500">reserved {{ fmtDate(item.reserved_at) }}</div>
+                                                    </td>
+                                                    <td class="px-4 py-3 text-xs text-gray-800 dark:text-gray-200">
+                                                        <div class="font-semibold">{{ item.olt_name || `OLT #${item.olt_id}` }}</div>
+                                                        <div class="text-[11px] text-gray-500 dark:text-gray-500">ID {{ item.olt_id || '-' }}</div>
+                                                    </td>
+                                                    <td class="px-4 py-3 text-xs">
+                                                        <span :class="[oltSyncQueueStatusClass(item.status), 'px-2 py-1 rounded-full font-bold uppercase']">{{ oltSyncQueueStatusLabel(item.status) }}</span>
+                                                    </td>
+                                                    <td class="px-4 py-3 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                                                        {{ fmtNum(item.attempts || 0) }}
+                                                    </td>
+                                                </tr>
+                                                <tr v-if="oltSyncQueueItems.length === 0">
+                                                    <td colspan="4" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">Tidak ada job OLT yang sedang queued atau processing pada filter ini.</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div class="flex flex-col xl:flex-row xl:items-center gap-3">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 flex-1">
+                                        <select v-model="oltSyncLogFilter.olt_id" @change="loadOltSyncLogs" class="input text-sm !rounded-xl">
+                                            <option value="">Semua OLT</option>
+                                            <option v-for="olt in cronOltOptions" :key="`cron-olt-opt-${olt.id}`" :value="String(olt.id)">{{ olt.nama_olt }}</option>
+                                        </select>
+                                        <select v-model="oltSyncLogFilter.status" @change="loadOltSyncLogs" class="input text-sm !rounded-xl">
+                                            <option value="">Semua Status</option>
+                                            <option value="done">Berhasil</option>
+                                            <option value="error">Gagal</option>
+                                        </select>
+                                        <select v-model="oltSyncLogFilter.range" @change="loadOltSyncLogs" class="input text-sm !rounded-xl">
+                                            <option value="">All Time</option>
+                                            <option value="24h">24 Jam</option>
+                                            <option value="7d">7 Hari</option>
+                                            <option value="30d">30 Hari</option>
+                                        </select>
+                                        <select v-model.number="oltSyncLogFilter.limit" @change="loadOltSyncLogs" class="input text-sm !rounded-xl">
+                                            <option :value="10">10</option>
+                                            <option :value="25">25</option>
+                                            <option :value="50">50</option>
+                                            <option :value="100">100</option>
+                                        </select>
+                                    </div>
+                                    <button @click="loadOltSyncLogs" :disabled="oltSyncLogsLoading" class="btn btn-secondary xl:shrink-0">
+                                        {{ oltSyncLogsLoading ? 'Loading...' : 'Refresh Job OLT' }}
+                                    </button>
+                                </div>
+
+                                <div class="overflow-x-auto max-h-[28rem] rounded-2xl border border-gray-200/70 dark:border-white/10">
+                                    <table class="min-w-full divide-y divide-gray-200 dark:divide-white/10">
+                                        <thead class="bg-white/70 dark:bg-dark-950/60 sticky top-0">
+                                            <tr class="text-[11px] uppercase font-black tracking-widest text-gray-500 dark:text-gray-400">
+                                                <th class="px-4 py-3 text-left">Waktu</th>
+                                                <th class="px-4 py-3 text-left">OLT</th>
+                                                <th class="px-4 py-3 text-left">Status</th>
+                                                <th class="px-4 py-3 text-left">Hasil Rx</th>
+                                                <th class="px-4 py-3 text-left">Ringkasan</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="bg-white dark:bg-dark-950 divide-y divide-gray-200 dark:divide-white/10">
+                                            <tr v-for="log in oltSyncLogs" :key="`olt-sync-log-${log.id}`" class="hover:bg-gray-50/80 dark:hover:bg-white/5">
+                                                <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                                                    {{ fmtDate(log.created_at) }}
+                                                </td>
+                                                <td class="px-4 py-3 text-xs text-gray-800 dark:text-gray-200">
+                                                    <div class="font-semibold">{{ log.olt_name || `OLT #${log.olt_id}` }}</div>
+                                                    <div class="text-[11px] text-gray-500 dark:text-gray-500">ID {{ log.olt_id || '-' }}<span v-if="log.actor"> | actor={{ log.actor }}</span></div>
+                                                </td>
+                                                <td class="px-4 py-3 text-xs">
+                                                    <span :class="[oltSyncStatusClass(log.status), 'px-2 py-1 rounded-full font-bold uppercase']">{{ oltSyncStatusLabel(log.status) }}</span>
+                                                </td>
+                                                <td class="px-4 py-3 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                                                    <div>Rx tersimpan: <span class="font-semibold">{{ fmtNum(log.rx_samples_saved || 0) }}</span></div>
+                                                    <div class="text-[11px] text-gray-500 dark:text-gray-400">Cache Rx: {{ fmtNum(log.rx_cache_updated || 0) }}</div>
+                                                </td>
+                                                <td class="px-4 py-3 text-xs text-gray-700 dark:text-gray-300">
+                                                    <div>{{ fmtOltSyncSummary(log) }}</div>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="oltSyncLogs.length === 0">
+                                                <td colspan="5" class="px-4 py-12 text-center text-gray-500 dark:text-gray-400">Belum ada hasil job sinkron OLT per OLT pada filter ini.</td>
                                             </tr>
                                         </tbody>
                                     </table>

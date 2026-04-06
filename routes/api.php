@@ -173,6 +173,7 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->prefix('v1')->n
     Route::get('/settings/cron', [SettingsController::class, 'getCronSettings']);
     Route::post('/settings/cron', [SettingsController::class, 'saveCronSettings']);
     Route::get('/settings/cron/logs', [SettingsController::class, 'getCronLogs']);
+    Route::get('/settings/cron/olt-sync-logs', [SettingsController::class, 'getOltSyncLogs']);
     Route::get('/settings/gateway-status', [SettingsController::class, 'getGatewayStatus']);
     Route::get('/settings/public-url', [SettingsController::class, 'getPublicUrlEndpoint']);
     Route::get('/settings/redirect-links', [SettingsController::class, 'getRedirectLinks']);
