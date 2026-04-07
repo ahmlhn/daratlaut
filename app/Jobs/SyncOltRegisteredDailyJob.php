@@ -23,7 +23,7 @@ class SyncOltRegisteredDailyJob implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
-    public int $tries = 2;
+    public int $tries = 3;
 
     public int $timeout = 7200;
 
@@ -43,6 +43,11 @@ class SyncOltRegisteredDailyJob implements ShouldQueue
                 ->releaseAfter(30)
                 ->expireAfter($this->timeout + 300),
         ];
+    }
+
+    public function backoff(): array
+    {
+        return [300, 900];
     }
 
     public function handle(): void

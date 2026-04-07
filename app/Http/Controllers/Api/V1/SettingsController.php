@@ -664,6 +664,14 @@ class SettingsController extends Controller
             if ($queueName === '') {
                 $queueName = 'olt-sync';
             }
+            $opsQueueConnection = trim((string) env('OPS_CRON_QUEUE_CONNECTION', 'database'));
+            if ($opsQueueConnection === '') {
+                $opsQueueConnection = 'database';
+            }
+            $opsQueueName = trim((string) env('OPS_CRON_QUEUE', 'ops-cron'));
+            if ($opsQueueName === '') {
+                $opsQueueName = 'ops-cron';
+            }
 
             return array_merge($defaults, [
                 'project_path' => $basePath,
@@ -674,7 +682,10 @@ class SettingsController extends Controller
                 'windows_task_command' => 'php "' . $artisanPath . '" schedule:run',
                 'queue_worker_connection' => $queueConnection,
                 'queue_worker_queue' => $queueName,
-                'queue_worker_command' => 'php "' . $artisanPath . '" queue:work ' . $queueConnection . ' --queue=' . $queueName . ' --tries=2 --timeout=7200',
+                'queue_worker_command' => 'php "' . $artisanPath . '" queue:work ' . $queueConnection . ' --queue=' . $queueName . ' --tries=3 --timeout=7200',
+                'ops_queue_worker_connection' => $opsQueueConnection,
+                'ops_queue_worker_queue' => $opsQueueName,
+                'ops_queue_worker_command' => 'php "' . $artisanPath . '" queue:work ' . $opsQueueConnection . ' --queue=' . $opsQueueName . ' --tries=3 --timeout=3600',
             ]);
         }
 
@@ -692,6 +703,14 @@ class SettingsController extends Controller
         $queueName = trim((string) env('OLT_DAILY_SYNC_QUEUE', 'olt-sync'));
         if ($queueName === '') {
             $queueName = 'olt-sync';
+        }
+        $opsQueueConnection = trim((string) env('OPS_CRON_QUEUE_CONNECTION', 'database'));
+        if ($opsQueueConnection === '') {
+            $opsQueueConnection = 'database';
+        }
+        $opsQueueName = trim((string) env('OPS_CRON_QUEUE', 'ops-cron'));
+        if ($opsQueueName === '') {
+            $opsQueueName = 'ops-cron';
         }
 
         return [
@@ -711,7 +730,10 @@ class SettingsController extends Controller
             'windows_task_command' => 'php "' . $artisanPath . '" schedule:run',
             'queue_worker_connection' => $queueConnection,
             'queue_worker_queue' => $queueName,
-            'queue_worker_command' => 'php "' . $artisanPath . '" queue:work ' . $queueConnection . ' --queue=' . $queueName . ' --tries=2 --timeout=7200',
+            'queue_worker_command' => 'php "' . $artisanPath . '" queue:work ' . $queueConnection . ' --queue=' . $queueName . ' --tries=3 --timeout=7200',
+            'ops_queue_worker_connection' => $opsQueueConnection,
+            'ops_queue_worker_queue' => $opsQueueName,
+            'ops_queue_worker_command' => 'php "' . $artisanPath . '" queue:work ' . $opsQueueConnection . ' --queue=' . $opsQueueName . ' --tries=3 --timeout=3600',
         ];
     }
 

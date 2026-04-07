@@ -67,10 +67,14 @@ Schedule::command('billing:send-reminders --type=overdue')
 |
 */
 $opsNightlyEnabled = filter_var((string) env('OPS_NIGHTLY_SCHEDULE_ENABLED', 'false'), FILTER_VALIDATE_BOOL);
+$opsCronQueueConnection = trim((string) env('OPS_CRON_QUEUE_CONNECTION', 'database'));
+if ($opsCronQueueConnection === '') {
+    $opsCronQueueConnection = 'database';
+}
 if ($opsNightlyEnabled) {
     $opsNightlyTime = env('OPS_NIGHTLY_SCHEDULE_TIME', '21:30');
 
-    Schedule::command('ops:nightly-closing')
+    Schedule::command('ops:queue-nightly-closing', ['--connection' => $opsCronQueueConnection])
         ->dailyAt($opsNightlyTime)
         ->withoutOverlapping()
         ->appendOutputTo(storage_path('logs/ops-nightly-closing.log'));
@@ -80,7 +84,7 @@ $opsRemindersEnabled = filter_var((string) env('OPS_REMINDERS_SCHEDULE_ENABLED',
 if ($opsRemindersEnabled) {
     $opsRemindersTime = env('OPS_REMINDERS_SCHEDULE_TIME', '07:00');
 
-    Schedule::command('ops:send-reminders')
+    Schedule::command('ops:queue-reminders', ['--connection' => $opsCronQueueConnection])
         ->dailyAt($opsRemindersTime)
         ->withoutOverlapping()
         ->appendOutputTo(storage_path('logs/ops-reminders.log'));
@@ -153,7 +157,7 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
             if ((int) ($row->nightly_enabled ?? 0) === 1) {
                 $nightlyTime = $normalizeClock((string) ($row->nightly_time ?? ''), '21:30');
 
-                Schedule::command('ops:nightly-closing', ['--tenant' => (string) $tenantId])
+                Schedule::command('ops:queue-nightly-closing', ['--tenant' => (string) $tenantId, '--connection' => $opsCronQueueConnection])
                     ->dailyAt($nightlyTime)
                     ->withoutOverlapping()
                     ->appendOutputTo(storage_path('logs/ops-nightly-closing.log'));
@@ -168,7 +172,9 @@ if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
                     $params['--base-url'] = $baseUrl;
                 }
 
-                Schedule::command('ops:send-reminders', $params)
+                $params['--connection'] = $opsCronQueueConnection;
+
+                Schedule::command('ops:queue-reminders', $params)
                     ->dailyAt($remindersTime)
                     ->withoutOverlapping()
                     ->appendOutputTo(storage_path('logs/ops-reminders.log'));

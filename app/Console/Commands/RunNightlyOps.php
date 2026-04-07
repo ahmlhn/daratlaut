@@ -56,6 +56,7 @@ class RunNightlyOps extends Command
             $this->warn('DRY RUN aktif: tidak kirim WA dan tidak hapus file.');
         }
 
+        $hasFailedTenant = false;
         foreach ($tenantIds as $tenantId) {
             $this->newLine();
             $this->line("=== TENANT #{$tenantId} ===");
@@ -164,6 +165,7 @@ class RunNightlyOps extends Command
                 } elseif ($sentCount <= 0 && $failedCount > 0) {
                     $logStatus = 'failed';
                     $logMessage = 'Semua kandidat gagal dikirim.';
+                    $hasFailedTenant = true;
                 } elseif ($failedCount > 0) {
                     $logStatus = 'partial';
                     $logMessage = 'Sebagian kandidat gagal dikirim.';
@@ -193,6 +195,7 @@ class RunNightlyOps extends Command
                     now()
                 );
             } catch (\Throwable $e) {
+                $hasFailedTenant = true;
                 $this->error('Tenant error: ' . $e->getMessage());
                 $this->cronLogger->record(
                     $tenantId,
@@ -211,7 +214,7 @@ class RunNightlyOps extends Command
 
         $this->newLine();
         $this->info('Selesai menjalankan ops:nightly-closing.');
-        return self::SUCCESS;
+        return $hasFailedTenant ? self::FAILURE : self::SUCCESS;
     }
 
     private function resolveAnchorDate(string $date): ?CarbonImmutable

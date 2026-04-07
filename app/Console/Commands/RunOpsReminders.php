@@ -64,6 +64,7 @@ class RunOpsReminders extends Command
             $this->warn('DRY RUN aktif: tidak ada WA yang benar-benar dikirim.');
         }
 
+        $hasFailedTenant = false;
         foreach ($tenantIds as $tenantId) {
             $this->newLine();
             $this->line("=== TENANT #{$tenantId} ===");
@@ -83,6 +84,7 @@ class RunOpsReminders extends Command
                 } elseif ((int) ($totals['sent'] ?? 0) <= 0 && (int) ($totals['failed'] ?? 0) > 0) {
                     $status = 'failed';
                     $message = 'Semua kandidat reminder gagal.';
+                    $hasFailedTenant = true;
                 } elseif ((int) ($totals['failed'] ?? 0) > 0) {
                     $status = 'partial';
                     $message = 'Sebagian kandidat reminder gagal.';
@@ -107,6 +109,7 @@ class RunOpsReminders extends Command
                     now()
                 );
             } catch (\Throwable $e) {
+                $hasFailedTenant = true;
                 $this->error('Tenant error: ' . $e->getMessage());
                 $this->cronLogger->record(
                     $tenantId,
@@ -125,7 +128,7 @@ class RunOpsReminders extends Command
 
         $this->newLine();
         $this->info('Selesai menjalankan ops:send-reminders.');
-        return self::SUCCESS;
+        return $hasFailedTenant ? self::FAILURE : self::SUCCESS;
     }
 
     private function runForTenant(

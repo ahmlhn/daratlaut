@@ -66,7 +66,7 @@ class CronExecutionLogger
     private function normalizeStatus(string $status): string
     {
         $status = strtolower(trim($status));
-        if (in_array($status, ['success', 'partial', 'failed', 'skipped', 'dry_run'], true)) {
+        if (in_array($status, ['queued', 'success', 'partial', 'failed', 'skipped', 'dry_run'], true)) {
             return $status;
         }
 
@@ -102,4 +102,3 @@ class CronExecutionLogger
         return null;
     }
 }
-

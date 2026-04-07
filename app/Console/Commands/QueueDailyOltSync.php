@@ -6,6 +6,7 @@ use App\Jobs\SyncOltRegisteredDailyJob;
 use App\Models\Olt;
 use App\Support\CronExecutionLogger;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Throwable;
 
@@ -117,13 +118,24 @@ class QueueDailyOltSync extends Command
         $count = 0;
         $successCount = 0;
         $failedCount = 0;
+        $skippedCount = 0;
         $tenantCounts = [];
         $tenantSuccessCounts = [];
         $tenantFailedCounts = [];
+        $tenantSkippedCounts = [];
         foreach ($olts as $olt) {
             $tenantId = (int) ($olt->tenant_id ?? 1);
             $oltId = (int) $olt->id;
             $name = trim((string) ($olt->nama_olt ?? ''));
+            $count++;
+            $tenantCounts[$tenantId] = (int) ($tenantCounts[$tenantId] ?? 0) + 1;
+
+            if (!$runSync && $this->hasPendingSyncJob($tenantId, $oltId, (string) $queueConnection, $queue)) {
+                $skippedCount++;
+                $tenantSkippedCounts[$tenantId] = (int) ($tenantSkippedCounts[$tenantId] ?? 0) + 1;
+                $this->line(" - OLT #{$oltId}" . ($name !== '' ? " ({$name})" : '') . " [tenant {$tenantId}] skip: antrian masih ada");
+                continue;
+            }
 
             try {
                 if ($runSync) {
@@ -142,15 +154,13 @@ class QueueDailyOltSync extends Command
             }
 
             $this->line(" - OLT #{$oltId}" . ($name !== '' ? " ({$name})" : '') . " [tenant {$tenantId}]");
-            $count++;
-            $tenantCounts[$tenantId] = (int) ($tenantCounts[$tenantId] ?? 0) + 1;
         }
 
         if ($runSync) {
             $this->info("Total OLT diproses: {$count} | sukses: {$successCount} | gagal: {$failedCount}");
         } else {
-            $this->info("Total job didispatch: {$count}");
-            if ($count > 0) {
+            $this->info("Total job didispatch: {$successCount} | skip duplikat: {$skippedCount} | gagal dispatch: {$failedCount}");
+            if ($successCount > 0) {
                 $this->warn("Pastikan queue worker aktif pada connection '{$queueConnection}' queue '{$queue}'.");
             }
         }
@@ -158,16 +168,19 @@ class QueueDailyOltSync extends Command
         foreach ($tenantCounts as $tenantId => $jobCount) {
             $tenantSuccess = (int) ($tenantSuccessCounts[$tenantId] ?? 0);
             $tenantFailed = (int) ($tenantFailedCounts[$tenantId] ?? 0);
+            $tenantSkipped = (int) ($tenantSkippedCounts[$tenantId] ?? 0);
             $status = $runSync ? 'success' : 'queued';
             if ($tenantFailed > 0 && $tenantSuccess > 0) {
                 $status = 'partial';
             } elseif ($tenantFailed > 0 && $tenantSuccess === 0) {
                 $status = 'failed';
+            } elseif (!$runSync && $tenantSuccess === 0 && $tenantSkipped > 0) {
+                $status = 'skipped';
             }
 
             $message = $runSync
                 ? "Sinkronisasi OLT selesai: sukses {$tenantSuccess}, gagal {$tenantFailed}."
-                : "Dispatch {$jobCount} job sinkronisasi OLT (menunggu queue worker).";
+                : "Dispatch {$tenantSuccess} job sinkronisasi OLT (skip duplikat {$tenantSkipped}, menunggu queue worker).";
             $cronLogger->record(
                 (int) $tenantId,
                 'olt_daily_sync',
@@ -179,9 +192,11 @@ class QueueDailyOltSync extends Command
                     'connection' => $queueConnection,
                     'queue' => $queue,
                     'olt_filter' => $oltOpt !== null && $oltOpt !== '' ? (int) $oltOpt : null,
-                    'job_count' => (int) $jobCount,
+                    'candidate_count' => (int) $jobCount,
+                    'job_count' => $tenantSuccess,
                     'success_count' => $tenantSuccess,
                     'failed_count' => $tenantFailed,
+                    'skipped_count' => $tenantSkipped,
                 ],
                 $startedAt,
                 now()
@@ -193,5 +208,49 @@ class QueueDailyOltSync extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    private function hasPendingSyncJob(int $tenantId, int $oltId, string $queueConnection, string $queue): bool
+    {
+        $connections = (array) config('queue.connections', []);
+        $connectionConfig = (array) ($connections[$queueConnection] ?? []);
+
+        if (($connectionConfig['driver'] ?? null) !== 'database') {
+            return false;
+        }
+
+        $jobsTable = (string) ($connectionConfig['table'] ?? 'jobs');
+        $dbConnection = $connectionConfig['connection'] ?? null;
+        $query = $dbConnection
+            ? DB::connection((string) $dbConnection)->table($jobsTable)
+            : DB::table($jobsTable);
+
+        $rows = $query
+            ->where('queue', $queue)
+            ->get(['payload']);
+
+        foreach ($rows as $row) {
+            $payload = json_decode((string) ($row->payload ?? ''), true);
+            $command = $payload['data']['command'] ?? null;
+            if (!is_string($command) || $command === '') {
+                continue;
+            }
+
+            try {
+                $job = unserialize($command, ['allowed_classes' => [SyncOltRegisteredDailyJob::class]]);
+            } catch (Throwable) {
+                continue;
+            }
+
+            if (
+                $job instanceof SyncOltRegisteredDailyJob
+                && (int) $job->tenantId === $tenantId
+                && (int) $job->oltId === $oltId
+            ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
