@@ -1560,6 +1560,10 @@ class OltController extends Controller
         $request->validate([
             'name_prefix' => 'nullable|string|max:16',
             'save_config' => 'nullable|boolean',
+            'batch_size' => 'nullable|integer|min:1|max:10',
+            'items' => 'nullable|array|max:10',
+            'items.*.fsp' => 'required_with:items|string|regex:/^\d+\/\d+\/\d+$/',
+            'items.*.sn' => 'required_with:items|string|regex:/^[A-Za-z]{4}[A-Fa-f0-9]{8}$/',
         ]);
 
         $namePrefix = trim((string) ($request->input('name_prefix') ?? ''));
@@ -1571,6 +1575,7 @@ class OltController extends Controller
 
         // Native parity: default is NOT to run write-config; users can click "Simpan Config" separately.
         $saveConfig = $request->boolean('save_config', false);
+        $batchSize = (int) ($request->input('batch_size') ?: 10);
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         $actor = $this->actorName($request);
 
@@ -1583,8 +1588,32 @@ class OltController extends Controller
             $service->connect($olt);
             $service->startTrace();
 
-            $uncfg = $service->scanUnconfigured();
-            if (empty($uncfg)) {
+            $itemsInput = $request->input('items', []);
+            $batchItems = [];
+
+            if (is_array($itemsInput) && !empty($itemsInput)) {
+                foreach (array_slice($itemsInput, 0, $batchSize) as $item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+
+                    $fsp = trim((string) ($item['fsp'] ?? ''));
+                    $sn = strtoupper(trim((string) ($item['sn'] ?? '')));
+                    if ($fsp === '' || $sn === '') {
+                        continue;
+                    }
+
+                    $batchItems[] = [
+                        'fsp' => $fsp,
+                        'sn' => $sn,
+                    ];
+                }
+            } else {
+                $uncfg = $service->scanUnconfigured();
+                $batchItems = array_slice($uncfg, 0, $batchSize);
+            }
+
+            if (empty($batchItems)) {
                 $service->disconnect();
                 return response()->json([
                     'status' => 'ok',
@@ -1595,17 +1624,24 @@ class OltController extends Controller
                         'error' => 0,
                     ],
                     'results' => [],
+                    'processed_keys' => [],
+                    'meta' => [
+                        'batch_size' => $batchSize,
+                        'processed_count' => 0,
+                    ],
                 ]);
             }
 
             $results = [];
             $succ = 0;
             $err = 0;
-            foreach ($uncfg as $it) {
+            $processedKeys = [];
+            foreach ($batchItems as $it) {
                 $fsp = (string) ($it['fsp'] ?? '');
                 $sn = (string) ($it['sn'] ?? '');
                 if ($fsp === '' || $sn === '') continue;
 
+                $processedKeys[] = $fsp . ':' . strtoupper($sn);
                 $onuName = $namePrefix !== '' ? "{$namePrefix}-{$sn}" : "ONU-{$sn}";
                 $onuName = substr($onuName, 0, 32);
 
@@ -1659,6 +1695,11 @@ class OltController extends Controller
                 'message' => "Auto register selesai. Success {$succ}, error {$err}.",
                 'summary' => $summary,
                 'results' => $results,
+                'processed_keys' => $processedKeys,
+                'meta' => [
+                    'batch_size' => $batchSize,
+                    'processed_count' => count($processedKeys),
+                ],
                 'log_id' => $logId,
                 'log_excerpt' => $logExcerpt,
             ]);

@@ -53,6 +53,7 @@ Last verified: 2026-04-06
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-11: Auto register ONU unregistered di halaman OLT kini diproses bertahap per 10 ONU untuk menghindari timeout saat jumlah besar; `app/Http/Controllers/Api/OltController.php` menerima batch `items`/`batch_size` dan `resources/js/Pages/Olts/Index.vue` menjalankan loop batch berurutan dengan progres serta pengurangan daftar ONU per batch. Docs: N/A.
 - 2026-04-07: Queue Ops dan OLT menambah retry otomatis: job OLT/reminder/closing memakai `tries=3` dengan backoff 5 menit lalu 15 menit, command Ops mengembalikan exit code gagal jika seluruh kandidat pesan gagal agar queue worker melakukan retry, dan Settings menampilkan command worker dengan `--tries=3`. Docs: N/A.
 - 2026-04-07: Cron Ops (`ops:send-reminders` dan `ops:nightly-closing`) dipindahkan ke queue worker: scheduler kini memanggil command dispatcher `ops:queue-reminders` / `ops:queue-nightly-closing`, job `RunOpsRemindersJob` dan `RunNightlyOpsJob` menjalankan command lama di queue `ops-cron`, Settings menampilkan command worker Ops, `CronExecutionLogger` mendukung status `queued`, dan `.env.example` menambah `OPS_CRON_QUEUE_CONNECTION` + `OPS_CRON_QUEUE`. Docs: N/A.
 - 2026-04-07: Dispatch sinkron OLT terjadwal kini men-skip enqueue duplikat jika masih ada job `SyncOltRegisteredDailyJob` pending/processing untuk `tenant_id + olt_id` yang sama di queue database tujuan, sehingga uji coba atau jadwal berulang tidak menumpuk lebih dari satu job per OLT. Docs: N/A.

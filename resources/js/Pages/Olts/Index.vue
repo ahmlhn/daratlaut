@@ -5,6 +5,7 @@ import AdminLayout from '@/Layouts/AdminLayout.vue';
 
 const page = usePage();
 const API_BASE = '/api/v1';
+const AUTO_REGISTER_BATCH_SIZE = 10;
 
 const role = computed(() => String(page.props.auth?.user?.role || '').trim().toLowerCase());
 const isTeknisi = computed(() => ['teknisi', 'svp lapangan', 'svp_lapangan'].includes(role.value));
@@ -292,6 +293,12 @@ function buildRegisterLiveLines({ fsp, sn, name }) {
     lines.push('exit');
     lines.push('end');
     return lines;
+}
+
+function getUncfgItemKey(item) {
+    const fsp = String(item?.fsp || '').trim();
+    const sn = String(item?.sn || '').trim().toUpperCase();
+    return `${fsp}:${sn}`;
 }
 
 async function loadOlts() {
@@ -685,6 +692,27 @@ function selectUncfg(idx) {
     registerName.value = '';
 }
 
+function removeUncfgItemsByKeys(keys) {
+    const normalizedKeys = Array.isArray(keys)
+        ? keys.map(key => String(key || '').trim().toUpperCase()).filter(Boolean)
+        : [];
+    if (!normalizedKeys.length) return;
+
+    const keySet = new Set(normalizedKeys);
+    const selectedKey = uncfgSelected.value ? getUncfgItemKey(uncfgSelected.value).toUpperCase() : '';
+
+    uncfg.value = uncfg.value.filter(item => !keySet.has(getUncfgItemKey(item).toUpperCase()));
+
+    if (selectedKey && keySet.has(selectedKey)) {
+        clearUncfgSelection();
+    } else if (selectedKey) {
+        const nextIndex = uncfg.value.findIndex(item => getUncfgItemKey(item).toUpperCase() === selectedKey);
+        uncfgSelectedIndex.value = nextIndex >= 0 ? nextIndex : null;
+    }
+
+    storeUncfgCache(selectedOltId.value);
+}
+
 function storeUncfgCache(oltId) {
     if (!canManualRegister.value) return;
     const key = String(oltId || '').trim();
@@ -770,25 +798,70 @@ async function autoRegister() {
 
     const prefix = prompt('Prefix nama ONU (opsional, max 16). Contoh: RT01', '') || '';
 
-    setUncfgStatus('Auto register berjalan...', 'info');
     registerBusy.value = true;
-    startLiveStatus('Auto register berjalan', buildScanLiveLines(), 'uncfg');
     try {
-        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/auto-register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name_prefix: prefix }),
-        });
-        if (data.status !== 'ok') throw new Error(data.message || 'Auto register gagal');
-        if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
+        if (!uncfg.value.length) {
+            await scanUncfg();
+        }
+        if (!uncfg.value.length) {
+            setUncfgStatus('Tidak ada ONU unregistered.', 'info');
+            return;
+        }
 
-        const s = data.summary || {};
-        setUncfgStatus(data.message || `Auto register selesai. Success ${s.success || 0}, error ${s.error || 0}.`, 'success');
+        const initialTotal = uncfg.value.length;
+        const totalBatches = Math.max(1, Math.ceil(initialTotal / AUTO_REGISTER_BATCH_SIZE));
+        let batchNumber = 0;
+        let totalSuccess = 0;
+        let totalError = 0;
 
-        // Clear uncfg list; user can re-scan to confirm.
-        uncfg.value = [];
-        clearUncfgSelection();
-        storeUncfgCache(selectedOltId.value);
+        while (uncfg.value.length) {
+            batchNumber += 1;
+            const batchItems = uncfg.value
+                .slice(0, AUTO_REGISTER_BATCH_SIZE)
+                .map(item => ({ fsp: String(item.fsp || ''), sn: String(item.sn || '') }));
+            const firstIndex = ((batchNumber - 1) * AUTO_REGISTER_BATCH_SIZE) + 1;
+            const lastIndex = firstIndex + batchItems.length - 1;
+
+            setUncfgStatus(
+                `Auto register batch ${batchNumber}/${totalBatches} (${firstIndex}-${lastIndex} dari ${initialTotal})...`,
+                'loading'
+            );
+
+            const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/auto-register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name_prefix: prefix,
+                    batch_size: AUTO_REGISTER_BATCH_SIZE,
+                    items: batchItems,
+                }),
+            });
+            if (data.status !== 'ok') throw new Error(data.message || 'Auto register gagal');
+            if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
+
+            const s = data.summary || {};
+            totalSuccess += Number(s.success || 0);
+            totalError += Number(s.error || 0);
+
+            const processedKeys = Array.isArray(data.processed_keys)
+                ? data.processed_keys
+                : batchItems.map(item => getUncfgItemKey(item));
+            removeUncfgItemsByKeys(processedKeys);
+
+            if (uncfg.value.length) {
+                setUncfgStatus(
+                    `Batch ${batchNumber}/${totalBatches} selesai. Success ${s.success || 0}, error ${s.error || 0}. Sisa ${uncfg.value.length} ONU.`,
+                    'loading'
+                );
+            }
+        }
+
+        setUncfgStatus(
+            totalError > 0
+                ? `Auto register selesai per 10 ONU. Success ${totalSuccess}, error ${totalError}. Scan ulang jika ingin cek ONU yang masih gagal.`
+                : `Auto register selesai per 10 ONU. Success ${totalSuccess}, error ${totalError}.`,
+            totalError > 0 ? 'info' : 'success'
+        );
 
         regFilterFsp.value = 'all';
         await changeRegFsp();
