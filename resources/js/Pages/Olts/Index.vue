@@ -632,6 +632,8 @@ const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
 const autoRegisterRunId = ref(null);
 const autoRegisterModalOpen = ref(false);
+const autoRegisterModalTone = ref('loading');
+const autoRegisterModalClosable = ref(false);
 const autoRegisterModalText = ref('Menyiapkan auto register...');
 const autoRegisterModalNote = ref('Mohon tunggu, proses berjalan di queue worker.');
 const autoRegisterModalEta = ref('Estimasi: menunggu queue worker...');
@@ -731,24 +733,60 @@ function removeUncfgItemsByKeys(keys) {
     storeUncfgCache(selectedOltId.value);
 }
 
-function showAutoRegisterModal(text, note = 'Mohon tunggu, proses berjalan di queue worker.', percent = 0, eta = 'Estimasi: menunggu queue worker...') {
+function getAutoRegisterModalToneClasses(tone) {
+    const map = {
+        loading: {
+            iconWrap: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+            badge: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300',
+            bar: 'bg-[linear-gradient(90deg,#2563eb_0%,#0ea5e9_55%,#10b981_100%)]',
+        },
+        success: {
+            iconWrap: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300',
+            badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+            bar: 'bg-[linear-gradient(90deg,#10b981_0%,#22c55e_100%)]',
+        },
+        info: {
+            iconWrap: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300',
+            badge: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300',
+            bar: 'bg-[linear-gradient(90deg,#f59e0b_0%,#f97316_100%)]',
+        },
+        error: {
+            iconWrap: 'bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300',
+            badge: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300',
+            bar: 'bg-[linear-gradient(90deg,#ef4444_0%,#f97316_100%)]',
+        },
+    };
+    return map[tone] || map.loading;
+}
+
+function showAutoRegisterModal(text, note = 'Mohon tunggu, proses berjalan di queue worker.', percent = 0, eta = 'Estimasi: menunggu queue worker...', tone = 'loading', closable = false) {
     autoRegisterModalText.value = String(text || 'Menyiapkan auto register...');
     autoRegisterModalNote.value = String(note || '');
     autoRegisterModalEta.value = String(eta || '');
     autoRegisterModalPercent.value = Math.max(0, Math.min(100, Number(percent || 0)));
+    autoRegisterModalTone.value = String(tone || 'loading');
+    autoRegisterModalClosable.value = !!closable;
     autoRegisterModalOpen.value = true;
 }
 
-function updateAutoRegisterModal(text, percent, note, eta) {
+function updateAutoRegisterModal(text, percent, note, eta, tone = autoRegisterModalTone.value, closable = autoRegisterModalClosable.value) {
     autoRegisterModalText.value = String(text || autoRegisterModalText.value || 'Auto register berjalan...');
     autoRegisterModalPercent.value = Math.max(0, Math.min(100, Number(percent || 0)));
     if (note !== undefined) autoRegisterModalNote.value = String(note || '');
     if (eta !== undefined) autoRegisterModalEta.value = String(eta || '');
+    autoRegisterModalTone.value = String(tone || 'loading');
+    autoRegisterModalClosable.value = !!closable;
     autoRegisterModalOpen.value = true;
 }
 
 function hideAutoRegisterModal() {
     autoRegisterModalOpen.value = false;
+    autoRegisterModalClosable.value = false;
+    autoRegisterModalTone.value = 'loading';
+}
+
+function completeAutoRegisterModal(text, note, percent = 100, eta = 'Selesai', tone = 'success') {
+    updateAutoRegisterModal(text, percent, note, eta, tone, true);
 }
 
 function stopAutoRegisterPolling(resetRun = true) {
@@ -771,7 +809,6 @@ function scheduleAutoRegisterPoll(runId, delay = 3000) {
 async function finishAutoRegisterRun(status, summary = {}) {
     stopAutoRegisterPolling();
     registerBusy.value = false;
-    hideAutoRegisterModal();
 
     const errorCount = Number(summary.error || 0);
     let message = String(summary.state_text || summary.message || '').trim();
@@ -791,6 +828,17 @@ async function finishAutoRegisterRun(status, summary = {}) {
         // ignore refresh scan errors
     }
 
+    completeAutoRegisterModal(
+        message,
+        status === 'error'
+            ? 'Proses auto register berhenti dengan error. Periksa log command untuk detail.'
+            : errorCount > 0
+                ? `Proses selesai dengan ${errorCount} ONU gagal. Periksa log command untuk detail.`
+                : `Semua batch selesai diproses. Success ${Number(summary.success || 0)}, error ${errorCount}.`,
+        100,
+        'Selesai',
+        status === 'error' ? 'error' : errorCount > 0 ? 'info' : 'success'
+    );
     setUncfgStatus(message, status === 'error' ? 'error' : errorCount > 0 ? 'info' : 'success');
 
     regFilterFsp.value = 'all';
@@ -852,7 +900,13 @@ async function pollAutoRegisterStatus(runId) {
         if ([403, 404, 422].includes(Number(e?.status || 0))) {
             stopAutoRegisterPolling();
             registerBusy.value = false;
-            hideAutoRegisterModal();
+            completeAutoRegisterModal(
+                e.message || 'Auto register gagal dipantau.',
+                'Polling status berhenti karena proses tidak bisa dilanjutkan.',
+                autoRegisterModalPercent.value || 100,
+                'Berhenti',
+                'error'
+            );
             setUncfgStatus(e.message || 'Auto register gagal dipantau.', 'error');
             return;
         }
@@ -860,7 +914,9 @@ async function pollAutoRegisterStatus(runId) {
             'Koneksi status terputus sementara.',
             autoRegisterModalPercent.value,
             'Frontend akan mencoba polling ulang otomatis.',
-            'Estimasi: mencoba lagi dalam beberapa detik...'
+            'Estimasi: mencoba lagi dalam beberapa detik...',
+            'loading',
+            false
         );
         setUncfgStatus(e.message || 'Gagal memantau auto register. Mencoba lagi...', 'loading');
         scheduleAutoRegisterPoll(runId, 5000);
@@ -959,7 +1015,9 @@ async function autoRegister() {
             `Mengantrikan auto register per ${AUTO_REGISTER_BATCH_SIZE} ONU...`,
             'Daftar ONU unregistered sedang dipersiapkan untuk queue worker.',
             2,
-            'Estimasi: menunggu job pertama diproses...'
+            'Estimasi: menunggu job pertama diproses...',
+            'loading',
+            false
         );
         setUncfgStatus(`Mengantrikan auto register per ${AUTO_REGISTER_BATCH_SIZE} ONU...`, 'loading');
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/auto-register`, {
@@ -974,7 +1032,13 @@ async function autoRegister() {
         const runId = Number(data.run_id || data.log_id || 0);
         if (!runId) {
             if (Number(summary.total_count || 0) === 0) {
-                hideAutoRegisterModal();
+                completeAutoRegisterModal(
+                    data.message || 'Tidak ada ONU unregistered.',
+                    'Tidak ada ONU yang perlu diproses pada OLT ini.',
+                    100,
+                    'Selesai',
+                    'info'
+                );
                 setUncfgStatus(data.message || 'Tidak ada ONU unregistered.', 'info');
                 registerBusy.value = false;
                 return;
@@ -989,7 +1053,9 @@ async function autoRegister() {
             data.message || `Auto register diantrikan: ${totalCount} ONU dalam ${totalBatches} batch.`,
             4,
             `Queue worker akan memproses ${totalBatches} batch.`,
-            totalCount > 0 ? `Total ${totalCount} ONU menunggu diproses.` : 'Estimasi: menunggu queue worker...'
+            totalCount > 0 ? `Total ${totalCount} ONU menunggu diproses.` : 'Estimasi: menunggu queue worker...',
+            'loading',
+            false
         );
         setUncfgStatus(
             data.message || `Auto register diantrikan: ${totalCount} ONU dalam ${totalBatches} batch.`,
@@ -1003,14 +1069,22 @@ async function autoRegister() {
                 'Menyambungkan ke proses auto register yang sudah berjalan...',
                 'Halaman mendeteksi run aktif pada OLT ini.',
                 autoRegisterModalPercent.value || 5,
-                'Estimasi: memuat progres terbaru...'
+                'Estimasi: memuat progres terbaru...',
+                'loading',
+                false
             );
             setUncfgStatus(e.message || 'Auto register sedang berjalan. Menyambungkan polling status...', 'loading');
             await pollAutoRegisterStatus(autoRegisterRunId.value);
             return;
         }
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
-        hideAutoRegisterModal();
+        completeAutoRegisterModal(
+            e.message || 'Auto register gagal',
+            'Proses tidak berhasil dijalankan. Periksa konfigurasi queue worker atau log command.',
+            autoRegisterModalPercent.value || 100,
+            'Berhenti',
+            'error'
+        );
         setUncfgStatus(e.message || 'Auto register gagal', 'error');
         registerBusy.value = false;
     } finally {
@@ -3441,17 +3515,40 @@ onBeforeUnmount(() => {
                                 <div class="relative">
                                     <div class="absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-blue-500/10 via-cyan-400/10 to-emerald-400/10"></div>
                                     <div class="relative p-5 sm:p-6">
+                                        <div class="mb-4 flex items-center justify-between gap-3">
+                                            <div class="text-[11px] font-black uppercase tracking-[0.24em] text-slate-400 dark:text-slate-500">Status Auto Register</div>
+                                            <button
+                                                v-if="autoRegisterModalClosable"
+                                                type="button"
+                                                class="inline-flex items-center rounded-full border border-slate-200 px-3 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/60"
+                                                @click="hideAutoRegisterModal()"
+                                            >
+                                                Tutup
+                                            </button>
+                                        </div>
                                         <div class="flex items-start gap-4">
-                                            <span class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300 shadow-sm">
-                                                <svg class="h-6 w-6 animate-spin" viewBox="0 0 24 24" fill="none">
+                                            <span
+                                                class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm"
+                                                :class="getAutoRegisterModalToneClasses(autoRegisterModalTone).iconWrap"
+                                            >
+                                                <svg v-if="autoRegisterModalTone === 'loading'" class="h-6 w-6 animate-spin" viewBox="0 0 24 24" fill="none">
                                                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                                     <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
+                                                </svg>
+                                                <svg v-else-if="autoRegisterModalTone === 'error'" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86l-7.5 13A1 1 0 003.66 18h16.68a1 1 0 00.87-1.14l-7.5-13a1 1 0 00-1.74 0z" />
+                                                </svg>
+                                                <svg v-else class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                                                 </svg>
                                             </span>
                                             <div class="min-w-0 flex-1">
                                                 <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                                                     <div class="text-sm font-black uppercase tracking-wide text-slate-800 dark:text-white">Auto Register ONU</div>
-                                                    <div class="inline-flex w-fit items-center rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+                                                    <div
+                                                        class="inline-flex w-fit items-center rounded-full px-2.5 py-1 text-[11px] font-bold"
+                                                        :class="getAutoRegisterModalToneClasses(autoRegisterModalTone).badge"
+                                                    >
                                                         {{ Math.round(autoRegisterModalPercent) }}%
                                                     </div>
                                                 </div>
@@ -3474,7 +3571,8 @@ onBeforeUnmount(() => {
                                             </div>
                                             <div class="mt-3 h-3 overflow-hidden rounded-full bg-white dark:bg-slate-800 ring-1 ring-slate-200/70 dark:ring-white/10">
                                                 <div
-                                                    class="h-full rounded-full bg-[linear-gradient(90deg,#2563eb_0%,#0ea5e9_55%,#10b981_100%)] transition-all duration-500"
+                                                    class="h-full rounded-full transition-all duration-500"
+                                                    :class="getAutoRegisterModalToneClasses(autoRegisterModalTone).bar"
                                                     :style="{ width: `${Math.round(autoRegisterModalPercent)}%` }"
                                                 ></div>
                                             </div>
