@@ -3433,37 +3433,62 @@ onBeforeUnmount(() => {
                     </div>
                 </div>
 
-                <div v-if="autoRegisterModalOpen" id="olt-auto-register-modal" class="fixed inset-0 z-[85]">
-                    <div class="absolute inset-0 bg-slate-950/45 backdrop-blur-sm"></div>
-                    <div class="absolute top-1/2 left-1/2 w-[92%] max-w-md -translate-x-1/2 -translate-y-1/2">
-                        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl p-5">
-                            <div class="flex items-start gap-3">
-                                <span class="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
-                                    <svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
-                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
-                                    </svg>
-                                </span>
-                                <div class="flex-1">
-                                    <div class="text-sm font-black text-slate-800 dark:text-white uppercase">Auto Register ONU</div>
-                                    <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ autoRegisterModalText }}</div>
-                                    <div class="text-[11px] text-slate-400 dark:text-slate-500 mt-2">{{ autoRegisterModalNote }}</div>
-                                    <div class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">{{ autoRegisterModalEta }}</div>
-                                    <div class="mt-3 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                                        <div
-                                            class="h-full bg-blue-500 transition-all duration-500"
-                                            :style="{ width: `${Math.round(autoRegisterModalPercent)}%` }"
-                                        ></div>
-                                    </div>
-                                    <div class="mt-2 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                                        <span>Queue worker sedang memproses batch auto register.</span>
-                                        <span class="font-bold">{{ Math.round(autoRegisterModalPercent) }}%</span>
+                <Teleport to="body">
+                    <div v-if="autoRegisterModalOpen" id="olt-auto-register-modal" class="fixed inset-0 z-[95]">
+                        <div class="absolute inset-0 bg-slate-950/55 backdrop-blur-sm"></div>
+                        <div class="relative flex min-h-full items-center justify-center p-4 sm:p-6">
+                            <div class="w-full max-w-lg rounded-[28px] border border-slate-200/80 dark:border-white/10 bg-white dark:bg-slate-900 shadow-[0_32px_90px_rgba(15,23,42,0.28)] overflow-hidden">
+                                <div class="relative">
+                                    <div class="absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-blue-500/10 via-cyan-400/10 to-emerald-400/10"></div>
+                                    <div class="relative p-5 sm:p-6">
+                                        <div class="flex items-start gap-4">
+                                            <span class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300 shadow-sm">
+                                                <svg class="h-6 w-6 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
+                                                </svg>
+                                            </span>
+                                            <div class="min-w-0 flex-1">
+                                                <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                                    <div class="text-sm font-black uppercase tracking-wide text-slate-800 dark:text-white">Auto Register ONU</div>
+                                                    <div class="inline-flex w-fit items-center rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+                                                        {{ Math.round(autoRegisterModalPercent) }}%
+                                                    </div>
+                                                </div>
+                                                <div class="mt-2 text-sm font-semibold leading-6 text-slate-700 dark:text-slate-100 break-words">
+                                                    {{ autoRegisterModalText }}
+                                                </div>
+                                                <div class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400 break-words">
+                                                    {{ autoRegisterModalNote }}
+                                                </div>
+                                                <div class="mt-1 text-[11px] leading-5 text-slate-400 dark:text-slate-500 break-words">
+                                                    {{ autoRegisterModalEta }}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="mt-5 rounded-2xl border border-slate-200/70 dark:border-white/10 bg-slate-50/80 dark:bg-slate-950/40 p-4">
+                                            <div class="flex items-center justify-between gap-3 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                                <span>Progress Queue</span>
+                                                <span>{{ Math.round(autoRegisterModalPercent) }}%</span>
+                                            </div>
+                                            <div class="mt-3 h-3 overflow-hidden rounded-full bg-white dark:bg-slate-800 ring-1 ring-slate-200/70 dark:ring-white/10">
+                                                <div
+                                                    class="h-full rounded-full bg-[linear-gradient(90deg,#2563eb_0%,#0ea5e9_55%,#10b981_100%)] transition-all duration-500"
+                                                    :style="{ width: `${Math.round(autoRegisterModalPercent)}%` }"
+                                                ></div>
+                                            </div>
+                                            <div class="mt-3 flex flex-col gap-2 text-[11px] text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                                                <span>Queue worker sedang memproses batch auto register.</span>
+                                                <span class="font-semibold text-slate-600 dark:text-slate-300">Jangan tutup worker selama proses berjalan.</span>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
+                </Teleport>
             </div>
         </div>
     </AdminLayout>
