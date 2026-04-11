@@ -631,6 +631,11 @@ const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
 const autoRegisterRunId = ref(null);
+const autoRegisterModalOpen = ref(false);
+const autoRegisterModalText = ref('Menyiapkan auto register...');
+const autoRegisterModalNote = ref('Mohon tunggu, proses berjalan di queue worker.');
+const autoRegisterModalEta = ref('Estimasi: menunggu queue worker...');
+const autoRegisterModalPercent = ref(0);
 let autoRegisterPollTimer = null;
 
 // Live status (native parity): rotate command lines while actions run.
@@ -726,6 +731,26 @@ function removeUncfgItemsByKeys(keys) {
     storeUncfgCache(selectedOltId.value);
 }
 
+function showAutoRegisterModal(text, note = 'Mohon tunggu, proses berjalan di queue worker.', percent = 0, eta = 'Estimasi: menunggu queue worker...') {
+    autoRegisterModalText.value = String(text || 'Menyiapkan auto register...');
+    autoRegisterModalNote.value = String(note || '');
+    autoRegisterModalEta.value = String(eta || '');
+    autoRegisterModalPercent.value = Math.max(0, Math.min(100, Number(percent || 0)));
+    autoRegisterModalOpen.value = true;
+}
+
+function updateAutoRegisterModal(text, percent, note, eta) {
+    autoRegisterModalText.value = String(text || autoRegisterModalText.value || 'Auto register berjalan...');
+    autoRegisterModalPercent.value = Math.max(0, Math.min(100, Number(percent || 0)));
+    if (note !== undefined) autoRegisterModalNote.value = String(note || '');
+    if (eta !== undefined) autoRegisterModalEta.value = String(eta || '');
+    autoRegisterModalOpen.value = true;
+}
+
+function hideAutoRegisterModal() {
+    autoRegisterModalOpen.value = false;
+}
+
 function stopAutoRegisterPolling(resetRun = true) {
     if (autoRegisterPollTimer) {
         clearTimeout(autoRegisterPollTimer);
@@ -746,6 +771,7 @@ function scheduleAutoRegisterPoll(runId, delay = 3000) {
 async function finishAutoRegisterRun(status, summary = {}) {
     stopAutoRegisterPolling();
     registerBusy.value = false;
+    hideAutoRegisterModal();
 
     const errorCount = Number(summary.error || 0);
     let message = String(summary.state_text || summary.message || '').trim();
@@ -802,13 +828,23 @@ async function pollAutoRegisterStatus(runId) {
             return;
         }
 
+        const processedCount = Number(summary.processed_count || 0);
         const processedBatches = Number(summary.processed_batches || 0);
         const totalBatches = Number(summary.total_batches || 0);
+        const currentBatch = Number(summary.current_batch || 0);
+        const totalCount = Number(summary.total_count || 0);
         const remainingCount = Number(summary.remaining_count || 0);
         const successCount = Number(summary.success || 0);
         const errorCount = Number(summary.error || 0);
         const stateText = String(summary.state_text || '').trim();
         const progressText = stateText || `Auto register berjalan. Batch ${processedBatches}/${totalBatches}, sisa ${remainingCount} ONU.`;
+        const percent = totalCount > 0 ? (processedCount / totalCount) * 100 : 0;
+        updateAutoRegisterModal(
+            progressText,
+            percent,
+            `Batch ${Math.max(currentBatch, processedBatches)}/${Math.max(totalBatches, 1)} | Success ${successCount} | Error ${errorCount}`,
+            remainingCount > 0 ? `Sisa ${remainingCount} ONU untuk diproses.` : 'Menyelesaikan proses...'
+        );
         setUncfgStatus(`${progressText} Success ${successCount}, error ${errorCount}.`, 'loading');
 
         scheduleAutoRegisterPoll(runId);
@@ -816,9 +852,16 @@ async function pollAutoRegisterStatus(runId) {
         if ([403, 404, 422].includes(Number(e?.status || 0))) {
             stopAutoRegisterPolling();
             registerBusy.value = false;
+            hideAutoRegisterModal();
             setUncfgStatus(e.message || 'Auto register gagal dipantau.', 'error');
             return;
         }
+        updateAutoRegisterModal(
+            'Koneksi status terputus sementara.',
+            autoRegisterModalPercent.value,
+            'Frontend akan mencoba polling ulang otomatis.',
+            'Estimasi: mencoba lagi dalam beberapa detik...'
+        );
         setUncfgStatus(e.message || 'Gagal memantau auto register. Mencoba lagi...', 'loading');
         scheduleAutoRegisterPoll(runId, 5000);
     }
@@ -912,6 +955,12 @@ async function autoRegister() {
     registerBusy.value = true;
     stopAutoRegisterPolling();
     try {
+        showAutoRegisterModal(
+            `Mengantrikan auto register per ${AUTO_REGISTER_BATCH_SIZE} ONU...`,
+            'Daftar ONU unregistered sedang dipersiapkan untuk queue worker.',
+            2,
+            'Estimasi: menunggu job pertama diproses...'
+        );
         setUncfgStatus(`Mengantrikan auto register per ${AUTO_REGISTER_BATCH_SIZE} ONU...`, 'loading');
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/auto-register`, {
             method: 'POST',
@@ -925,6 +974,7 @@ async function autoRegister() {
         const runId = Number(data.run_id || data.log_id || 0);
         if (!runId) {
             if (Number(summary.total_count || 0) === 0) {
+                hideAutoRegisterModal();
                 setUncfgStatus(data.message || 'Tidak ada ONU unregistered.', 'info');
                 registerBusy.value = false;
                 return;
@@ -935,6 +985,12 @@ async function autoRegister() {
         autoRegisterRunId.value = runId;
         const totalCount = Number(summary.total_count || 0);
         const totalBatches = Number(summary.total_batches || Math.ceil(totalCount / AUTO_REGISTER_BATCH_SIZE));
+        updateAutoRegisterModal(
+            data.message || `Auto register diantrikan: ${totalCount} ONU dalam ${totalBatches} batch.`,
+            4,
+            `Queue worker akan memproses ${totalBatches} batch.`,
+            totalCount > 0 ? `Total ${totalCount} ONU menunggu diproses.` : 'Estimasi: menunggu queue worker...'
+        );
         setUncfgStatus(
             data.message || `Auto register diantrikan: ${totalCount} ONU dalam ${totalBatches} batch.`,
             'loading'
@@ -943,11 +999,18 @@ async function autoRegister() {
     } catch (e) {
         if (e?.status === 409 && Number(e?.data?.run_id || 0) > 0) {
             autoRegisterRunId.value = Number(e.data.run_id);
+            showAutoRegisterModal(
+                'Menyambungkan ke proses auto register yang sudah berjalan...',
+                'Halaman mendeteksi run aktif pada OLT ini.',
+                autoRegisterModalPercent.value || 5,
+                'Estimasi: memuat progres terbaru...'
+            );
             setUncfgStatus(e.message || 'Auto register sedang berjalan. Menyambungkan polling status...', 'loading');
             await pollAutoRegisterStatus(autoRegisterRunId.value);
             return;
         }
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
+        hideAutoRegisterModal();
         setUncfgStatus(e.message || 'Auto register gagal', 'error');
         registerBusy.value = false;
     } finally {
@@ -2295,6 +2358,7 @@ function loadRegisteredMemoryCache(oltId) {
 async function onOltChanged(newId, prevId) {
     stopLiveStatus();
     stopAutoRegisterPolling();
+    hideAutoRegisterModal();
 
     if (prevId) {
         storeUncfgCache(prevId);
@@ -2362,6 +2426,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
     stopLiveStatus();
     stopAutoRegisterPolling();
+    hideAutoRegisterModal();
 });
 </script>
 
@@ -3362,6 +3427,38 @@ onBeforeUnmount(() => {
                                         ></div>
                                     </div>
                                     <div id="olt-sync-percent" class="mt-2 text-[11px] text-slate-500">{{ Math.round(syncPercent) }}%</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="autoRegisterModalOpen" id="olt-auto-register-modal" class="fixed inset-0 z-[85]">
+                    <div class="absolute inset-0 bg-slate-950/45 backdrop-blur-sm"></div>
+                    <div class="absolute top-1/2 left-1/2 w-[92%] max-w-md -translate-x-1/2 -translate-y-1/2">
+                        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl p-5">
+                            <div class="flex items-start gap-3">
+                                <span class="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                                    <svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
+                                    </svg>
+                                </span>
+                                <div class="flex-1">
+                                    <div class="text-sm font-black text-slate-800 dark:text-white uppercase">Auto Register ONU</div>
+                                    <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ autoRegisterModalText }}</div>
+                                    <div class="text-[11px] text-slate-400 dark:text-slate-500 mt-2">{{ autoRegisterModalNote }}</div>
+                                    <div class="text-[11px] text-slate-400 dark:text-slate-500 mt-1">{{ autoRegisterModalEta }}</div>
+                                    <div class="mt-3 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                                        <div
+                                            class="h-full bg-blue-500 transition-all duration-500"
+                                            :style="{ width: `${Math.round(autoRegisterModalPercent)}%` }"
+                                        ></div>
+                                    </div>
+                                    <div class="mt-2 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                                        <span>Queue worker sedang memproses batch auto register.</span>
+                                        <span class="font-bold">{{ Math.round(autoRegisterModalPercent) }}%</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
