@@ -833,20 +833,13 @@ async function finishAutoRegisterRun(status, summary = {}) {
         status === 'error'
             ? 'Proses auto register berhenti dengan error. Periksa log command untuk detail.'
             : errorCount > 0
-                ? `Proses selesai dengan ${errorCount} ONU gagal. Periksa log command untuk detail.`
-                : `Semua batch selesai diproses. Success ${Number(summary.success || 0)}, error ${errorCount}.`,
+                ? `Proses selesai dengan ${errorCount} ONU gagal. Periksa log command untuk detail. Data ONU Registered tidak di-refresh otomatis.`
+                : `Semua batch selesai diproses. Success ${Number(summary.success || 0)}, error ${errorCount}. Data ONU Registered tidak di-refresh otomatis.`,
         100,
         'Selesai',
         status === 'error' ? 'error' : errorCount > 0 ? 'info' : 'success'
     );
     setUncfgStatus(message, status === 'error' ? 'error' : errorCount > 0 ? 'info' : 'success');
-
-    regFilterFsp.value = 'all';
-    try {
-        await changeRegFsp();
-    } catch {
-        // ignore registered refresh errors
-    }
     loadLogs().catch(() => {});
 }
 
