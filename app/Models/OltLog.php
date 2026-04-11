@@ -145,4 +145,67 @@ class OltLog extends Model
             return null;
         }
     }
+
+    public static function updateLog(
+        int $id,
+        ?string $status = null,
+        ?array $summary = null,
+        ?string $logText = null,
+        ?string $actor = null
+    ): bool {
+        $cols = self::columns();
+        if (empty($cols) || !isset($cols['id'])) {
+            return false;
+        }
+
+        $table = (new static())->getTable();
+        $data = [];
+
+        if ($status !== null) {
+            $status = substr(trim((string) $status), 0, 20);
+            if (isset($cols['status'])) {
+                $data['status'] = $status;
+            } elseif (isset($cols['success'])) {
+                $s = strtolower($status);
+                $data['success'] = !in_array($s, ['error', 'failed', 'fail'], true);
+            }
+        }
+
+        if ($summary !== null) {
+            $summaryJson = json_encode($summary, JSON_UNESCAPED_UNICODE);
+            if ($summaryJson !== false) {
+                if (isset($cols['summary_json'])) {
+                    $data['summary_json'] = $summaryJson;
+                } elseif (isset($cols['command'])) {
+                    $data['command'] = $summaryJson;
+                }
+            }
+        }
+
+        if ($logText !== null) {
+            if (isset($cols['log_text'])) {
+                $data['log_text'] = $logText;
+            } elseif (isset($cols['response'])) {
+                $data['response'] = $logText;
+            }
+        }
+
+        if ($actor !== null && isset($cols['actor'])) {
+            $data['actor'] = substr(trim((string) $actor), 0, 100);
+        }
+
+        if (isset($cols['updated_at'])) {
+            $data['updated_at'] = now();
+        }
+
+        if (empty($data)) {
+            return false;
+        }
+
+        try {
+            return DB::table($table)->where('id', $id)->update($data) > 0;
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
 }

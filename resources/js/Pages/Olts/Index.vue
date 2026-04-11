@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Head, usePage } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 
@@ -53,6 +53,17 @@ async function fetchJson(url, options = {}) {
     }
 
     return data;
+}
+
+function parseSummaryJson(value) {
+    const text = String(value || '').trim();
+    if (!text) return {};
+    try {
+        const parsed = JSON.parse(text);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
 }
 
 function sortFspList(list) {
@@ -619,6 +630,8 @@ const manualRegisterActive = ref(false);
 const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
+const autoRegisterRunId = ref(null);
+let autoRegisterPollTimer = null;
 
 // Live status (native parity): rotate command lines while actions run.
 let statusTimer = null;
@@ -713,6 +726,104 @@ function removeUncfgItemsByKeys(keys) {
     storeUncfgCache(selectedOltId.value);
 }
 
+function stopAutoRegisterPolling(resetRun = true) {
+    if (autoRegisterPollTimer) {
+        clearTimeout(autoRegisterPollTimer);
+        autoRegisterPollTimer = null;
+    }
+    if (resetRun) {
+        autoRegisterRunId.value = null;
+    }
+}
+
+function scheduleAutoRegisterPoll(runId, delay = 3000) {
+    stopAutoRegisterPolling(false);
+    autoRegisterPollTimer = setTimeout(() => {
+        pollAutoRegisterStatus(runId).catch(() => {});
+    }, delay);
+}
+
+async function finishAutoRegisterRun(status, summary = {}) {
+    stopAutoRegisterPolling();
+    registerBusy.value = false;
+
+    const errorCount = Number(summary.error || 0);
+    let message = String(summary.state_text || summary.message || '').trim();
+    if (!message) {
+        if (status === 'error') {
+            message = 'Auto register gagal.';
+        } else if (errorCount > 0) {
+            message = `Auto register selesai dengan error ${errorCount} ONU.`;
+        } else {
+            message = `Auto register selesai. Success ${Number(summary.success || 0)}, error ${errorCount}.`;
+        }
+    }
+
+    try {
+        await scanUncfg();
+    } catch {
+        // ignore refresh scan errors
+    }
+
+    setUncfgStatus(message, status === 'error' ? 'error' : errorCount > 0 ? 'info' : 'success');
+
+    regFilterFsp.value = 'all';
+    try {
+        await changeRegFsp();
+    } catch {
+        // ignore registered refresh errors
+    }
+    loadLogs().catch(() => {});
+}
+
+async function pollAutoRegisterStatus(runId) {
+    if (!selectedOltId.value || !runId) {
+        stopAutoRegisterPolling();
+        registerBusy.value = false;
+        return;
+    }
+
+    try {
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/auto-register-status?run_id=${encodeURIComponent(runId)}`);
+        const payload = data?.data || {};
+        const summary = payload?.summary && typeof payload.summary === 'object' ? payload.summary : {};
+        const status = String(payload?.status || '');
+
+        if (payload?.log_text) {
+            lastLogExcerpt.value = String(payload.log_text);
+        }
+
+        if (Array.isArray(summary.success_keys)) {
+            removeUncfgItemsByKeys(summary.success_keys);
+        }
+
+        if (payload?.is_finished) {
+            await finishAutoRegisterRun(status, summary);
+            return;
+        }
+
+        const processedBatches = Number(summary.processed_batches || 0);
+        const totalBatches = Number(summary.total_batches || 0);
+        const remainingCount = Number(summary.remaining_count || 0);
+        const successCount = Number(summary.success || 0);
+        const errorCount = Number(summary.error || 0);
+        const stateText = String(summary.state_text || '').trim();
+        const progressText = stateText || `Auto register berjalan. Batch ${processedBatches}/${totalBatches}, sisa ${remainingCount} ONU.`;
+        setUncfgStatus(`${progressText} Success ${successCount}, error ${errorCount}.`, 'loading');
+
+        scheduleAutoRegisterPoll(runId);
+    } catch (e) {
+        if ([403, 404, 422].includes(Number(e?.status || 0))) {
+            stopAutoRegisterPolling();
+            registerBusy.value = false;
+            setUncfgStatus(e.message || 'Auto register gagal dipantau.', 'error');
+            return;
+        }
+        setUncfgStatus(e.message || 'Gagal memantau auto register. Mencoba lagi...', 'loading');
+        scheduleAutoRegisterPoll(runId, 5000);
+    }
+}
+
 function storeUncfgCache(oltId) {
     if (!canManualRegister.value) return;
     const key = String(oltId || '').trim();
@@ -799,77 +910,47 @@ async function autoRegister() {
     const prefix = prompt('Prefix nama ONU (opsional, max 16). Contoh: RT01', '') || '';
 
     registerBusy.value = true;
+    stopAutoRegisterPolling();
     try {
-        if (!uncfg.value.length) {
-            await scanUncfg();
+        setUncfgStatus(`Mengantrikan auto register per ${AUTO_REGISTER_BATCH_SIZE} ONU...`, 'loading');
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/auto-register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name_prefix: prefix }),
+        });
+        if (data.status !== 'ok') throw new Error(data.message || 'Auto register gagal');
+        if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
+
+        const summary = data.summary && typeof data.summary === 'object' ? data.summary : {};
+        const runId = Number(data.run_id || data.log_id || 0);
+        if (!runId) {
+            if (Number(summary.total_count || 0) === 0) {
+                setUncfgStatus(data.message || 'Tidak ada ONU unregistered.', 'info');
+                registerBusy.value = false;
+                return;
+            }
+            throw new Error('Run auto register tidak valid.');
         }
-        if (!uncfg.value.length) {
-            setUncfgStatus('Tidak ada ONU unregistered.', 'info');
+
+        autoRegisterRunId.value = runId;
+        const totalCount = Number(summary.total_count || 0);
+        const totalBatches = Number(summary.total_batches || Math.ceil(totalCount / AUTO_REGISTER_BATCH_SIZE));
+        setUncfgStatus(
+            data.message || `Auto register diantrikan: ${totalCount} ONU dalam ${totalBatches} batch.`,
+            'loading'
+        );
+        await pollAutoRegisterStatus(runId);
+    } catch (e) {
+        if (e?.status === 409 && Number(e?.data?.run_id || 0) > 0) {
+            autoRegisterRunId.value = Number(e.data.run_id);
+            setUncfgStatus(e.message || 'Auto register sedang berjalan. Menyambungkan polling status...', 'loading');
+            await pollAutoRegisterStatus(autoRegisterRunId.value);
             return;
         }
-
-        const initialTotal = uncfg.value.length;
-        const totalBatches = Math.max(1, Math.ceil(initialTotal / AUTO_REGISTER_BATCH_SIZE));
-        let batchNumber = 0;
-        let totalSuccess = 0;
-        let totalError = 0;
-
-        while (uncfg.value.length) {
-            batchNumber += 1;
-            const batchItems = uncfg.value
-                .slice(0, AUTO_REGISTER_BATCH_SIZE)
-                .map(item => ({ fsp: String(item.fsp || ''), sn: String(item.sn || '') }));
-            const firstIndex = ((batchNumber - 1) * AUTO_REGISTER_BATCH_SIZE) + 1;
-            const lastIndex = firstIndex + batchItems.length - 1;
-
-            setUncfgStatus(
-                `Auto register batch ${batchNumber}/${totalBatches} (${firstIndex}-${lastIndex} dari ${initialTotal})...`,
-                'loading'
-            );
-
-            const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/auto-register`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name_prefix: prefix,
-                    batch_size: AUTO_REGISTER_BATCH_SIZE,
-                    items: batchItems,
-                }),
-            });
-            if (data.status !== 'ok') throw new Error(data.message || 'Auto register gagal');
-            if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
-
-            const s = data.summary || {};
-            totalSuccess += Number(s.success || 0);
-            totalError += Number(s.error || 0);
-
-            const processedKeys = Array.isArray(data.processed_keys)
-                ? data.processed_keys
-                : batchItems.map(item => getUncfgItemKey(item));
-            removeUncfgItemsByKeys(processedKeys);
-
-            if (uncfg.value.length) {
-                setUncfgStatus(
-                    `Batch ${batchNumber}/${totalBatches} selesai. Success ${s.success || 0}, error ${s.error || 0}. Sisa ${uncfg.value.length} ONU.`,
-                    'loading'
-                );
-            }
-        }
-
-        setUncfgStatus(
-            totalError > 0
-                ? `Auto register selesai per 10 ONU. Success ${totalSuccess}, error ${totalError}. Scan ulang jika ingin cek ONU yang masih gagal.`
-                : `Auto register selesai per 10 ONU. Success ${totalSuccess}, error ${totalError}.`,
-            totalError > 0 ? 'info' : 'success'
-        );
-
-        regFilterFsp.value = 'all';
-        await changeRegFsp();
-    } catch (e) {
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setUncfgStatus(e.message || 'Auto register gagal', 'error');
-    } finally {
         registerBusy.value = false;
+    } finally {
         loadLogs().catch(() => {});
     }
 }
@@ -2117,6 +2198,22 @@ async function loadLogs() {
             const t = logs.value[0]?.log_text ? String(logs.value[0].log_text) : '';
             if (t) lastLogExcerpt.value = t;
         }
+
+        if (!autoRegisterRunId.value) {
+            const activeRun = (Array.isArray(logs.value) ? logs.value : []).find(item => {
+                const action = String(item?.action || '');
+                const status = String(item?.status || '');
+                return action === 'register_auto' && ['queued', 'processing'].includes(status);
+            });
+            if (activeRun?.id) {
+                autoRegisterRunId.value = Number(activeRun.id);
+                registerBusy.value = true;
+                const summary = parseSummaryJson(activeRun.summary_json);
+                const progressText = String(summary.state_text || '').trim() || 'Auto register sedang berjalan.';
+                setUncfgStatus(progressText, 'loading');
+                scheduleAutoRegisterPoll(autoRegisterRunId.value, 1500);
+            }
+        }
     } catch {
         logs.value = [];
     } finally {
@@ -2197,6 +2294,7 @@ function loadRegisteredMemoryCache(oltId) {
 
 async function onOltChanged(newId, prevId) {
     stopLiveStatus();
+    stopAutoRegisterPolling();
 
     if (prevId) {
         storeUncfgCache(prevId);
@@ -2208,6 +2306,7 @@ async function onOltChanged(newId, prevId) {
 
     uncfg.value = [];
     clearUncfgSelection();
+    registerBusy.value = false;
     manualRegisterActive.value = false;
     registerProgressText.value = 'Registrasi berjalan...';
     teknisiWriteReady.value = false;
@@ -2258,6 +2357,11 @@ watch(selectedOltId, (val, oldVal) => {
 
 onMounted(async () => {
     await loadOlts();
+});
+
+onBeforeUnmount(() => {
+    stopLiveStatus();
+    stopAutoRegisterPolling();
 });
 </script>
 

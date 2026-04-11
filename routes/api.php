@@ -206,6 +206,7 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->prefix('v1')->n
     Route::post('/olts/{id}/restart-onu', [OltController::class, 'restartOnu']);
     Route::post('/olts/{id}/write-config', [OltController::class, 'writeConfig']);
     Route::post('/olts/{id}/auto-register', [OltController::class, 'autoRegister']);
+    Route::get('/olts/{id}/auto-register-status', [OltController::class, 'autoRegisterStatus']);
     Route::post('/olts/{id}/sync-onu-names', [OltController::class, 'syncOnuNames']);
     Route::post('/olts/{id}/sync-all', [OltController::class, 'syncAll']);
     Route::get('/olts/{id}/logs', [OltController::class, 'logs']);

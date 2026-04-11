@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Jobs\AutoRegisterOnuBatchJob;
 use App\Http\Controllers\Controller;
 use App\Models\Olt;
 use App\Models\OltOnu;
@@ -90,6 +91,104 @@ class OltController extends Controller
         } catch (Throwable $e) {
             return null;
         }
+    }
+
+    /**
+     * @param array<int, mixed> $items
+     * @return array<int, array{fsp:string,sn:string}>
+     */
+    private function normalizeUncfgItems(array $items, int $limit = 0): array
+    {
+        $normalized = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $fsp = trim((string) ($item['fsp'] ?? ''));
+            $sn = strtoupper(trim((string) ($item['sn'] ?? '')));
+            if ($fsp === '' || $sn === '') {
+                continue;
+            }
+
+            $normalized[] = [
+                'fsp' => $fsp,
+                'sn' => $sn,
+            ];
+
+            if ($limit > 0 && count($normalized) >= $limit) {
+                break;
+            }
+        }
+
+        return $normalized;
+    }
+
+    private function decodeOltLogSummaryValue($value): array
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    private function resolveAutoRegisterQueueTarget(): array
+    {
+        $queueConnection = trim((string) env('OLT_DAILY_SYNC_QUEUE_CONNECTION', 'database'));
+        if ($queueConnection === '') {
+            $queueConnection = 'database';
+        }
+
+        $queueName = trim((string) env('OLT_DAILY_SYNC_QUEUE', 'olt-sync'));
+        if ($queueName === '') {
+            $queueName = 'olt-sync';
+        }
+
+        $connections = (array) config('queue.connections', []);
+        if (!isset($connections[$queueConnection])) {
+            throw new RuntimeException("Queue connection '{$queueConnection}' tidak ditemukan.");
+        }
+
+        $connectionConfig = (array) $connections[$queueConnection];
+        $driver = (string) ($connectionConfig['driver'] ?? '');
+        if ($driver === 'sync') {
+            throw new RuntimeException('Queue connection masih memakai driver sync. Ubah ke database/redis dan jalankan queue worker.');
+        }
+
+        if ($driver === 'database') {
+            $jobsTable = (string) ($connectionConfig['table'] ?? 'jobs');
+            $dbConnection = $connectionConfig['connection'] ?? null;
+            $hasJobsTable = $dbConnection
+                ? Schema::connection((string) $dbConnection)->hasTable($jobsTable)
+                : Schema::hasTable($jobsTable);
+
+            if (!$hasJobsTable) {
+                throw new RuntimeException("Queue table '{$jobsTable}' untuk connection '{$queueConnection}' tidak ditemukan.");
+            }
+        }
+
+        return [
+            'connection' => $queueConnection,
+            'queue' => $queueName,
+        ];
+    }
+
+    private function findActiveAutoRegisterRun(int $tenantId, int $oltId): ?object
+    {
+        $table = (new OltLog())->getTable();
+        if (!Schema::hasTable($table)) {
+            return null;
+        }
+
+        return DB::table($table)
+            ->where('tenant_id', $tenantId)
+            ->where('olt_id', $oltId)
+            ->where('action', 'register_auto')
+            ->whereIn('status', ['queued', 'processing'])
+            ->orderByDesc('id')
+            ->first();
     }
 
     /**
@@ -1542,7 +1641,7 @@ class OltController extends Controller
     }
 
     /**
-     * Auto-register all unconfigured ONUs (native parity)
+     * Queue auto-register unconfigured ONUs in batches.
      */
     public function autoRegister(Request $request, int $id): JsonResponse
     {
@@ -1560,146 +1659,166 @@ class OltController extends Controller
         $request->validate([
             'name_prefix' => 'nullable|string|max:16',
             'save_config' => 'nullable|boolean',
-            'batch_size' => 'nullable|integer|min:1|max:10',
-            'items' => 'nullable|array|max:10',
-            'items.*.fsp' => 'required_with:items|string|regex:/^\d+\/\d+\/\d+$/',
-            'items.*.sn' => 'required_with:items|string|regex:/^[A-Za-z]{4}[A-Fa-f0-9]{8}$/',
         ]);
 
         $namePrefix = trim((string) ($request->input('name_prefix') ?? ''));
         if ($namePrefix !== '') {
-            // Keep it CLI-safe and short.
             $namePrefix = preg_replace('/[^A-Za-z0-9_-]/', '', $namePrefix);
             $namePrefix = substr($namePrefix, 0, 16);
         }
 
-        // Native parity: default is NOT to run write-config; users can click "Simpan Config" separately.
-        $saveConfig = $request->boolean('save_config', false);
-        $batchSize = (int) ($request->input('batch_size') ?: 10);
+        if ($request->boolean('save_config', false)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Mode queue tidak mendukung write config otomatis. Gunakan tombol Simpan Config setelah auto register selesai.',
+            ], 422);
+        }
+
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         $actor = $this->actorName($request);
+        $batchSize = 10;
+
+        try {
+            $queueTarget = $this->resolveAutoRegisterQueueTarget();
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+
+        $existingRun = $this->findActiveAutoRegisterRun($tenantId, (int) $olt->id);
+        if ($existingRun) {
+            $summary = $this->decodeOltLogSummaryValue((string) (data_get($existingRun, 'summary_json') ?? data_get($existingRun, 'command') ?? ''));
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Auto register masih berjalan untuk OLT ini. Tunggu proses sebelumnya selesai.',
+                'run_id' => (int) ($existingRun->id ?? 0),
+                'summary' => $summary,
+            ], 409);
+        }
 
         $service = null;
         $logExcerpt = '';
-        $logId = null;
         try {
             $service = new OltService($tenantId);
             $service->setSuppressActionLog(true);
             $service->connect($olt);
             $service->startTrace();
+            $uncfg = $this->normalizeUncfgItems($service->scanUnconfigured());
+            $logExcerpt = $service->getTraceText(20000);
+            $service->disconnect();
 
-            $itemsInput = $request->input('items', []);
-            $batchItems = [];
+            if (empty($uncfg)) {
+                OltLog::logAction(
+                    $tenantId,
+                    (int) $olt->id,
+                    (string) ($olt->nama_olt ?? ''),
+                    'register_auto',
+                    'done',
+                    [
+                        'mode' => 'queued_batches',
+                        'batch_size' => $batchSize,
+                        'total_count' => 0,
+                        'total_batches' => 0,
+                        'processed_batches' => 0,
+                        'processed_count' => 0,
+                        'remaining_count' => 0,
+                        'success' => 0,
+                        'error' => 0,
+                        'success_keys' => [],
+                        'failed_items' => [],
+                        'state_text' => 'Tidak ada ONU unregistered.',
+                        'queue_connection' => $queueTarget['connection'],
+                        'queue' => $queueTarget['queue'],
+                        'started_at' => now()->toDateTimeString(),
+                        'finished_at' => now()->toDateTimeString(),
+                    ],
+                    $logExcerpt,
+                    $actor
+                );
 
-            if (is_array($itemsInput) && !empty($itemsInput)) {
-                foreach (array_slice($itemsInput, 0, $batchSize) as $item) {
-                    if (!is_array($item)) {
-                        continue;
-                    }
-
-                    $fsp = trim((string) ($item['fsp'] ?? ''));
-                    $sn = strtoupper(trim((string) ($item['sn'] ?? '')));
-                    if ($fsp === '' || $sn === '') {
-                        continue;
-                    }
-
-                    $batchItems[] = [
-                        'fsp' => $fsp,
-                        'sn' => $sn,
-                    ];
-                }
-            } else {
-                $uncfg = $service->scanUnconfigured();
-                $batchItems = array_slice($uncfg, 0, $batchSize);
-            }
-
-            if (empty($batchItems)) {
-                $service->disconnect();
                 return response()->json([
                     'status' => 'ok',
                     'message' => 'Tidak ada ONU unregistered.',
                     'summary' => [
-                        'count' => 0,
+                        'mode' => 'queued_batches',
+                        'batch_size' => $batchSize,
+                        'total_count' => 0,
+                        'total_batches' => 0,
+                        'processed_batches' => 0,
+                        'processed_count' => 0,
+                        'remaining_count' => 0,
                         'success' => 0,
                         'error' => 0,
-                    ],
-                    'results' => [],
-                    'processed_keys' => [],
-                    'meta' => [
-                        'batch_size' => $batchSize,
-                        'processed_count' => 0,
+                        'success_keys' => [],
+                        'failed_items' => [],
                     ],
                 ]);
             }
 
-            $results = [];
-            $succ = 0;
-            $err = 0;
-            $processedKeys = [];
-            foreach ($batchItems as $it) {
-                $fsp = (string) ($it['fsp'] ?? '');
-                $sn = (string) ($it['sn'] ?? '');
-                if ($fsp === '' || $sn === '') continue;
-
-                $processedKeys[] = $fsp . ':' . strtoupper($sn);
-                $onuName = $namePrefix !== '' ? "{$namePrefix}-{$sn}" : "ONU-{$sn}";
-                $onuName = substr($onuName, 0, 32);
-
-                try {
-                    $res = $service->registerOnu($fsp, $sn, $onuName, null);
-                    $succ++;
-                    $results[] = [
-                        'fsp' => $fsp,
-                        'sn' => $sn,
-                        'onu_id' => $res['onu_id'] ?? null,
-                        'name' => $res['name'] ?? $onuName,
-                        'status' => 'success',
-                        'message' => 'Provisioned',
-                    ];
-                } catch (RuntimeException $e) {
-                    $err++;
-                    $results[] = [
-                        'fsp' => $fsp,
-                        'sn' => $sn,
-                        'status' => 'error',
-                        'message' => $e->getMessage(),
-                    ];
-                }
-            }
-
-            if ($saveConfig && $succ > 0) {
-                $service->writeConfig();
-            }
-
-            $logExcerpt = $service->getTraceText(20000);
-            $service->disconnect();
-
+            $totalCount = count($uncfg);
+            $totalBatches = (int) ceil($totalCount / $batchSize);
             $summary = [
-                'count' => $succ + $err,
-                'success' => $succ,
-                'error' => $err,
+                'mode' => 'queued_batches',
+                'batch_size' => $batchSize,
+                'total_count' => $totalCount,
+                'total_batches' => $totalBatches,
+                'processed_batches' => 0,
+                'current_batch' => 0,
+                'processed_count' => 0,
+                'remaining_count' => $totalCount,
+                'success' => 0,
+                'error' => 0,
+                'success_keys' => [],
+                'failed_items' => [],
+                'state_text' => 'Menunggu queue worker memulai auto register.',
+                'queue_connection' => $queueTarget['connection'],
+                'queue' => $queueTarget['queue'],
+                'started_at' => now()->toDateTimeString(),
             ];
+
             $logId = OltLog::logAction(
                 $tenantId,
-                $olt->id,
-                $olt->nama_olt,
+                (int) $olt->id,
+                (string) ($olt->nama_olt ?? ''),
                 'register_auto',
-                'done',
+                'queued',
                 $summary,
-                $logExcerpt,
+                trim("Queue auto register dibuat untuk {$totalCount} ONU ({$totalBatches} batch).\n\n{$logExcerpt}"),
                 $actor
             );
 
+            if (!$logId) {
+                throw new RuntimeException('Gagal membuat tracker log auto register.');
+            }
+
+            $firstBatch = array_slice($uncfg, 0, $batchSize);
+            $remainingItems = array_slice($uncfg, $batchSize);
+
+            AutoRegisterOnuBatchJob::dispatch(
+                $tenantId,
+                (int) $olt->id,
+                (int) $logId,
+                $firstBatch,
+                $remainingItems,
+                $namePrefix,
+                $actor,
+                1,
+                $totalBatches,
+                $batchSize,
+                $totalCount,
+                $queueTarget['connection'],
+                $queueTarget['queue']
+            )
+                ->onConnection($queueTarget['connection'])
+                ->onQueue($queueTarget['queue']);
+
             return response()->json([
                 'status' => 'ok',
-                'message' => "Auto register selesai. Success {$succ}, error {$err}.",
+                'message' => "Auto register diantrikan: {$totalCount} ONU dalam {$totalBatches} batch. Pantau progres di halaman ini.",
+                'run_id' => (int) $logId,
                 'summary' => $summary,
-                'results' => $results,
-                'processed_keys' => $processedKeys,
-                'meta' => [
-                    'batch_size' => $batchSize,
-                    'processed_count' => count($processedKeys),
-                ],
                 'log_id' => $logId,
                 'log_excerpt' => $logExcerpt,
             ]);
@@ -1713,30 +1832,60 @@ class OltController extends Controller
                 // ignore
             }
 
-            $summary = [
-                'count' => 0,
-                'success' => 0,
-                'error' => 1,
-                'message' => $e->getMessage(),
-            ];
-            $logId = OltLog::logAction(
-                $tenantId,
-                $olt->id,
-                $olt->nama_olt,
-                'register_auto',
-                'error',
-                $summary,
-                $logExcerpt !== '' ? $logExcerpt : $e->getMessage(),
-                $actor
-            );
-
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
-                'log_id' => $logId,
                 'log_excerpt' => $logExcerpt,
             ], 422);
         }
+    }
+
+    public function autoRegisterStatus(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'run_id' => 'required|integer|min:1',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $table = (new OltLog())->getTable();
+        if (!Schema::hasTable($table)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Tabel log OLT belum tersedia.',
+            ], 404);
+        }
+
+        $row = DB::table($table)
+            ->where('tenant_id', $tenantId)
+            ->where('olt_id', $id)
+            ->where('id', (int) $request->input('run_id'))
+            ->where('action', 'register_auto')
+            ->first();
+
+        if (!$row) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Run auto register tidak ditemukan.',
+            ], 404);
+        }
+
+        $summary = $this->decodeOltLogSummaryValue((string) (data_get($row, 'summary_json') ?? data_get($row, 'command') ?? ''));
+        $status = (string) ($row->status ?? '');
+        $isFinished = in_array($status, ['done', 'error'], true);
+        $logText = (string) (data_get($row, 'log_text') ?? data_get($row, 'response') ?? '');
+
+        return response()->json([
+            'status' => 'ok',
+            'data' => [
+                'run_id' => (int) ($row->id ?? 0),
+                'action' => (string) ($row->action ?? 'register_auto'),
+                'status' => $status,
+                'is_finished' => $isFinished,
+                'created_at' => $row->created_at ?? null,
+                'summary' => $summary,
+                'log_text' => $logText,
+            ],
+        ]);
     }
 
     /**
