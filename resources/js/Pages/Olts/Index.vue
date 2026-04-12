@@ -698,13 +698,10 @@ const manualRegisterTeknisiGuard = computed(() => {
         return { allowed: true, message: '', tone: 'info' };
     }
 
-    const bounds = selectedOltOnuRxBounds.value;
-    const rangeLabel = `${formatRxLimitValue(bounds.min)} s/d ${formatRxLimitValue(bounds.max)}`;
-
     if (manualRegisterAttenuationLoading.value) {
         return {
             allowed: false,
-            message: `Memuat ONU Rx. Rentang teknisi ${rangeLabel}.`,
+            message: 'Mengambil data ONU Rx...',
             tone: 'info',
         };
     }
@@ -712,16 +709,17 @@ const manualRegisterTeknisiGuard = computed(() => {
     if (manualRegisterAttenuationError.value) {
         return {
             allowed: false,
-            message: `ONU Rx wajib tersedia. Rentang teknisi ${rangeLabel}.`,
+            message: 'ONU Rx belum tersedia.',
             tone: 'error',
         };
     }
 
+    const bounds = selectedOltOnuRxBounds.value;
     const onuRx = manualRegisterOnuRxValue.value;
     if (onuRx === null) {
         return {
             allowed: false,
-            message: `ONU Rx belum tersedia. Rentang teknisi ${rangeLabel}.`,
+            message: 'ONU Rx belum terbaca.',
             tone: 'error',
         };
     }
@@ -729,14 +727,14 @@ const manualRegisterTeknisiGuard = computed(() => {
     if (onuRx < bounds.min || onuRx > bounds.max) {
         return {
             allowed: false,
-            message: `ONU Rx ${formatRxLimitValue(onuRx)} di luar rentang teknisi ${rangeLabel}.`,
+            message: `ONU Rx ${formatRxLimitValue(onuRx)} tidak memenuhi syarat registrasi.`,
             tone: 'error',
         };
     }
 
     return {
         allowed: true,
-        message: `Rentang teknisi ${rangeLabel}.`,
+        message: '',
         tone: 'success',
     };
 });
@@ -3769,7 +3767,7 @@ onBeforeUnmount(() => {
                                         </div>
 
                                         <div
-                                            v-if="isTeknisi"
+                                            v-if="isTeknisi && manualRegisterTeknisiGuard.message"
                                             class="mt-3 rounded-xl border px-3 py-2 text-[11px] font-semibold"
                                             :class="
                                                 manualRegisterTeknisiGuard.tone === 'success'

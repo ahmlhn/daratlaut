@@ -494,7 +494,11 @@ class OltService
         $this->enterConfigMode();
         try {
             $this->sendCommandStrict("interface gpon-olt_{$fsp}");
-            $this->sendCommandStrict("onu {$onuId} type {$onuType} sn {$sn}", 25, true);
+            $onuCreateOut = $this->sendCommandStrict("onu {$onuId} type {$onuType} sn {$sn}", 25, true);
+            if ($onuId !== null && $this->outputHasExistingEntry($onuCreateOut)) {
+                $onuId = $this->findAvailableOnuId($fsp);
+                $this->sendCommandStrict("onu {$onuId} type {$onuType} sn {$sn}", 25, true);
+            }
             $this->sendCommandStrict('exit');
 
             $this->sendCommandStrict("interface gpon-onu_{$fsp}:{$onuId}");
@@ -550,6 +554,11 @@ class OltService
     private function outputHasError(string $out): bool
     {
         return (bool) preg_match(self::ERROR_RE, $out) && !preg_match(self::OK_RE, $out);
+    }
+
+    private function outputHasExistingEntry(string $out): bool
+    {
+        return (bool) preg_match(self::OK_RE, $out);
     }
 
     private function commandException(string $cmd, string $out): RuntimeException
