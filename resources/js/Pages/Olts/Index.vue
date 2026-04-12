@@ -775,8 +775,9 @@ function updateStatusText(text) {
     }
 
     uncfgStatus.value = { ...uncfgStatus.value, message: msg };
-    if (manualRegisterActive.value && msg) {
-        registerProgressText.value = msg;
+    if (manualRegisterActive.value) {
+        if (msg) registerProgressText.value = msg;
+        return;
     }
 }
 
@@ -808,8 +809,9 @@ function setUncfgStatus(message, tone = 'info') {
     if (tone !== 'loading') stopLiveStatus();
     statusTarget = 'uncfg';
     uncfgStatus.value = { tone, message: String(message || '') };
-    if (manualRegisterActive.value && uncfgStatus.value.message) {
-        registerProgressText.value = uncfgStatus.value.message;
+    if (manualRegisterActive.value) {
+        if (uncfgStatus.value.message) registerProgressText.value = uncfgStatus.value.message;
+        return;
     }
 }
 
@@ -3767,7 +3769,7 @@ onBeforeUnmount(() => {
                                         </div>
 
                                         <div
-                                            v-if="isTeknisi && manualRegisterTeknisiGuard.message"
+                                            v-if="isTeknisi && manualRegisterTeknisiGuard.message && !manualRegisterAttenuationLoading"
                                             class="mt-3 rounded-xl border px-3 py-2 text-[11px] font-semibold"
                                             :class="
                                                 manualRegisterTeknisiGuard.tone === 'success'

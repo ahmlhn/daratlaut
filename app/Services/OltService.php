@@ -27,7 +27,7 @@ class OltService
     const UNCFG_LINE_RE = '/^\s*(\d+\/\d+\/\d+)\s+([A-Za-z0-9]+)\s*$/';
     const FSP_TOKEN_RE = '/^\d+\/\d+\/\d+$/';
     const GPON_ONU_RE = '/gpon-onu_(\d+\/\d+\/\d+):\d+/i';
-    const GPON_ONU_ID_RE = '/gpon-onu_(\d+\/\d+\/\d+):(\d+)/i';
+    const GPON_ONU_ID_RE = '/gpon-onu[_\s]+(\d+\/\d+\/\d+):(\d+)/i';
     const SN_STRICT_RE = '/^[A-Za-z]{4}[A-Fa-f0-9]{8}$/';
     const SN_TOKEN_RE = '/^(?=.{8,20}$)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]+$/';
     const ONU_STATE_ID_RE = '/^\s*(\d+)\s+/';
@@ -519,6 +519,15 @@ class OltService
         } finally {
             // Always return to exec mode so subsequent actions stay predictable.
             $this->sendCommand('end');
+        }
+
+        $bound = $this->findOnuBySn($sn);
+        if (!$bound) {
+            throw new RuntimeException('Registrasi gagal: SN belum terdeteksi pada OLT.');
+        }
+        if ($bound['fsp'] !== $fsp || (int) $bound['onu_id'] !== (int) $onuId) {
+            $boundInterface = $bound['interface'] ?? "{$bound['fsp']}:{$bound['onu_id']}";
+            throw new RuntimeException("Registrasi gagal: SN sudah terdaftar di {$boundInterface}.");
         }
 
         // Save to database
@@ -1508,6 +1517,9 @@ class OltService
         }
 
         $out = $this->sendCommand("show gpon onu by sn {$sn}", 25);
+        if (preg_match('/no related information/i', $out)) {
+            return null;
+        }
         if (preg_match(self::ERROR_RE, $out) && !preg_match(self::OK_RE, $out)) {
             return null;
         }
