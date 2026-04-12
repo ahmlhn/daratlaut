@@ -24,6 +24,8 @@ class Olt extends Model
         'vlan_default',
         'onu_type_default',
         'service_port_id_default',
+        'teknisi_onu_rx_max_dbm',
+        'teknisi_onu_rx_min_dbm',
         'fsp_cache',
         'fsp_cache_at',
     ];
@@ -36,6 +38,8 @@ class Olt extends Model
         'fsp_cache' => 'array',
         'fsp_cache_at' => 'datetime',
         'is_active' => 'boolean',
+        'teknisi_onu_rx_max_dbm' => 'float',
+        'teknisi_onu_rx_min_dbm' => 'float',
     ];
 
     // Scopes

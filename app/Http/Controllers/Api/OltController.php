@@ -17,6 +17,86 @@ use Throwable;
 
 class OltController extends Controller
 {
+    private const DEFAULT_TEKNISI_ONU_RX_MAX_DBM = -11.0;
+    private const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24.0;
+
+    private function hasTeknisiOnuRxThresholdColumns(): bool
+    {
+        static $hasColumns = null;
+        if ($hasColumns !== null) {
+            return $hasColumns;
+        }
+
+        $table = (new Olt())->getTable();
+        $hasColumns = Schema::hasColumn($table, 'teknisi_onu_rx_max_dbm')
+            && Schema::hasColumn($table, 'teknisi_onu_rx_min_dbm');
+
+        return $hasColumns;
+    }
+
+    /**
+     * @param array{max: mixed, min: mixed} $input
+     * @return array{max: float, min: float}
+     */
+    private function normalizeTeknisiOnuRxThresholds(array $input): array
+    {
+        $max = is_numeric($input['max'] ?? null) ? (float) $input['max'] : self::DEFAULT_TEKNISI_ONU_RX_MAX_DBM;
+        $min = is_numeric($input['min'] ?? null) ? (float) $input['min'] : self::DEFAULT_TEKNISI_ONU_RX_MIN_DBM;
+
+        if ($max < $min) {
+            [$max, $min] = [$min, $max];
+        }
+
+        return [
+            'max' => round($max, 2),
+            'min' => round($min, 2),
+        ];
+    }
+
+    /**
+     * @return array{max: float, min: float}
+     */
+    private function getOltTeknisiOnuRxThresholds(?Olt $olt = null): array
+    {
+        if (!$olt || !$this->hasTeknisiOnuRxThresholdColumns()) {
+            return $this->normalizeTeknisiOnuRxThresholds([
+                'max' => self::DEFAULT_TEKNISI_ONU_RX_MAX_DBM,
+                'min' => self::DEFAULT_TEKNISI_ONU_RX_MIN_DBM,
+            ]);
+        }
+
+        return $this->normalizeTeknisiOnuRxThresholds([
+            'max' => $olt->getAttribute('teknisi_onu_rx_max_dbm'),
+            'min' => $olt->getAttribute('teknisi_onu_rx_min_dbm'),
+        ]);
+    }
+
+    /**
+     * @return array{max: float, min: float}
+     */
+    private function getRequestTeknisiOnuRxThresholds(Request $request): array
+    {
+        return $this->normalizeTeknisiOnuRxThresholds([
+            'max' => $request->input('teknisi_onu_rx_max_dbm'),
+            'min' => $request->input('teknisi_onu_rx_min_dbm'),
+        ]);
+    }
+
+    private function isTeknisiActor(Request $request): bool
+    {
+        $user = $request->user();
+        if (!$user) {
+            return false;
+        }
+
+        if (method_exists($user, 'isTeknisi')) {
+            return (bool) $user->isTeknisi();
+        }
+
+        $role = strtolower(trim((string) ($user->role ?? '')));
+        return in_array($role, ['teknisi', 'svp_lapangan', 'svp lapangan'], true);
+    }
+
     private function onuCacheSnColumn(): string
     {
         static $snCol = null;
@@ -218,6 +298,8 @@ class OltController extends Controller
                     'onu_type_default' => $olt->onu_type_default,
                     'service_port_id_default' => $olt->service_port_id_default,
                     'is_active' => $olt->is_active ?? true,
+                    'teknisi_onu_rx_max_dbm' => $this->getOltTeknisiOnuRxThresholds($olt)['max'],
+                    'teknisi_onu_rx_min_dbm' => $this->getOltTeknisiOnuRxThresholds($olt)['min'],
                     'fsp_count' => is_array($fspCache) ? count($fspCache) : 0,
                     'onu_count' => (int) ($olt->onus_count ?? 0),
                     'last_sync' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
@@ -284,6 +366,7 @@ class OltController extends Controller
         }
 
         $olt = $query->findOrFail($id);
+        $thresholds = $this->getOltTeknisiOnuRxThresholds($olt);
         
         return response()->json([
             'status' => 'ok',
@@ -297,6 +380,8 @@ class OltController extends Controller
                 'vlan_default' => $olt->vlan_default,
                 'onu_type_default' => $olt->onu_type_default,
                 'service_port_id_default' => $olt->service_port_id_default,
+                'teknisi_onu_rx_max_dbm' => $thresholds['max'],
+                'teknisi_onu_rx_min_dbm' => $thresholds['min'],
                 'is_active' => $olt->is_active ?? true,
                 'fsp_cache' => $olt->fsp_cache ?? [],
                 'fsp_cache_at' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
@@ -320,6 +405,8 @@ class OltController extends Controller
             'vlan_default' => 'nullable|integer',
             'onu_type_default' => 'nullable|string|max:50',
             'service_port_id_default' => 'nullable|integer',
+            'teknisi_onu_rx_max_dbm' => 'nullable|numeric|between:-100,0',
+            'teknisi_onu_rx_min_dbm' => 'nullable|numeric|between:-100,0',
         ]);
 
         $tenantId = $request->user()->tenant_id ?? 1;
@@ -335,8 +422,9 @@ class OltController extends Controller
 
         $spidDefault = (int) ($request->input('service_port_id_default') ?? OltService::DEFAULT_SERVICE_PORT_ID);
         if ($spidDefault < 1 || $spidDefault > 65535) $spidDefault = OltService::DEFAULT_SERVICE_PORT_ID;
+        $thresholds = $this->getRequestTeknisiOnuRxThresholds($request);
         
-        $olt = Olt::create([
+        $payload = [
             'tenant_id' => $tenantId,
             'nama_olt' => $request->nama_olt,
             'host' => $request->host,
@@ -347,7 +435,13 @@ class OltController extends Controller
             'vlan_default' => $vlanDefault,
             'onu_type_default' => $onuTypeDefault,
             'service_port_id_default' => $spidDefault,
-        ]);
+        ];
+        if ($this->hasTeknisiOnuRxThresholdColumns()) {
+            $payload['teknisi_onu_rx_max_dbm'] = $thresholds['max'];
+            $payload['teknisi_onu_rx_min_dbm'] = $thresholds['min'];
+        }
+
+        $olt = Olt::create($payload);
 
         return response()->json([
             'status' => 'ok',
@@ -371,6 +465,8 @@ class OltController extends Controller
             'vlan_default' => 'nullable|integer',
             'onu_type_default' => 'nullable|string|max:50',
             'service_port_id_default' => 'nullable|integer',
+            'teknisi_onu_rx_max_dbm' => 'nullable|numeric|between:-100,0',
+            'teknisi_onu_rx_min_dbm' => 'nullable|numeric|between:-100,0',
             'is_active' => 'boolean',
         ]);
 
@@ -401,6 +497,15 @@ class OltController extends Controller
             $spidDefault = (int) ($request->input('service_port_id_default') ?? OltService::DEFAULT_SERVICE_PORT_ID);
             if ($spidDefault < 1 || $spidDefault > 65535) $spidDefault = OltService::DEFAULT_SERVICE_PORT_ID;
             $data['service_port_id_default'] = $spidDefault;
+        }
+
+        if (
+            $this->hasTeknisiOnuRxThresholdColumns()
+            && ($request->has('teknisi_onu_rx_max_dbm') || $request->has('teknisi_onu_rx_min_dbm'))
+        ) {
+            $thresholds = $this->getRequestTeknisiOnuRxThresholds($request);
+            $data['teknisi_onu_rx_max_dbm'] = $thresholds['max'];
+            $data['teknisi_onu_rx_min_dbm'] = $thresholds['min'];
         }
 
         if (Schema::hasColumn('noci_olts', 'is_active') && $request->has('is_active')) {
@@ -1238,21 +1343,47 @@ class OltController extends Controller
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         $saveConfig = $request->boolean('save_config', false);
         $actor = $this->actorName($request);
+        $isTeknisi = $this->isTeknisiActor($request);
+        $thresholds = $this->getOltTeknisiOnuRxThresholds($olt);
+        $requestedOnuId = $request->filled('onu_id') ? (int) $request->input('onu_id') : null;
         
-        $service = null;
         $service = null;
         $logExcerpt = '';
         $logId = null;
+        $measuredOnuRx = null;
         try {
             $service = new OltService($tenantId);
             $service->setSuppressActionLog(true);
             $service->connect($olt);
             $service->startTrace();
+
+            if ($isTeknisi) {
+                $attenuation = $service->previewUnconfiguredAttenuation(
+                    (string) $request->input('fsp'),
+                    $requestedOnuId
+                );
+                $rawOnuRx = $attenuation['downstream']['onu_rx'] ?? null;
+                $measuredOnuRx = is_numeric($rawOnuRx) ? (float) $rawOnuRx : null;
+
+                if ($measuredOnuRx === null) {
+                    throw new RuntimeException('ONU Rx tidak tersedia. Registrasi teknisi membutuhkan data redaman ONU Rx.');
+                }
+
+                if ($measuredOnuRx < $thresholds['min'] || $measuredOnuRx > $thresholds['max']) {
+                    throw new RuntimeException(sprintf(
+                        'ONU Rx %.3f dBm di luar rentang OLT (%.2f s/d %.2f dBm). Registrasi teknisi ditolak.',
+                        $measuredOnuRx,
+                        $thresholds['min'],
+                        $thresholds['max']
+                    ));
+                }
+            }
+
             $result = $service->registerOnu(
                 $request->fsp,
                 $request->sn,
                 $request->name,
-                $request->onu_id
+                $requestedOnuId
             );
 
             // Native parity: don't auto write-config unless explicitly requested.
@@ -1273,6 +1404,9 @@ class OltController extends Controller
                 'onu_name' => (string) ($result['name'] ?? $request->name),
                 'name_applied' => (bool) ($result['name_applied'] ?? true),
                 'save_config' => $saveConfig,
+                'onu_rx' => $measuredOnuRx,
+                'teknisi_onu_rx_max_dbm' => $thresholds['max'],
+                'teknisi_onu_rx_min_dbm' => $thresholds['min'],
             ];
             $logId = OltLog::logAction(
                 $tenantId,
@@ -1296,7 +1430,11 @@ class OltController extends Controller
             return response()->json([
                 'status' => 'ok',
                 'message' => $message,
-                'data' => $result,
+                'data' => $result + [
+                    'onu_rx' => $measuredOnuRx,
+                    'teknisi_onu_rx_max_dbm' => $thresholds['max'],
+                    'teknisi_onu_rx_min_dbm' => $thresholds['min'],
+                ],
                 'log_id' => $logId,
                 'log_excerpt' => $logExcerpt,
             ]);
@@ -1319,6 +1457,9 @@ class OltController extends Controller
                 'sn' => (string) $request->sn,
                 'onu_name' => (string) $request->name,
                 'save_config' => $saveConfig,
+                'onu_rx' => $measuredOnuRx,
+                'teknisi_onu_rx_max_dbm' => $thresholds['max'],
+                'teknisi_onu_rx_min_dbm' => $thresholds['min'],
                 'message' => $e->getMessage(),
             ];
             $logId = OltLog::logAction(
@@ -1335,6 +1476,11 @@ class OltController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
+                'data' => [
+                    'onu_rx' => $measuredOnuRx,
+                    'teknisi_onu_rx_max_dbm' => $thresholds['max'],
+                    'teknisi_onu_rx_min_dbm' => $thresholds['min'],
+                ],
                 'log_id' => $logId,
                 'log_excerpt' => $logExcerpt,
             ], 422);

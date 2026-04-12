@@ -7,6 +7,8 @@ const page = usePage();
 const API_BASE = '/api/v1';
 const AUTO_REGISTER_BATCH_SIZE = 10;
 const OLT_LAST_SELECTED_STORAGE_KEY = 'noci:olt:last-selected';
+const DEFAULT_TEKNISI_ONU_RX_MAX_DBM = -11;
+const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24;
 
 const role = computed(() => String(page.props.auth?.user?.role || '').trim().toLowerCase());
 const isTeknisi = computed(() => ['teknisi', 'svp lapangan', 'svp_lapangan'].includes(role.value));
@@ -130,6 +132,26 @@ function formatRx(rx) {
     return `${value.toFixed(2)} dBm`;
 }
 
+function normalizeOnuRxBounds(maxValue, minValue) {
+    let max = extractRxValue(maxValue);
+    let min = extractRxValue(minValue);
+
+    if (max === null) max = DEFAULT_TEKNISI_ONU_RX_MAX_DBM;
+    if (min === null) min = DEFAULT_TEKNISI_ONU_RX_MIN_DBM;
+    if (max < min) [max, min] = [min, max];
+
+    return {
+        max: Number(max.toFixed(2)),
+        min: Number(min.toFixed(2)),
+    };
+}
+
+function formatRxLimitValue(value) {
+    const parsed = extractRxValue(value);
+    if (parsed === null) return '-';
+    return `${parsed.toFixed(2)} dBm`;
+}
+
 function formatSampledAt(value) {
     if (!value) return '-';
     const text = String(value).trim();
@@ -241,6 +263,9 @@ const olts = ref([]);
 const loadingOlts = ref(false);
 const selectedOltId = ref('');
 const selectedOlt = computed(() => olts.value.find(o => String(o.id) === String(selectedOltId.value)) || null);
+const selectedOltOnuRxBounds = computed(() =>
+    normalizeOnuRxBounds(selectedOlt.value?.teknisi_onu_rx_max_dbm, selectedOlt.value?.teknisi_onu_rx_min_dbm)
+);
 
 function readLastSelectedOltId() {
     try {
@@ -368,6 +393,8 @@ const formData = ref({
     vlan_default: 200,
     onu_type_default: 'ALL-ONT',
     service_port_id_default: 1,
+    teknisi_onu_rx_max_dbm: DEFAULT_TEKNISI_ONU_RX_MAX_DBM,
+    teknisi_onu_rx_min_dbm: DEFAULT_TEKNISI_ONU_RX_MIN_DBM,
 });
 
 // ========== Deep Sync Modal (Native Parity) ==========
@@ -419,6 +446,8 @@ async function openOltModal(mode) {
                 vlan_default: Number(olt.vlan_default || 200),
                 onu_type_default: olt.onu_type_default || 'ALL-ONT',
                 service_port_id_default: Number(olt.service_port_id_default || 1),
+                teknisi_onu_rx_max_dbm: Number(olt.teknisi_onu_rx_max_dbm ?? DEFAULT_TEKNISI_ONU_RX_MAX_DBM),
+                teknisi_onu_rx_min_dbm: Number(olt.teknisi_onu_rx_min_dbm ?? DEFAULT_TEKNISI_ONU_RX_MIN_DBM),
             };
 
             showOltModal.value = true;
@@ -440,11 +469,14 @@ async function openOltModal(mode) {
         vlan_default: 200,
         onu_type_default: 'ALL-ONT',
         service_port_id_default: 1,
+        teknisi_onu_rx_max_dbm: DEFAULT_TEKNISI_ONU_RX_MAX_DBM,
+        teknisi_onu_rx_min_dbm: DEFAULT_TEKNISI_ONU_RX_MIN_DBM,
     };
     showOltModal.value = true;
 }
 
 async function saveOlt() {
+    const onuRxBounds = normalizeOnuRxBounds(formData.value.teknisi_onu_rx_max_dbm, formData.value.teknisi_onu_rx_min_dbm);
     const payload = {
         nama_olt: String(formData.value.nama_olt || '').trim(),
         host: String(formData.value.host || '').trim(),
@@ -455,6 +487,8 @@ async function saveOlt() {
         vlan_default: Number(formData.value.vlan_default || 0),
         onu_type_default: String(formData.value.onu_type_default || '').trim(),
         service_port_id_default: Number(formData.value.service_port_id_default || 0),
+        teknisi_onu_rx_max_dbm: onuRxBounds.max,
+        teknisi_onu_rx_min_dbm: onuRxBounds.min,
     };
 
     if (!payload.nama_olt || !payload.host || !payload.username) {
@@ -658,6 +692,54 @@ const manualRegisterModalOpen = ref(false);
 const manualRegisterAttenuationLoading = ref(false);
 const manualRegisterAttenuationError = ref('');
 const manualRegisterAttenuation = ref(null);
+const manualRegisterOnuRxValue = computed(() => extractRxValue(manualRegisterAttenuation.value?.downstream?.onu_rx));
+const manualRegisterTeknisiGuard = computed(() => {
+    if (!isTeknisi.value) {
+        return { allowed: true, message: '', tone: 'info' };
+    }
+
+    const bounds = selectedOltOnuRxBounds.value;
+    const rangeLabel = `${formatRxLimitValue(bounds.min)} s/d ${formatRxLimitValue(bounds.max)}`;
+
+    if (manualRegisterAttenuationLoading.value) {
+        return {
+            allowed: false,
+            message: `Memuat ONU Rx. Rentang teknisi ${rangeLabel}.`,
+            tone: 'info',
+        };
+    }
+
+    if (manualRegisterAttenuationError.value) {
+        return {
+            allowed: false,
+            message: `ONU Rx wajib tersedia. Rentang teknisi ${rangeLabel}.`,
+            tone: 'error',
+        };
+    }
+
+    const onuRx = manualRegisterOnuRxValue.value;
+    if (onuRx === null) {
+        return {
+            allowed: false,
+            message: `ONU Rx belum tersedia. Rentang teknisi ${rangeLabel}.`,
+            tone: 'error',
+        };
+    }
+
+    if (onuRx < bounds.min || onuRx > bounds.max) {
+        return {
+            allowed: false,
+            message: `ONU Rx ${formatRxLimitValue(onuRx)} di luar rentang teknisi ${rangeLabel}.`,
+            tone: 'error',
+        };
+    }
+
+    return {
+        allowed: true,
+        message: `Rentang teknisi ${rangeLabel}.`,
+        tone: 'success',
+    };
+});
 const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
@@ -1227,6 +1309,11 @@ async function registerSelectedOnu() {
         return;
     }
 
+    if (!manualRegisterTeknisiGuard.value.allowed) {
+        setUncfgStatus(manualRegisterTeknisiGuard.value.message || 'ONU Rx di luar rentang teknisi.', 'error');
+        return;
+    }
+
     registerBusy.value = true;
     manualRegisterActive.value = true;
     registerProgressText.value = 'Registrasi berjalan...';
@@ -1234,6 +1321,10 @@ async function registerSelectedOnu() {
 
     try {
         const payload = { fsp: item.fsp, sn: item.sn, name };
+        const requestedOnuId = Number(item?.onu_id || 0);
+        if (requestedOnuId > 0) {
+            payload.onu_id = requestedOnuId;
+        }
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/register-onu`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3528,6 +3619,26 @@ onBeforeUnmount(() => {
                                                     class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
                                                 />
                                             </div>
+                                            <div>
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">ONU Rx Max Teknisi</label>
+                                                <input
+                                                    v-model="formData.teknisi_onu_rx_max_dbm"
+                                                    type="number"
+                                                    step="0.01"
+                                                    max="0"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">ONU Rx Min Teknisi</label>
+                                                <input
+                                                    v-model="formData.teknisi_onu_rx_min_dbm"
+                                                    type="number"
+                                                    step="0.01"
+                                                    max="0"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -3640,21 +3751,35 @@ onBeforeUnmount(() => {
 
                                         <div v-else-if="manualRegisterAttenuation" class="mt-3 grid grid-cols-2 gap-3 text-xs">
                                             <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
-                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">OLT Rx</div>
-                                                <div class="mt-1 font-bold" :class="getAttenuationRxClass(manualRegisterAttenuation.upstream?.olt_rx)">
-                                                    {{ formatAttenuationValue(manualRegisterAttenuation.upstream?.olt_rx, 'dBm') }}
-                                                </div>
-                                            </div>
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
                                                 <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Rx</div>
                                                 <div class="mt-1 font-bold" :class="getAttenuationRxClass(manualRegisterAttenuation.downstream?.onu_rx)">
                                                     {{ formatAttenuationValue(manualRegisterAttenuation.downstream?.onu_rx, 'dBm') }}
+                                                </div>
+                                            </div>
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">OLT Rx</div>
+                                                <div class="mt-1 font-bold" :class="getAttenuationRxClass(manualRegisterAttenuation.upstream?.olt_rx)">
+                                                    {{ formatAttenuationValue(manualRegisterAttenuation.upstream?.olt_rx, 'dBm') }}
                                                 </div>
                                             </div>
                                         </div>
 
                                         <div v-else class="mt-2 text-sm font-semibold text-slate-400">
                                             Redaman belum tersedia.
+                                        </div>
+
+                                        <div
+                                            v-if="isTeknisi"
+                                            class="mt-3 rounded-xl border px-3 py-2 text-[11px] font-semibold"
+                                            :class="
+                                                manualRegisterTeknisiGuard.tone === 'success'
+                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200'
+                                                    : manualRegisterTeknisiGuard.tone === 'error'
+                                                      ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200'
+                                                      : 'border-slate-200 bg-white text-slate-600 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300'
+                                            "
+                                        >
+                                            {{ manualRegisterTeknisiGuard.message }}
                                         </div>
                                     </div>
 
@@ -3700,7 +3825,7 @@ onBeforeUnmount(() => {
                                         v-if="!manualRegisterActive"
                                         type="button"
                                         class="h-11 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
-                                        :disabled="registerBusy"
+                                        :disabled="registerBusy || !manualRegisterTeknisiGuard.allowed"
                                         @click="registerSelectedOnu()"
                                     >
                                         {{ registerBusy ? 'Registrasi...' : 'Registrasi ONU' }}
