@@ -53,6 +53,8 @@ Last verified: 2026-04-12
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-13: Workspace OLT disederhanakan lagi ke gaya admin yang lebih ringkas; `resources/js/Pages/Olts/Index.vue` menghapus helper text, subtitle, dan petunjuk non-esensial pada area aksi dan daftar `ONU Unregistered`, sehingga yang tersisa hanya kontrol inti, status proses, form registrasi, dan tabel. Docs: N/A.
+- 2026-04-13: Ringkasan tile `ONU Unregistered / Mode / Status` di workspace OLT dihapus agar card utama lebih ringkas; `resources/js/Pages/Olts/Index.vue` menggantinya dengan helper text singkat di area aksi tanpa mengubah alur scan/register/write. Docs: N/A.
 - 2026-04-13: Layout OLT disederhanakan menjadi satu card utama; `resources/js/Pages/Olts/Index.vue` tidak lagi memisahkan workspace OLT dan daftar `ONU Unregistered` ke dua card terpisah, melainkan menyusun info OLT aktif, tombol aksi, status, registrasi manual, dan daftar ONU dalam satu alur card yang lebih ringkas. Docs: N/A.
 - 2026-04-13: Card `Pilih OLT` di halaman OLT diperluas menjadi `OLT Active Workspace`; `resources/js/Pages/Olts/Index.vue` memindahkan aksi `Scan ONU Baru`, `Auto Register`, `Write/Simpan Config`, ringkasan jumlah ONU unregistered, dan status proses ke card atas, sementara card `ONU Unregistered` kini difokuskan sebagai area hasil scan dan registrasi manual. Docs: N/A.
 - 2026-04-13: UI aksi OLT di halaman provisioning disederhanakan dengan pola `simple admin`; `resources/js/Pages/Olts/Index.vue` memindahkan `Tambah OLT` menjadi CTA utama di header halaman dan menjadikan `Edit OLT Aktif` sebagai aksi sekunder kontekstual pada panel OLT terpilih. Docs: N/A.

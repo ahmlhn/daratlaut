@@ -2571,26 +2571,7 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div v-if="selectedOlt" class="space-y-4 border-t border-slate-200 pt-4 dark:border-white/10">
-                        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                            <div class="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:max-w-2xl">
-                                <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
-                                    <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Unregistered</div>
-                                    <div class="mt-1 text-lg font-black text-slate-800 dark:text-white">{{ uncfg.length }}</div>
-                                </div>
-                                <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
-                                    <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Mode</div>
-                                    <div class="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">
-                                        {{ isTeknisi ? 'Teknisi / Manual' : 'Admin / Auto' }}
-                                    </div>
-                                </div>
-                                <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
-                                    <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Status</div>
-                                    <div class="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">
-                                        {{ uncfgLoading ? 'Scan berjalan' : (registerBusy ? 'Proses berjalan' : 'Siap dipakai') }}
-                                    </div>
-                                </div>
-                            </div>
-
+                        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
                             <div class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:min-w-[430px] xl:grid-cols-3">
                                 <button
                                     type="button"
@@ -2662,18 +2643,11 @@ onBeforeUnmount(() => {
                         </div>
                         <div class="overflow-hidden rounded-2xl border border-slate-200 dark:border-white/10">
                             <div class="flex items-center justify-between gap-4 border-b border-slate-100 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-900/50">
-                                <div>
-                                    <div class="text-[11px] font-black uppercase tracking-wide text-slate-600 dark:text-slate-300">Daftar ONU Unregistered</div>
-                                    <div class="text-xs text-slate-500 dark:text-slate-400">Hasil scan untuk registrasi manual dan review SN.</div>
-                                </div>
+                                <div class="text-[11px] font-black uppercase tracking-wide text-slate-600 dark:text-slate-300">ONU Unregistered</div>
                                 <div class="text-xs text-slate-500 dark:text-slate-400">
                                     Total:
                                     <span class="font-bold text-slate-700 dark:text-slate-200">{{ uncfg.length }}</span>
                                 </div>
-                            </div>
-
-                            <div v-if="canManualRegister" class="px-4 pt-3 pb-2 text-[11px] text-slate-500 dark:text-slate-400">
-                                Ketuk baris SN atau tombol Pilih untuk memilih ONU.
                             </div>
 
                             <div v-if="canManualRegister && uncfgSelected" class="px-4 pb-4">
@@ -2685,7 +2659,6 @@ onBeforeUnmount(() => {
                                                 <span>{{ uncfgSelected.fsp || '-' }}</span> | <span>{{ uncfgSelected.sn || '-' }}</span>
                                             </div>
                                         </div>
-                                        <div class="text-[10px] text-slate-400">Isi nama ONU di bawah</div>
                                     </div>
 
                                     <div v-if="!manualRegisterActive" class="flex flex-col lg:flex-row lg:items-end gap-3">
@@ -2726,7 +2699,6 @@ onBeforeUnmount(() => {
                                         </div>
                                     </div>
 
-                                    <div class="text-[10px] text-slate-400">Spasi akan dihapus, karakter khusus dibuang.</div>
                                 </div>
                             </div>
 
