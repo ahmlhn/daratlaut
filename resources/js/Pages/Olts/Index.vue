@@ -6,6 +6,7 @@ import AdminLayout from '@/Layouts/AdminLayout.vue';
 const page = usePage();
 const API_BASE = '/api/v1';
 const AUTO_REGISTER_BATCH_SIZE = 10;
+const OLT_LAST_SELECTED_STORAGE_KEY = 'noci:olt:last-selected';
 
 const role = computed(() => String(page.props.auth?.user?.role || '').trim().toLowerCase());
 const isTeknisi = computed(() => ['teknisi', 'svp lapangan', 'svp_lapangan'].includes(role.value));
@@ -241,24 +242,40 @@ const loadingOlts = ref(false);
 const selectedOltId = ref('');
 const selectedOlt = computed(() => olts.value.find(o => String(o.id) === String(selectedOltId.value)) || null);
 
+function readLastSelectedOltId() {
+    try {
+        return String(window.localStorage.getItem(OLT_LAST_SELECTED_STORAGE_KEY) || '').trim();
+    } catch {
+        return '';
+    }
+}
+
+function writeLastSelectedOltId(value) {
+    try {
+        const normalized = String(value || '').trim();
+        if (!normalized) {
+            window.localStorage.removeItem(OLT_LAST_SELECTED_STORAGE_KEY);
+            return;
+        }
+        window.localStorage.setItem(OLT_LAST_SELECTED_STORAGE_KEY, normalized);
+    } catch {
+        // ignore storage errors
+    }
+}
+
 const selectedInfoText = computed(() => {
     if (!selectedOlt.value) {
-        return canManualRegister.value
-            ? 'Langkah singkat: pilih OLT, scan Uncfg, ketuk SN, isi nama ONU, lalu registrasi.'
-            : 'Langkah singkat: pilih OLT, scan Uncfg, pilih SN, isi nama ONU, lalu registrasi.';
+        return 'Belum memilih OLT.';
     }
 
-    if (canManualRegister.value) {
-        return `OLT dipilih: ${selectedOlt.value.nama_olt || 'OLT'}. Scan Uncfg lalu ketuk SN untuk registrasi.`;
-    }
-
+    const name = selectedOlt.value.nama_olt || 'OLT';
     const host = selectedOlt.value.host || '-';
     const port = selectedOlt.value.port || '-';
     const vlan = selectedOlt.value.vlan_default || '-';
     const tcont = selectedOlt.value.tcont_default || '-';
     const onuType = selectedOlt.value.onu_type_default || '-';
     const spid = selectedOlt.value.service_port_id_default || '-';
-    return `Host ${host}:${port} | VLAN ${vlan} | TCONT ${tcont} | ONU ${onuType} | SP ${spid}`;
+    return `${name} | ${host}:${port} | VLAN ${vlan} | TCONT ${tcont} | ONU ${onuType} | SP ${spid}`;
 });
 
 function sanitizeOnuName(value) {
@@ -320,6 +337,16 @@ async function loadOlts() {
 
         if (selectedOltId.value && !olts.value.some(o => String(o.id) === String(selectedOltId.value))) {
             selectedOltId.value = '';
+            writeLastSelectedOltId('');
+        }
+
+        if (!selectedOltId.value) {
+            const storedId = readLastSelectedOltId();
+            if (storedId && olts.value.some(o => String(o.id) === storedId)) {
+                selectedOltId.value = storedId;
+            } else if (storedId) {
+                writeLastSelectedOltId('');
+            }
         }
     } catch (e) {
         olts.value = [];
@@ -2483,6 +2510,7 @@ async function onOltChanged(newId, prevId) {
 }
 
 watch(selectedOltId, (val, oldVal) => {
+    writeLastSelectedOltId(val);
     onOltChanged(val, oldVal).catch(() => {});
 });
 
@@ -2529,7 +2557,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-white/10 p-4 md:p-5 space-y-4">
-                    <div class="flex flex-col gap-4">
+                    <div class="flex items-end gap-2">
                         <div class="flex-1 space-y-2">
                             <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide">Pilih OLT</label>
                             <select
@@ -2537,37 +2565,30 @@ onBeforeUnmount(() => {
                                 class="w-full h-12 border border-slate-200 dark:border-white/10 rounded-lg px-4 text-sm font-semibold bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/60"
                                 :disabled="loadingOlts"
                             >
-                                <option value="">-- Pilih OLT --</option>
+                                <option value="">Pilih OLT...</option>
                                 <option v-for="olt in olts" :key="olt.id" :value="String(olt.id)">
                                     {{ olt.nama_olt || `OLT #${olt.id}` }}
                                 </option>
                             </select>
                         </div>
-                    </div>
-
-                    <div
-                        id="olt-selected-info"
-                        class="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                        <div class="min-w-0">
-                            <div class="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">
-                                OLT Aktif
-                            </div>
-                            <div class="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
-                                {{ selectedInfoText }}
-                            </div>
-                        </div>
                         <button
-                            v-if="!isTeknisi && selectedOltId"
+                            v-if="!isTeknisi"
                             type="button"
-                            class="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-100 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            :disabled="!selectedOltId"
                             @click="openOltModal('edit')"
                         >
                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536M9 11l6.768-6.768a2.5 2.5 0 113.536 3.536L12.536 14.536A4 4 0 019.708 15.7L7 16l.3-2.708A4 4 0 018.464 10.464L15.232 3.696" />
                             </svg>
-                            Edit OLT Aktif
                         </button>
+                    </div>
+
+                    <div
+                        id="olt-selected-info"
+                        class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60"
+                    >
+                        <div class="text-[11px] text-slate-600 dark:text-slate-300">{{ selectedInfoText }}</div>
                     </div>
 
                     <div v-if="selectedOlt" class="space-y-4 border-t border-slate-200 pt-4 dark:border-white/10">
