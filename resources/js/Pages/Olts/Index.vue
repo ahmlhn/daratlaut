@@ -2570,36 +2570,23 @@ onBeforeUnmount(() => {
                         </button>
                     </div>
 
-                    <div
-                        v-if="selectedOlt"
-                        class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-slate-900/70"
-                    >
-                        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                            <div class="space-y-3">
-                                <div>
-                                    <div class="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">
-                                        OLT Active Workspace
-                                    </div>
+                    <div v-if="selectedOlt" class="space-y-4 border-t border-slate-200 pt-4 dark:border-white/10">
+                        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                            <div class="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:max-w-2xl">
+                                <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                    <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Unregistered</div>
+                                    <div class="mt-1 text-lg font-black text-slate-800 dark:text-white">{{ uncfg.length }}</div>
+                                </div>
+                                <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                    <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Mode</div>
                                     <div class="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">
-                                        Scan ONU baru, jalankan auto register, lalu simpan config dari panel ini.
+                                        {{ isTeknisi ? 'Teknisi / Manual' : 'Admin / Auto' }}
                                     </div>
                                 </div>
-                                <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                                    <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-800/70">
-                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Unregistered</div>
-                                        <div class="mt-1 text-lg font-black text-slate-800 dark:text-white">{{ uncfg.length }}</div>
-                                    </div>
-                                    <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-800/70">
-                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Mode</div>
-                                        <div class="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">
-                                            {{ isTeknisi ? 'Teknisi / Manual' : 'Admin / Auto' }}
-                                        </div>
-                                    </div>
-                                    <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-800/70">
-                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Status</div>
-                                        <div class="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">
-                                            {{ uncfgLoading ? 'Scan berjalan' : (registerBusy ? 'Proses berjalan' : 'Siap dipakai') }}
-                                        </div>
+                                <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                    <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Status</div>
+                                    <div class="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">
+                                        {{ uncfgLoading ? 'Scan berjalan' : (registerBusy ? 'Proses berjalan' : 'Siap dipakai') }}
                                     </div>
                                 </div>
                             </div>
@@ -2673,146 +2660,132 @@ onBeforeUnmount(() => {
                                 </div>
                             </div>
                         </div>
-                    </div>
-                </div>
-
-                <div
-                    v-if="selectedOlt"
-                    id="olt-uncfg-card"
-                    class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-white/10 overflow-hidden"
-                >
-                    <div class="p-4 md:p-5 border-b border-slate-100 dark:border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                        <div class="flex items-center gap-3">
-                            <div class="w-11 h-11 rounded-2xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300 flex items-center justify-center border border-blue-100 dark:border-blue-500/20">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a4 4 0 014-4h6a4 4 0 010 8H9a4 4 0 01-4-4z" />
-                                </svg>
-                            </div>
-                            <div>
-                                <div class="text-base font-black text-slate-700 dark:text-slate-200 uppercase">Daftar ONU Unregistered</div>
-                                <div class="text-sm text-slate-500 dark:text-slate-400">
-                                    Hasil scan untuk registrasi manual dan review SN.
-                                </div>
-                            </div>
-                        </div>
-                        <div class="text-sm text-slate-500 dark:text-slate-400">
-                            Total:
-                            <span class="font-bold text-slate-700 dark:text-slate-200">{{ uncfg.length }}</span>
-                        </div>
-                    </div>
-
-                    <div v-if="canManualRegister" class="px-4 md:px-5 pb-2 text-[11px] text-slate-500 dark:text-slate-400">
-                        Ketuk baris SN atau tombol Pilih untuk memilih ONU.
-                    </div>
-
-                    <div v-if="canManualRegister && uncfgSelected" class="px-4 md:px-5 pb-4">
-                        <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-slate-900/60 p-4 space-y-3 shadow-sm">
-                            <div class="flex items-center justify-between">
+                        <div class="overflow-hidden rounded-2xl border border-slate-200 dark:border-white/10">
+                            <div class="flex items-center justify-between gap-4 border-b border-slate-100 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-900/50">
                                 <div>
-                                    <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500 font-bold">ONU Terpilih</div>
-                                    <div class="text-sm font-bold text-slate-700 dark:text-slate-200">
-                                        <span>{{ uncfgSelected.fsp || '-' }}</span> | <span>{{ uncfgSelected.sn || '-' }}</span>
+                                    <div class="text-[11px] font-black uppercase tracking-wide text-slate-600 dark:text-slate-300">Daftar ONU Unregistered</div>
+                                    <div class="text-xs text-slate-500 dark:text-slate-400">Hasil scan untuk registrasi manual dan review SN.</div>
+                                </div>
+                                <div class="text-xs text-slate-500 dark:text-slate-400">
+                                    Total:
+                                    <span class="font-bold text-slate-700 dark:text-slate-200">{{ uncfg.length }}</span>
+                                </div>
+                            </div>
+
+                            <div v-if="canManualRegister" class="px-4 pt-3 pb-2 text-[11px] text-slate-500 dark:text-slate-400">
+                                Ketuk baris SN atau tombol Pilih untuk memilih ONU.
+                            </div>
+
+                            <div v-if="canManualRegister && uncfgSelected" class="px-4 pb-4">
+                                <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-slate-900/60 p-4 space-y-3 shadow-sm">
+                                    <div class="flex items-center justify-between">
+                                        <div>
+                                            <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500 font-bold">ONU Terpilih</div>
+                                            <div class="text-sm font-bold text-slate-700 dark:text-slate-200">
+                                                <span>{{ uncfgSelected.fsp || '-' }}</span> | <span>{{ uncfgSelected.sn || '-' }}</span>
+                                            </div>
+                                        </div>
+                                        <div class="text-[10px] text-slate-400">Isi nama ONU di bawah</div>
                                     </div>
-                                </div>
-                                <div class="text-[10px] text-slate-400">Isi nama ONU di bawah</div>
-                            </div>
 
-                            <div v-if="!manualRegisterActive" class="flex flex-col lg:flex-row lg:items-end gap-3">
-                                <div class="flex-1 space-y-1">
-                                    <label class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Nama ONU</label>
-                                    <input
-                                        v-model="registerName"
-                                        type="text"
-                                        placeholder="Contoh: ONU-RT01"
-                                        class="w-full h-14 lg:h-11 border border-slate-300 dark:border-white/15 rounded-2xl lg:rounded-lg px-4 text-base lg:text-sm font-semibold bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                                        :disabled="registerBusy"
-                                    />
-                                </div>
-                                <button
-                                    type="button"
-                                    class="h-14 lg:h-11 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-base lg:text-sm font-bold shadow-sm transition w-full lg:w-auto disabled:opacity-70 disabled:cursor-not-allowed"
-                                    :disabled="registerBusy"
-                                    @click="registerSelectedOnu()"
-                                >
-                                    {{ registerBusy ? 'Registrasi...' : 'Registrasi ONU' }}
-                                </button>
-                            </div>
-
-                            <div v-if="manualRegisterActive" class="space-y-2">
-                                <div class="flex items-center gap-3 rounded-2xl border border-emerald-200/70 dark:border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-500/10 px-4 py-3">
-                                    <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-600">
-                                        <svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
-                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                            <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
-                                        </svg>
-                                    </span>
-                                    <div class="text-sm font-semibold text-emerald-700 dark:text-emerald-200">
-                                        {{ registerProgressText || 'Registrasi berjalan...' }}
+                                    <div v-if="!manualRegisterActive" class="flex flex-col lg:flex-row lg:items-end gap-3">
+                                        <div class="flex-1 space-y-1">
+                                            <label class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Nama ONU</label>
+                                            <input
+                                                v-model="registerName"
+                                                type="text"
+                                                placeholder="Contoh: ONU-RT01"
+                                                class="w-full h-14 lg:h-11 border border-slate-300 dark:border-white/15 rounded-2xl lg:rounded-lg px-4 text-base lg:text-sm font-semibold bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                                :disabled="registerBusy"
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            class="h-14 lg:h-11 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-base lg:text-sm font-bold shadow-sm transition w-full lg:w-auto disabled:opacity-70 disabled:cursor-not-allowed"
+                                            :disabled="registerBusy"
+                                            @click="registerSelectedOnu()"
+                                        >
+                                            {{ registerBusy ? 'Registrasi...' : 'Registrasi ONU' }}
+                                        </button>
                                     </div>
-                                </div>
-                                <div class="h-2 rounded-full bg-emerald-100 dark:bg-emerald-500/10 overflow-hidden">
-                                    <div class="h-full w-1/3 bg-emerald-500 animate-pulse"></div>
+
+                                    <div v-if="manualRegisterActive" class="space-y-2">
+                                        <div class="flex items-center gap-3 rounded-2xl border border-emerald-200/70 dark:border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-500/10 px-4 py-3">
+                                            <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-600">
+                                                <svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
+                                                </svg>
+                                            </span>
+                                            <div class="text-sm font-semibold text-emerald-700 dark:text-emerald-200">
+                                                {{ registerProgressText || 'Registrasi berjalan...' }}
+                                            </div>
+                                        </div>
+                                        <div class="h-2 rounded-full bg-emerald-100 dark:bg-emerald-500/10 overflow-hidden">
+                                            <div class="h-full w-1/3 bg-emerald-500 animate-pulse"></div>
+                                        </div>
+                                    </div>
+
+                                    <div class="text-[10px] text-slate-400">Spasi akan dihapus, karakter khusus dibuang.</div>
                                 </div>
                             </div>
 
-                            <div class="text-[10px] text-slate-400">Spasi akan dihapus, karakter khusus dibuang.</div>
-                        </div>
-                    </div>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left text-sm whitespace-nowrap">
+                                    <thead class="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-slate-500 dark:text-slate-400 font-bold border-b border-slate-100 dark:border-white/5">
+                                        <tr v-if="canManualRegister">
+                                            <th class="px-3 sm:px-6 py-3">F/S/P</th>
+                                            <th class="px-3 sm:px-6 py-3">SN</th>
+                                            <th class="px-3 sm:px-6 py-3 text-right">Aksi</th>
+                                        </tr>
+                                        <tr v-else>
+                                            <th class="px-3 sm:px-6 py-3">F/S/P</th>
+                                            <th class="px-3 sm:px-6 py-3">SN</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100 dark:divide-white/5">
+                                        <tr v-if="!uncfg.length">
+                                            <td :colspan="canManualRegister ? 3 : 2" class="px-3 sm:px-6 py-10 text-center text-slate-400 italic">
+                                                Belum ada data.
+                                            </td>
+                                        </tr>
 
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-sm whitespace-nowrap">
-                            <thead class="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-slate-500 dark:text-slate-400 font-bold border-b border-slate-100 dark:border-white/5">
-                                <tr v-if="canManualRegister">
-                                    <th class="px-3 sm:px-6 py-3">F/S/P</th>
-                                    <th class="px-3 sm:px-6 py-3">SN</th>
-                                    <th class="px-3 sm:px-6 py-3 text-right">Aksi</th>
-                                </tr>
-                                <tr v-else>
-                                    <th class="px-3 sm:px-6 py-3">F/S/P</th>
-                                    <th class="px-3 sm:px-6 py-3">SN</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-slate-100 dark:divide-white/5">
-                                <tr v-if="!uncfg.length">
-                                    <td :colspan="canManualRegister ? 3 : 2" class="px-3 sm:px-6 py-10 text-center text-slate-400 italic">
-                                        Belum ada data.
-                                    </td>
-                                </tr>
-
-                                <template v-else-if="canManualRegister">
-                                    <tr
-                                        v-for="(item, idx) in uncfg"
-                                        :key="`${item.fsp}:${item.sn}`"
-                                        class="cursor-pointer"
-                                        :class="idx === uncfgSelectedIndex ? 'bg-blue-50/80 dark:bg-blue-500/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'"
-                                        @click="selectUncfg(idx)"
-                                    >
-                                        <td class="px-3 sm:px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp }}</td>
-                                        <td class="px-3 sm:px-6 py-4">
-                                            <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">{{ item.sn }}</div>
-                                            <div class="text-[10px] text-slate-400">Ketuk untuk pilih</div>
-                                        </td>
-                                        <td class="px-3 sm:px-6 py-4 text-right">
-                                            <button
-                                                type="button"
-                                                class="h-9 px-4 rounded-xl text-xs font-bold"
-                                                :class="idx === uncfgSelectedIndex ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
-                                                @click.stop="selectUncfg(idx)"
+                                        <template v-else-if="canManualRegister">
+                                            <tr
+                                                v-for="(item, idx) in uncfg"
+                                                :key="`${item.fsp}:${item.sn}`"
+                                                class="cursor-pointer"
+                                                :class="idx === uncfgSelectedIndex ? 'bg-blue-50/80 dark:bg-blue-500/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'"
+                                                @click="selectUncfg(idx)"
                                             >
-                                                Pilih
-                                            </button>
-                                        </td>
-                                    </tr>
-                                </template>
+                                                <td class="px-3 sm:px-6 py-4 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp }}</td>
+                                                <td class="px-3 sm:px-6 py-4">
+                                                    <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">{{ item.sn }}</div>
+                                                    <div class="text-[10px] text-slate-400">Ketuk untuk pilih</div>
+                                                </td>
+                                                <td class="px-3 sm:px-6 py-4 text-right">
+                                                    <button
+                                                        type="button"
+                                                        class="h-9 px-4 rounded-xl text-xs font-bold"
+                                                        :class="idx === uncfgSelectedIndex ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                                                        @click.stop="selectUncfg(idx)"
+                                                    >
+                                                        Pilih
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </template>
 
-                                <template v-else>
-                                    <tr v-for="item in uncfg" :key="`${item.fsp}:${item.sn}`" class="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                                        <td class="px-3 sm:px-6 py-3 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp }}</td>
-                                        <td class="px-3 sm:px-6 py-3 text-xs text-slate-600 dark:text-slate-300">{{ item.sn }}</td>
-                                    </tr>
-                                </template>
-                            </tbody>
-                        </table>
+                                        <template v-else>
+                                            <tr v-for="item in uncfg" :key="`${item.fsp}:${item.sn}`" class="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                                                <td class="px-3 sm:px-6 py-3 text-xs font-bold text-slate-700 dark:text-slate-200">{{ item.fsp }}</td>
+                                                <td class="px-3 sm:px-6 py-3 text-xs text-slate-600 dark:text-slate-300">{{ item.sn }}</td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div
