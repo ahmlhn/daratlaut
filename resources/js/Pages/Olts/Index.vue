@@ -2512,12 +2512,24 @@ onBeforeUnmount(() => {
                                 Registrasi ONU ZTE C320 via telnet (auto & manual).
                             </p>
                         </div>
-                        <div class="text-xs text-slate-400">Kelola OLT via dropdown dan modal setting.</div>
+                        <div v-if="!isTeknisi" class="flex items-center gap-3">
+                            <div class="hidden md:block text-xs text-slate-400">Kelola profil OLT dari header dan panel pilihan.</div>
+                            <button
+                                type="button"
+                                class="inline-flex h-11 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-slate-950"
+                                @click="openOltModal('add')"
+                            >
+                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14m-7-7h14" />
+                                </svg>
+                                Tambah OLT
+                            </button>
+                        </div>
                     </div>
                 </div>
 
                 <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-white/10 p-4 md:p-5 space-y-4">
-                    <div class="flex flex-col lg:flex-row lg:items-end gap-4">
+                    <div class="flex flex-col gap-4">
                         <div class="flex-1 space-y-2">
                             <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide">Pilih OLT</label>
                             <select
@@ -2531,31 +2543,31 @@ onBeforeUnmount(() => {
                                 </option>
                             </select>
                         </div>
-
-                        <div v-if="!isTeknisi" class="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full lg:w-auto">
-                            <button
-                                type="button"
-                                class="h-12 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-bold transition disabled:opacity-60 disabled:cursor-not-allowed"
-                                :disabled="!selectedOltId"
-                                @click="openOltModal('edit')"
-                            >
-                                Edit OLT
-                            </button>
-                            <button
-                                type="button"
-                                class="h-12 px-4 bg-slate-900 hover:bg-slate-950 text-white rounded-lg text-sm font-bold transition shadow-sm"
-                                @click="openOltModal('add')"
-                            >
-                                Tambah OLT
-                            </button>
-                        </div>
                     </div>
 
                     <div
                         id="olt-selected-info"
-                        class="text-[11px] text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2"
+                        class="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between"
                     >
-                        {{ selectedInfoText }}
+                        <div class="min-w-0">
+                            <div class="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">
+                                OLT Aktif
+                            </div>
+                            <div class="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
+                                {{ selectedInfoText }}
+                            </div>
+                        </div>
+                        <button
+                            v-if="!isTeknisi && selectedOltId"
+                            type="button"
+                            class="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-100 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                            @click="openOltModal('edit')"
+                        >
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536M9 11l6.768-6.768a2.5 2.5 0 113.536 3.536L12.536 14.536A4 4 0 019.708 15.7L7 16l.3-2.708A4 4 0 018.464 10.464L15.232 3.696" />
+                            </svg>
+                            Edit OLT Aktif
+                        </button>
                     </div>
                 </div>
 
