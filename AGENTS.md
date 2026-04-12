@@ -53,6 +53,7 @@ Last verified: 2026-04-12
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-13: Label kecil `Registrasi Manual` di header modal registrasi ONU dihapus agar modal lebih bersih; `resources/js/Pages/Olts/Index.vue` kini hanya menampilkan judul utama `Registrasi ONU`. Docs: N/A.
 - 2026-04-13: Registrasi manual ONU di halaman OLT kini memakai popup modal; `resources/js/Pages/Olts/Index.vue` mengubah aksi pilih/baris `ONU Unregistered` menjadi pembuka modal registrasi, memindahkan input nama ONU dan progres registrasi ke modal, dan menghapus panel inline registrasi dari card utama. Docs: N/A.
 - 2026-04-13: Alur `Auto Register` di halaman OLT tidak lagi memakai popup browser `confirm/prompt`; `resources/js/Pages/Olts/Index.vue` menambah modal modern untuk konfirmasi dan input prefix nama ONU sebelum memulai queue auto-register, lalu tetap melanjutkan ke modal progres yang sudah ada. Docs: N/A.
 - 2026-04-13: Auto register OLT kini memakai hasil scan terakhir yang tampil di UI, bukan scan ulang ke OLT; `resources/js/Pages/Olts/Index.vue` mengirim daftar `uncfg` aktif ke endpoint queue, dan `app/Http/Controllers/Api/OltController.php` menerima payload `items` untuk langsung dipakai sebagai sumber batch auto-register dengan fallback scan hanya bila payload tidak tersedia. Docs: N/A.

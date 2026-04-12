@@ -3558,8 +3558,7 @@ onBeforeUnmount(() => {
                                 <div class="border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
                                     <div class="flex items-start justify-between gap-3">
                                         <div>
-                                            <div class="text-[11px] font-black uppercase tracking-[0.24em] text-slate-400 dark:text-slate-500">Registrasi Manual</div>
-                                            <div class="mt-2 text-lg font-black text-slate-800 dark:text-white">Registrasi ONU</div>
+                                            <div class="text-lg font-black text-slate-800 dark:text-white">Registrasi ONU</div>
                                         </div>
                                         <button
                                             type="button"
