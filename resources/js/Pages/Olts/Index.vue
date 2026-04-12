@@ -654,10 +654,13 @@ const uncfgSelected = computed(() => {
 const registerName = ref('');
 const registerBusy = ref(false);
 const manualRegisterActive = ref(false);
+const manualRegisterModalOpen = ref(false);
 const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
 const autoRegisterRunId = ref(null);
+const autoRegisterSetupOpen = ref(false);
+const autoRegisterNamePrefix = ref('');
 const autoRegisterModalOpen = ref(false);
 const autoRegisterModalTone = ref('loading');
 const autoRegisterModalClosable = ref(false);
@@ -730,6 +733,7 @@ function setUncfgStatus(message, tone = 'info') {
 function clearUncfgSelection() {
     uncfgSelectedIndex.value = null;
     registerName.value = '';
+    manualRegisterModalOpen.value = false;
 }
 
 function selectUncfg(idx) {
@@ -737,6 +741,12 @@ function selectUncfg(idx) {
     if (idx < 0 || idx >= uncfg.value.length) return;
     uncfgSelectedIndex.value = idx;
     registerName.value = '';
+    manualRegisterModalOpen.value = true;
+}
+
+function hideManualRegisterModal() {
+    if (registerBusy.value || manualRegisterActive.value) return;
+    manualRegisterModalOpen.value = false;
 }
 
 function removeUncfgItemsByKeys(keys) {
@@ -758,6 +768,29 @@ function removeUncfgItemsByKeys(keys) {
     }
 
     storeUncfgCache(selectedOltId.value);
+}
+
+function buildCurrentUncfgItems() {
+    return Array.isArray(uncfg.value)
+        ? uncfg.value
+            .map(item => ({
+                fsp: String(item?.fsp || '').trim(),
+                sn: String(item?.sn || '').trim(),
+            }))
+            .filter(item => item.fsp && item.sn)
+        : [];
+}
+
+const autoRegisterSetupCount = computed(() => buildCurrentUncfgItems().length);
+const autoRegisterSetupBatches = computed(() => Math.ceil(autoRegisterSetupCount.value / AUTO_REGISTER_BATCH_SIZE) || 0);
+
+function openAutoRegisterSetupModal() {
+    autoRegisterNamePrefix.value = '';
+    autoRegisterSetupOpen.value = true;
+}
+
+function hideAutoRegisterSetupModal() {
+    autoRegisterSetupOpen.value = false;
 }
 
 function getAutoRegisterModalToneClasses(tone) {
@@ -1024,22 +1057,29 @@ async function autoRegister() {
         setUncfgStatus('Pilih OLT dulu.', 'error');
         return;
     }
-    const currentItems = Array.isArray(uncfg.value)
-        ? uncfg.value
-            .map(item => ({
-                fsp: String(item?.fsp || '').trim(),
-                sn: String(item?.sn || '').trim(),
-            }))
-            .filter(item => item.fsp && item.sn)
-        : [];
+    const currentItems = buildCurrentUncfgItems();
     if (!currentItems.length) {
         setUncfgStatus('Tidak ada hasil scan ONU untuk diproses.', 'info');
         return;
     }
-    if (!confirm('Auto register semua ONU unregistered?')) return;
+    openAutoRegisterSetupModal();
+}
 
-    const prefix = prompt('Prefix nama ONU (opsional, max 16). Contoh: RT01', '') || '';
+async function submitAutoRegister() {
+    const currentItems = buildCurrentUncfgItems();
+    if (!selectedOltId.value) {
+        setUncfgStatus('Pilih OLT dulu.', 'error');
+        hideAutoRegisterSetupModal();
+        return;
+    }
+    if (!currentItems.length) {
+        setUncfgStatus('Tidak ada hasil scan ONU untuk diproses.', 'info');
+        hideAutoRegisterSetupModal();
+        return;
+    }
 
+    const prefix = String(autoRegisterNamePrefix.value || '').trim().slice(0, 16);
+    hideAutoRegisterSetupModal();
     registerBusy.value = true;
     stopAutoRegisterPolling();
     try {
@@ -2467,6 +2507,7 @@ function loadRegisteredMemoryCache(oltId) {
 async function onOltChanged(newId, prevId) {
     stopLiveStatus();
     stopAutoRegisterPolling();
+    hideAutoRegisterSetupModal();
     hideAutoRegisterModal();
 
     if (prevId) {
@@ -2536,6 +2577,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
     stopLiveStatus();
     stopAutoRegisterPolling();
+    hideAutoRegisterSetupModal();
     hideAutoRegisterModal();
 });
 </script>
@@ -2683,58 +2725,6 @@ onBeforeUnmount(() => {
                                 <div class="text-xs text-slate-500 dark:text-slate-400">
                                     Total:
                                     <span class="font-bold text-slate-700 dark:text-slate-200">{{ uncfg.length }}</span>
-                                </div>
-                            </div>
-
-                            <div v-if="canManualRegister && uncfgSelected" class="px-4 pb-4">
-                                <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-slate-900/60 p-4 space-y-3 shadow-sm">
-                                    <div class="flex items-center justify-between">
-                                        <div>
-                                            <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500 font-bold">ONU Terpilih</div>
-                                            <div class="text-sm font-bold text-slate-700 dark:text-slate-200">
-                                                <span>{{ uncfgSelected.fsp || '-' }}</span> | <span>{{ uncfgSelected.sn || '-' }}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div v-if="!manualRegisterActive" class="flex flex-col lg:flex-row lg:items-end gap-3">
-                                        <div class="flex-1 space-y-1">
-                                            <label class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Nama ONU</label>
-                                            <input
-                                                v-model="registerName"
-                                                type="text"
-                                                placeholder="Contoh: ONU-RT01"
-                                                class="w-full h-14 lg:h-11 border border-slate-300 dark:border-white/15 rounded-2xl lg:rounded-lg px-4 text-base lg:text-sm font-semibold bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                                                :disabled="registerBusy"
-                                            />
-                                        </div>
-                                        <button
-                                            type="button"
-                                            class="h-14 lg:h-11 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-base lg:text-sm font-bold shadow-sm transition w-full lg:w-auto disabled:opacity-70 disabled:cursor-not-allowed"
-                                            :disabled="registerBusy"
-                                            @click="registerSelectedOnu()"
-                                        >
-                                            {{ registerBusy ? 'Registrasi...' : 'Registrasi ONU' }}
-                                        </button>
-                                    </div>
-
-                                    <div v-if="manualRegisterActive" class="space-y-2">
-                                        <div class="flex items-center gap-3 rounded-2xl border border-emerald-200/70 dark:border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-500/10 px-4 py-3">
-                                            <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-600">
-                                                <svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
-                                                </svg>
-                                            </span>
-                                            <div class="text-sm font-semibold text-emerald-700 dark:text-emerald-200">
-                                                {{ registerProgressText || 'Registrasi berjalan...' }}
-                                            </div>
-                                        </div>
-                                        <div class="h-2 rounded-full bg-emerald-100 dark:bg-emerald-500/10 overflow-hidden">
-                                            <div class="h-full w-1/3 bg-emerald-500 animate-pulse"></div>
-                                        </div>
-                                    </div>
-
                                 </div>
                             </div>
 
@@ -3556,6 +3546,149 @@ onBeforeUnmount(() => {
                         </div>
                     </div>
                 </div>
+
+                <Teleport to="body">
+                    <div v-if="manualRegisterModalOpen && canManualRegister && uncfgSelected" class="fixed inset-0 z-[94]">
+                        <div
+                            class="absolute inset-0 bg-slate-950/55 backdrop-blur-sm"
+                            @click="hideManualRegisterModal()"
+                        ></div>
+                        <div class="relative flex min-h-full items-center justify-center p-4 sm:p-6">
+                            <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-slate-900">
+                                <div class="border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-[11px] font-black uppercase tracking-[0.24em] text-slate-400 dark:text-slate-500">Registrasi Manual</div>
+                                            <div class="mt-2 text-lg font-black text-slate-800 dark:text-white">Registrasi ONU</div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-400 transition hover:border-slate-300 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:text-slate-500 dark:hover:border-white/20 dark:hover:text-slate-300"
+                                            :disabled="registerBusy || manualRegisterActive"
+                                            @click="hideManualRegisterModal()"
+                                        >
+                                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="space-y-4 px-5 py-5 sm:px-6">
+                                    <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU</div>
+                                        <div class="mt-1 text-sm font-bold text-slate-800 dark:text-white">
+                                            <span>{{ uncfgSelected.fsp || '-' }}</span> | <span>{{ uncfgSelected.sn || '-' }}</span>
+                                        </div>
+                                    </div>
+
+                                    <div v-if="!manualRegisterActive" class="space-y-2">
+                                        <label class="block text-[11px] font-bold uppercase tracking-wide text-slate-500">Nama ONU</label>
+                                        <input
+                                            v-model="registerName"
+                                            type="text"
+                                            placeholder="Contoh: ONU-RT01"
+                                            class="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:border-white/10 dark:bg-slate-950 dark:text-slate-100"
+                                            :disabled="registerBusy"
+                                        />
+                                    </div>
+
+                                    <div v-if="manualRegisterActive" class="space-y-3">
+                                        <div class="flex items-center gap-3 rounded-2xl border border-emerald-200/70 bg-emerald-50/70 px-4 py-3 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                                            <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-600">
+                                                <svg class="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
+                                                </svg>
+                                            </span>
+                                            <div class="text-sm font-semibold text-emerald-700 dark:text-emerald-200">
+                                                {{ registerProgressText || 'Registrasi berjalan...' }}
+                                            </div>
+                                        </div>
+                                        <div class="h-2 overflow-hidden rounded-full bg-emerald-100 dark:bg-emerald-500/10">
+                                            <div class="h-full w-1/3 bg-emerald-500 animate-pulse"></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <button
+                                        type="button"
+                                        class="h-11 rounded-lg bg-slate-100 px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                        :disabled="registerBusy || manualRegisterActive"
+                                        @click="hideManualRegisterModal()"
+                                    >
+                                        Batal
+                                    </button>
+                                    <button
+                                        v-if="!manualRegisterActive"
+                                        type="button"
+                                        class="h-11 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+                                        :disabled="registerBusy"
+                                        @click="registerSelectedOnu()"
+                                    >
+                                        {{ registerBusy ? 'Registrasi...' : 'Registrasi ONU' }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </Teleport>
+
+                <Teleport to="body">
+                    <div v-if="autoRegisterSetupOpen" class="fixed inset-0 z-[94]">
+                        <div class="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" @click="hideAutoRegisterSetupModal()"></div>
+                        <div class="relative flex min-h-full items-center justify-center p-4 sm:p-6">
+                            <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-slate-900">
+                                <div class="border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <div class="text-[11px] font-black uppercase tracking-[0.24em] text-slate-400 dark:text-slate-500">Auto Register</div>
+                                    <div class="mt-2 text-lg font-black text-slate-800 dark:text-white">Mulai Auto Register ONU</div>
+                                </div>
+
+                                <div class="space-y-4 px-5 py-5 sm:px-6">
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU</div>
+                                            <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">{{ autoRegisterSetupCount }}</div>
+                                        </div>
+                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Batch</div>
+                                            <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">{{ autoRegisterSetupBatches }}</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="space-y-2">
+                                        <label class="block text-[11px] font-bold uppercase tracking-wide text-slate-500">Prefix Nama ONU</label>
+                                        <input
+                                            v-model="autoRegisterNamePrefix"
+                                            type="text"
+                                            maxlength="16"
+                                            placeholder="Opsional, mis. RT01"
+                                            class="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/60 dark:border-white/10 dark:bg-slate-950 dark:text-slate-100"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div class="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <button
+                                        type="button"
+                                        class="h-11 rounded-lg bg-slate-100 px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+                                        @click="hideAutoRegisterSetupModal()"
+                                    >
+                                        Batal
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="h-11 rounded-lg bg-slate-900 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-slate-950"
+                                        @click="submitAutoRegister()"
+                                    >
+                                        Mulai
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </Teleport>
 
                 <Teleport to="body">
                     <div v-if="autoRegisterModalOpen" id="olt-auto-register-modal" class="fixed inset-0 z-[95]">
