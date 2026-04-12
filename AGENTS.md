@@ -53,6 +53,7 @@ Last verified: 2026-04-12
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-13: Card `Pilih OLT` di halaman OLT diperluas menjadi `OLT Active Workspace`; `resources/js/Pages/Olts/Index.vue` memindahkan aksi `Scan ONU Baru`, `Auto Register`, `Write/Simpan Config`, ringkasan jumlah ONU unregistered, dan status proses ke card atas, sementara card `ONU Unregistered` kini difokuskan sebagai area hasil scan dan registrasi manual. Docs: N/A.
 - 2026-04-13: UI aksi OLT di halaman provisioning disederhanakan dengan pola `simple admin`; `resources/js/Pages/Olts/Index.vue` memindahkan `Tambah OLT` menjadi CTA utama di header halaman dan menjadikan `Edit OLT Aktif` sebagai aksi sekunder kontekstual pada panel OLT terpilih. Docs: N/A.
 - 2026-04-12: Modal tambah/edit OLT di halaman OLT dirapikan untuk desktop; `resources/js/Pages/Olts/Index.vue` kini merender modal via `Teleport` ke `body`, memakai wrapper fullscreen flex-center, panel max-height dengan body scroll sendiri, serta header/footer yang tetap rapi saat form lebih panjang. Docs: N/A.
 - 2026-04-11: Selesai auto register ONU kini memakai opsi tanpa auto-refresh tabel `ONU Registered`; `resources/js/Pages/Olts/Index.vue` tidak lagi memaksa filter ke `all` atau memuat ulang semua FSP setelah proses selesai, sehingga hasil registered tetap menunggu refresh manual user. Docs: N/A.

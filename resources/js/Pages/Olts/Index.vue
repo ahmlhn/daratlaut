@@ -2569,6 +2569,111 @@ onBeforeUnmount(() => {
                             Edit OLT Aktif
                         </button>
                     </div>
+
+                    <div
+                        v-if="selectedOlt"
+                        class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-slate-900/70"
+                    >
+                        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                            <div class="space-y-3">
+                                <div>
+                                    <div class="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">
+                                        OLT Active Workspace
+                                    </div>
+                                    <div class="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">
+                                        Scan ONU baru, jalankan auto register, lalu simpan config dari panel ini.
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                    <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-800/70">
+                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Unregistered</div>
+                                        <div class="mt-1 text-lg font-black text-slate-800 dark:text-white">{{ uncfg.length }}</div>
+                                    </div>
+                                    <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-800/70">
+                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Mode</div>
+                                        <div class="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">
+                                            {{ isTeknisi ? 'Teknisi / Manual' : 'Admin / Auto' }}
+                                        </div>
+                                    </div>
+                                    <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-800/70">
+                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Status</div>
+                                        <div class="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">
+                                            {{ uncfgLoading ? 'Scan berjalan' : (registerBusy ? 'Proses berjalan' : 'Siap dipakai') }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:min-w-[430px] xl:grid-cols-3">
+                                <button
+                                    type="button"
+                                    class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+                                    :disabled="uncfgLoading || registerBusy"
+                                    @click="scanUncfg()"
+                                >
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m14.836 2A8.001 8.001 0 005.582 9m0 0H9m11 11v-5h-.581m0 0A8.003 8.003 0 016.582 15m13.418 0H15" />
+                                    </svg>
+                                    {{ uncfgLoading ? 'Scanning...' : 'Scan ONU Baru' }}
+                                </button>
+
+                                <template v-if="isTeknisi">
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
+                                        :disabled="registerBusy"
+                                        @click="writeConfigTeknisi()"
+                                    >
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Simpan Config
+                                    </button>
+                                </template>
+
+                                <template v-else>
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-slate-900 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-70"
+                                        :disabled="registerBusy"
+                                        @click="autoRegister()"
+                                    >
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                                        </svg>
+                                        Auto Register
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-5 text-sm font-bold text-amber-800 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/15"
+                                        :disabled="registerBusy"
+                                        @click="writeConfig()"
+                                    >
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5h14v14H5zM8 5v4h8V5" />
+                                        </svg>
+                                        Write Config
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div v-if="uncfgStatus.message" class="pt-4">
+                            <div
+                                class="relative overflow-hidden rounded-2xl border px-4 py-3 text-[12px] font-semibold"
+                                :class="getStatusToneStyle(uncfgStatus.tone).container"
+                            >
+                                <div
+                                    v-if="uncfgStatus.tone === 'loading'"
+                                    class="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent dark:via-white/10 animate-pulse"
+                                ></div>
+                                <div class="relative flex items-center gap-3">
+                                    <span class="h-2.5 w-2.5 rounded-full" :class="getStatusToneStyle(uncfgStatus.tone).dot"></span>
+                                    <span data-status-text>{{ uncfgStatus.message }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div
@@ -2584,69 +2689,15 @@ onBeforeUnmount(() => {
                                 </svg>
                             </div>
                             <div>
-                                <div class="text-base font-black text-slate-700 dark:text-slate-200 uppercase">ONU Unregistered</div>
+                                <div class="text-base font-black text-slate-700 dark:text-slate-200 uppercase">Daftar ONU Unregistered</div>
                                 <div class="text-sm text-slate-500 dark:text-slate-400">
-                                    Total:
-                                    <span class="font-bold text-slate-700 dark:text-slate-200">{{ uncfg.length }}</span>
+                                    Hasil scan untuk registrasi manual dan review SN.
                                 </div>
                             </div>
                         </div>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 w-full lg:w-auto">
-                            <button
-                                type="button"
-                                class="h-12 px-5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
-                                :disabled="uncfgLoading || registerBusy"
-                                @click="scanUncfg()"
-                            >
-                                {{ uncfgLoading ? 'Scanning...' : 'Scan Uncfg' }}
-                            </button>
-
-                             <button
-                                 v-if="isTeknisi"
-                                 type="button"
-                                 class="h-12 px-5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-bold shadow-sm hover:bg-slate-50 transition disabled:opacity-70 disabled:cursor-not-allowed"
-                                 :disabled="registerBusy"
-                                 @click="writeConfigTeknisi()"
-                             >
-                                 Simpan Config
-                             </button>
-
-                            <template v-else>
-                                <button
-                                    type="button"
-                                    class="h-12 px-5 bg-slate-900 hover:bg-slate-950 text-white rounded-lg text-sm font-bold shadow-sm transition disabled:opacity-70 disabled:cursor-not-allowed"
-                                    :disabled="registerBusy"
-                                    @click="autoRegister()"
-                                >
-                                    Auto Register
-                                </button>
-                                <button
-                                    type="button"
-                                    class="h-12 px-5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-bold shadow-sm hover:bg-slate-50 transition disabled:opacity-70 disabled:cursor-not-allowed"
-                                    :disabled="registerBusy"
-                                    @click="writeConfig()"
-                                >
-                                    Simpan Config
-                                </button>
-                            </template>
-                        </div>
-                    </div>
-
-                    <div v-if="uncfgStatus.message && !manualRegisterActive" class="px-4 md:px-5 pt-3 pb-3">
-                        <div class="text-xs">
-                            <div
-                                class="relative overflow-hidden rounded-2xl border px-4 py-3 text-[12px] font-semibold"
-                                :class="getStatusToneStyle(uncfgStatus.tone).container"
-                            >
-                                <div
-                                    v-if="uncfgStatus.tone === 'loading'"
-                                    class="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent dark:via-white/10 animate-pulse"
-                                ></div>
-                                <div class="relative flex items-center gap-3">
-                                    <span class="h-2.5 w-2.5 rounded-full" :class="getStatusToneStyle(uncfgStatus.tone).dot"></span>
-                                    <span data-status-text>{{ uncfgStatus.message }}</span>
-                                </div>
-                            </div>
+                        <div class="text-sm text-slate-500 dark:text-slate-400">
+                            Total:
+                            <span class="font-bold text-slate-700 dark:text-slate-200">{{ uncfg.length }}</span>
                         </div>
                     </div>
 
