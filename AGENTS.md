@@ -53,6 +53,7 @@ Last verified: 2026-04-12
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-13: Auto register OLT kini memakai hasil scan terakhir yang tampil di UI, bukan scan ulang ke OLT; `resources/js/Pages/Olts/Index.vue` mengirim daftar `uncfg` aktif ke endpoint queue, dan `app/Http/Controllers/Api/OltController.php` menerima payload `items` untuk langsung dipakai sebagai sumber batch auto-register dengan fallback scan hanya bila payload tidak tersedia. Docs: N/A.
 - 2026-04-13: UI `Pilih OLT` dirapikan agar lebih efisien; `resources/js/Pages/Olts/Index.vue` menaruh dropdown dan tombol edit ikon dalam satu baris, menonaktifkan edit saat belum ada OLT terpilih, menyimpan OLT terakhir ke `localStorage`, menyederhanakan info OLT terpilih, dan tetap menyembunyikan area aksi sampai OLT aktif dipilih. Docs: N/A.
 - 2026-04-13: Label judul `OLT Aktif` pada panel pilihan OLT dihapus untuk merapikan header card; `resources/js/Pages/Olts/Index.vue` kini hanya menampilkan info OLT terpilih tanpa heading tambahan. Docs: N/A.
 - 2026-04-13: Workspace OLT disederhanakan lagi ke gaya admin yang lebih ringkas; `resources/js/Pages/Olts/Index.vue` menghapus helper text, subtitle, dan petunjuk non-esensial pada area aksi dan daftar `ONU Unregistered`, sehingga yang tersisa hanya kontrol inti, status proses, form registrasi, dan tabel. Docs: N/A.

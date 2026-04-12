@@ -1196,6 +1196,7 @@ class OltController extends Controller
         $actor = $this->actorName($request);
         
         $service = null;
+        $service = null;
         $logExcerpt = '';
         $logId = null;
         try {
@@ -1659,6 +1660,9 @@ class OltController extends Controller
         $request->validate([
             'name_prefix' => 'nullable|string|max:16',
             'save_config' => 'nullable|boolean',
+            'items' => 'nullable|array',
+            'items.*.fsp' => 'required_with:items|string',
+            'items.*.sn' => 'required_with:items|string',
         ]);
 
         $namePrefix = trim((string) ($request->input('name_prefix') ?? ''));
@@ -1698,16 +1702,20 @@ class OltController extends Controller
             ], 409);
         }
 
-        $service = null;
         $logExcerpt = '';
         try {
-            $service = new OltService($tenantId);
-            $service->setSuppressActionLog(true);
-            $service->connect($olt);
-            $service->startTrace();
-            $uncfg = $this->normalizeUncfgItems($service->scanUnconfigured());
-            $logExcerpt = $service->getTraceText(20000);
-            $service->disconnect();
+            $providedItems = $this->normalizeUncfgItems((array) $request->input('items', []));
+            if (!empty($providedItems)) {
+                $uncfg = $providedItems;
+            } else {
+                $service = new OltService($tenantId);
+                $service->setSuppressActionLog(true);
+                $service->connect($olt);
+                $service->startTrace();
+                $uncfg = $this->normalizeUncfgItems($service->scanUnconfigured());
+                $logExcerpt = $service->getTraceText(20000);
+                $service->disconnect();
+            }
 
             if (empty($uncfg)) {
                 OltLog::logAction(
@@ -1729,6 +1737,7 @@ class OltController extends Controller
                         'success_keys' => [],
                         'failed_items' => [],
                         'state_text' => 'Tidak ada ONU unregistered.',
+                        'source' => !empty($providedItems) ? 'ui_last_scan' : 'olt_scan',
                         'queue_connection' => $queueTarget['connection'],
                         'queue' => $queueTarget['queue'],
                         'started_at' => now()->toDateTimeString(),
@@ -1753,6 +1762,7 @@ class OltController extends Controller
                         'error' => 0,
                         'success_keys' => [],
                         'failed_items' => [],
+                        'source' => !empty($providedItems) ? 'ui_last_scan' : 'olt_scan',
                     ],
                 ]);
             }
@@ -1772,6 +1782,7 @@ class OltController extends Controller
                 'error' => 0,
                 'success_keys' => [],
                 'failed_items' => [],
+                'source' => !empty($providedItems) ? 'ui_last_scan' : 'olt_scan',
                 'state_text' => 'Menunggu queue worker memulai auto register.',
                 'queue_connection' => $queueTarget['connection'],
                 'queue' => $queueTarget['queue'],
@@ -1785,7 +1796,9 @@ class OltController extends Controller
                 'register_auto',
                 'queued',
                 $summary,
-                trim("Queue auto register dibuat untuk {$totalCount} ONU ({$totalBatches} batch).\n\n{$logExcerpt}"),
+                trim(($providedItems
+                    ? "Queue auto register dibuat dari hasil scan terakhir di layar untuk {$totalCount} ONU ({$totalBatches} batch)."
+                    : "Queue auto register dibuat untuk {$totalCount} ONU ({$totalBatches} batch).") . "\n\n{$logExcerpt}"),
                 $actor
             );
 

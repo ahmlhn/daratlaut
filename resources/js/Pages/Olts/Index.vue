@@ -1024,6 +1024,18 @@ async function autoRegister() {
         setUncfgStatus('Pilih OLT dulu.', 'error');
         return;
     }
+    const currentItems = Array.isArray(uncfg.value)
+        ? uncfg.value
+            .map(item => ({
+                fsp: String(item?.fsp || '').trim(),
+                sn: String(item?.sn || '').trim(),
+            }))
+            .filter(item => item.fsp && item.sn)
+        : [];
+    if (!currentItems.length) {
+        setUncfgStatus('Tidak ada hasil scan ONU untuk diproses.', 'info');
+        return;
+    }
     if (!confirm('Auto register semua ONU unregistered?')) return;
 
     const prefix = prompt('Prefix nama ONU (opsional, max 16). Contoh: RT01', '') || '';
@@ -1043,7 +1055,10 @@ async function autoRegister() {
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/auto-register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name_prefix: prefix }),
+            body: JSON.stringify({
+                name_prefix: prefix,
+                items: currentItems,
+            }),
         });
         if (data.status !== 'ok') throw new Error(data.message || 'Auto register gagal');
         if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
