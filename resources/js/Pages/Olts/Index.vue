@@ -655,6 +655,9 @@ const registerName = ref('');
 const registerBusy = ref(false);
 const manualRegisterActive = ref(false);
 const manualRegisterModalOpen = ref(false);
+const manualRegisterAttenuationLoading = ref(false);
+const manualRegisterAttenuationError = ref('');
+const manualRegisterAttenuation = ref(null);
 const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
@@ -734,6 +737,9 @@ function clearUncfgSelection() {
     uncfgSelectedIndex.value = null;
     registerName.value = '';
     manualRegisterModalOpen.value = false;
+    manualRegisterAttenuationLoading.value = false;
+    manualRegisterAttenuationError.value = '';
+    manualRegisterAttenuation.value = null;
 }
 
 function selectUncfg(idx) {
@@ -742,11 +748,47 @@ function selectUncfg(idx) {
     uncfgSelectedIndex.value = idx;
     registerName.value = '';
     manualRegisterModalOpen.value = true;
+    loadManualRegisterAttenuation().catch(() => {});
 }
 
 function hideManualRegisterModal() {
     if (registerBusy.value || manualRegisterActive.value) return;
     manualRegisterModalOpen.value = false;
+}
+
+function formatAttenuationValue(value, unit = 'dB') {
+    if (value === null || value === undefined || value === '') return '-';
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '-';
+    return `${num.toFixed(3)} ${unit}`;
+}
+
+async function loadManualRegisterAttenuation() {
+    const item = uncfgSelected.value;
+    if (!manualRegisterModalOpen.value || !item || !selectedOltId.value) {
+        manualRegisterAttenuationLoading.value = false;
+        manualRegisterAttenuationError.value = '';
+        manualRegisterAttenuation.value = null;
+        return;
+    }
+
+    manualRegisterAttenuationLoading.value = true;
+    manualRegisterAttenuationError.value = '';
+    manualRegisterAttenuation.value = null;
+
+    try {
+        const params = new URLSearchParams({ fsp: String(item.fsp || '') });
+        const onuId = Number(item?.onu_id || 0);
+        if (onuId > 0) {
+            params.set('onu_id', String(onuId));
+        }
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/uncfg-attenuation?${params}`);
+        manualRegisterAttenuation.value = data?.data && typeof data.data === 'object' ? data.data : null;
+    } catch (e) {
+        manualRegisterAttenuationError.value = e.message || 'Redaman tidak tersedia.';
+    } finally {
+        manualRegisterAttenuationLoading.value = false;
+    }
 }
 
 function removeUncfgItemsByKeys(keys) {
@@ -3578,6 +3620,51 @@ onBeforeUnmount(() => {
                                         <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU</div>
                                         <div class="mt-1 text-sm font-bold text-slate-800 dark:text-white">
                                             <span>{{ uncfgSelected.fsp || '-' }}</span> | <span>{{ uncfgSelected.sn || '-' }}</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Redaman</div>
+
+                                        <div v-if="manualRegisterAttenuationLoading" class="mt-2 text-sm font-semibold text-slate-500 dark:text-slate-400">
+                                            Memuat redaman...
+                                        </div>
+
+                                        <div v-else-if="manualRegisterAttenuationError" class="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-300">
+                                            {{ manualRegisterAttenuationError }}
+                                        </div>
+
+                                        <div v-else-if="manualRegisterAttenuation" class="mt-3 space-y-3">
+                                            <div class="grid grid-cols-3 gap-2 text-xs">
+                                                <div>
+                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Up</div>
+                                                    <div class="mt-1 font-bold text-slate-800 dark:text-white">
+                                                        {{ formatAttenuationValue(manualRegisterAttenuation.upstream?.attenuation) }}
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Down</div>
+                                                    <div class="mt-1 font-bold text-slate-800 dark:text-white">
+                                                        {{ formatAttenuationValue(manualRegisterAttenuation.downstream?.attenuation) }}
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU ID</div>
+                                                    <div class="mt-1 font-bold text-slate-800 dark:text-white">
+                                                        {{ manualRegisterAttenuation.onu_id || '-' }}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="grid grid-cols-2 gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                                                <div>OLT Rx: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ formatAttenuationValue(manualRegisterAttenuation.upstream?.olt_rx, 'dBm') }}</span></div>
+                                                <div>ONU Tx: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ formatAttenuationValue(manualRegisterAttenuation.upstream?.onu_tx, 'dBm') }}</span></div>
+                                                <div>OLT Tx: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ formatAttenuationValue(manualRegisterAttenuation.downstream?.olt_tx, 'dBm') }}</span></div>
+                                                <div>ONU Rx: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ formatAttenuationValue(manualRegisterAttenuation.downstream?.onu_rx, 'dBm') }}</span></div>
+                                            </div>
+                                        </div>
+
+                                        <div v-else class="mt-2 text-sm font-semibold text-slate-400">
+                                            Redaman belum tersedia.
                                         </div>
                                     </div>
 

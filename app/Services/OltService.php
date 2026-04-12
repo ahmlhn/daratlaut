@@ -432,6 +432,29 @@ class OltService
     }
 
     /**
+     * Preview attenuation for an ONU candidate on an unregistered slot.
+     *
+     * @return array{
+     *   fsp:string,
+     *   onu_id:int,
+     *   upstream:array{olt_rx:?float,onu_tx:?float,attenuation:?float},
+     *   downstream:array{olt_tx:?float,onu_rx:?float,attenuation:?float}
+     * }
+     */
+    public function previewUnconfiguredAttenuation(string $fsp, ?int $onuId = null): array
+    {
+        if ($onuId === null || $onuId < 1) {
+            $onuId = $this->findAvailableOnuId($fsp);
+        }
+        $out = $this->sendCommand("show pon power attenuation gpon-onu_{$fsp}:{$onuId}", 20);
+        if ($this->outputHasError($out)) {
+            throw $this->commandException("show pon power attenuation gpon-onu_{$fsp}:{$onuId}", $out);
+        }
+
+        return $this->parseAttenuationOutput($out, $fsp, $onuId);
+    }
+
+    /**
      * Register ONU
      */
     public function registerOnu(string $fsp, string $sn, string $name, ?int $onuId = null): array
@@ -1086,9 +1109,21 @@ class OltService
             $tokens = preg_split('/\s+/', trim($line));
             if (!$tokens) continue;
             $fsp = '';
+            $onuId = 0;
+            $interface = '';
             foreach ($tokens as $t) {
                 if (preg_match(self::FSP_TOKEN_RE, $t)) { $fsp = $t; break; }
-                if (preg_match(self::GPON_ONU_RE, $t, $m2)) { $fsp = $m2[1]; break; }
+                if (preg_match(self::GPON_ONU_ID_RE, $t, $m2)) {
+                    $fsp = $m2[1];
+                    $onuId = (int) $m2[2];
+                    $interface = "gpon-onu_{$fsp}:{$onuId}";
+                    break;
+                }
+                if (preg_match(self::GPON_ONU_RE, $t, $m2)) {
+                    $fsp = $m2[1];
+                    $interface = trim($t);
+                    break;
+                }
             }
             if (!$fsp) continue;
             $sn = '';
@@ -1100,7 +1135,12 @@ class OltService
                     if (preg_match(self::SN_TOKEN_RE, $tokens[$i])) { $sn = $tokens[$i]; break; }
                 }
             }
-            if ($sn) $items[] = ['fsp' => $fsp, 'sn' => $sn];
+            if ($sn) {
+                $row = ['fsp' => $fsp, 'sn' => $sn];
+                if ($onuId > 0) $row['onu_id'] = $onuId;
+                if ($interface !== '') $row['interface'] = $interface;
+                $items[] = $row;
+            }
         }
         return $items;
     }
@@ -1400,6 +1440,51 @@ class OltService
         }
         
         return $detail;
+    }
+
+    private function parseAttenuationOutput(string $out, string $fsp, int $onuId): array
+    {
+        $data = [
+            'fsp' => $fsp,
+            'onu_id' => $onuId,
+            'upstream' => [
+                'olt_rx' => null,
+                'onu_tx' => null,
+                'attenuation' => null,
+            ],
+            'downstream' => [
+                'olt_tx' => null,
+                'onu_rx' => null,
+                'attenuation' => null,
+            ],
+        ];
+
+        $lines = preg_split('/\r?\n/', $out);
+        foreach ($lines as $line) {
+            $raw = trim((string) $line);
+            if ($raw === '') {
+                continue;
+            }
+
+            if (preg_match('/^up\s+Rx\s*:\s*(-?\d+(?:\.\d+)?)\(dbm\)\s+Tx\s*:\s*(-?\d+(?:\.\d+)?)\(dbm\)\s+(-?\d+(?:\.\d+)?)\(dB\)/i', $raw, $m)) {
+                $data['upstream'] = [
+                    'olt_rx' => (float) $m[1],
+                    'onu_tx' => (float) $m[2],
+                    'attenuation' => (float) $m[3],
+                ];
+                continue;
+            }
+
+            if (preg_match('/^down\s+Tx\s*:\s*(-?\d+(?:\.\d+)?)\(dbm\)\s+Rx\s*:\s*(-?\d+(?:\.\d+)?)\(dbm\)\s+(-?\d+(?:\.\d+)?)\(dB\)/i', $raw, $m)) {
+                $data['downstream'] = [
+                    'olt_tx' => (float) $m[1],
+                    'onu_rx' => (float) $m[2],
+                    'attenuation' => (float) $m[3],
+                ];
+            }
+        }
+
+        return $data;
     }
 
     /**
