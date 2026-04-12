@@ -763,6 +763,10 @@ function formatAttenuationValue(value, unit = 'dB') {
     return `${num.toFixed(3)} ${unit}`;
 }
 
+function getAttenuationRxClass(value) {
+    return getRxToneClass(extractRxValue(value));
+}
+
 async function loadManualRegisterAttenuation() {
     const item = uncfgSelected.value;
     if (!manualRegisterModalOpen.value || !item || !selectedOltId.value) {
@@ -3634,32 +3638,18 @@ onBeforeUnmount(() => {
                                             {{ manualRegisterAttenuationError }}
                                         </div>
 
-                                        <div v-else-if="manualRegisterAttenuation" class="mt-3 space-y-3">
-                                            <div class="grid grid-cols-3 gap-2 text-xs">
-                                                <div>
-                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Up</div>
-                                                    <div class="mt-1 font-bold text-slate-800 dark:text-white">
-                                                        {{ formatAttenuationValue(manualRegisterAttenuation.upstream?.attenuation) }}
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Down</div>
-                                                    <div class="mt-1 font-bold text-slate-800 dark:text-white">
-                                                        {{ formatAttenuationValue(manualRegisterAttenuation.downstream?.attenuation) }}
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU ID</div>
-                                                    <div class="mt-1 font-bold text-slate-800 dark:text-white">
-                                                        {{ manualRegisterAttenuation.onu_id || '-' }}
-                                                    </div>
+                                        <div v-else-if="manualRegisterAttenuation" class="mt-3 grid grid-cols-2 gap-3 text-xs">
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">OLT Rx</div>
+                                                <div class="mt-1 font-bold" :class="getAttenuationRxClass(manualRegisterAttenuation.upstream?.olt_rx)">
+                                                    {{ formatAttenuationValue(manualRegisterAttenuation.upstream?.olt_rx, 'dBm') }}
                                                 </div>
                                             </div>
-                                            <div class="grid grid-cols-2 gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                                                <div>OLT Rx: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ formatAttenuationValue(manualRegisterAttenuation.upstream?.olt_rx, 'dBm') }}</span></div>
-                                                <div>ONU Tx: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ formatAttenuationValue(manualRegisterAttenuation.upstream?.onu_tx, 'dBm') }}</span></div>
-                                                <div>OLT Tx: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ formatAttenuationValue(manualRegisterAttenuation.downstream?.olt_tx, 'dBm') }}</span></div>
-                                                <div>ONU Rx: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ formatAttenuationValue(manualRegisterAttenuation.downstream?.onu_rx, 'dBm') }}</span></div>
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Rx</div>
+                                                <div class="mt-1 font-bold" :class="getAttenuationRxClass(manualRegisterAttenuation.downstream?.onu_rx)">
+                                                    {{ formatAttenuationValue(manualRegisterAttenuation.downstream?.onu_rx, 'dBm') }}
+                                                </div>
                                             </div>
                                         </div>
 

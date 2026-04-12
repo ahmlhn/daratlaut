@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-04-12
-Last verified: 2026-04-12
+Last updated: 2026-04-13
+Last verified: 2026-04-13
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -53,6 +53,8 @@ Last verified: 2026-04-12
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-13: Warna angka preview redaman di modal registrasi manual OLT kini mengikuti logika Rx yang sama dengan `ONU Registered`; `resources/js/Pages/Olts/Index.vue` menerapkan tone hijau/amber/merah berdasarkan nilai `OLT Rx` dan `ONU Rx`. Docs: N/A.
+- 2026-04-13: Preview redaman di modal registrasi manual OLT disederhanakan agar hanya menampilkan `OLT Rx` dan `ONU Rx`; `resources/js/Pages/Olts/Index.vue` menghapus detail attenuation lain dari popup. Docs: N/A.
 - 2026-04-13: Preview redaman manual register kini memakai `onu_id` asli dari hasil `show gpon onu uncfg`; `app/Services/OltService.php` memperkaya parser `scanUnconfigured()` dengan `onu_id/interface`, endpoint preview redaman di `app/Http/Controllers/Api/OltController.php` menerima `onu_id`, dan `resources/js/Pages/Olts/Index.vue` mengirim `onu_id` hasil scan saat membuka modal registrasi manual sehingga tidak perlu lagi menghitung kandidat ID kosong untuk cek redaman. Docs: N/A.
 - 2026-04-13: Modal registrasi manual ONU kini menampilkan preview redaman; `app/Services/OltService.php` menambah parser command `show pon power attenuation gpon-onu_{fsp}:{onu_id}`, `app/Http/Controllers/Api/OltController.php` + `routes/api.php` menambah endpoint preview redaman unregistered berbasis kandidat `onu_id`, dan `resources/js/Pages/Olts/Index.vue` memuat serta menampilkan nilai upstream/downstream attenuation saat modal manual register dibuka. Docs: N/A.
 - 2026-04-13: Label kecil `Registrasi Manual` di header modal registrasi ONU dihapus agar modal lebih bersih; `resources/js/Pages/Olts/Index.vue` kini hanya menampilkan judul utama `Registrasi ONU`. Docs: N/A.
