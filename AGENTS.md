@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-04-06
-Last verified: 2026-04-06
+Last updated: 2026-04-12
+Last verified: 2026-04-12
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -53,6 +53,7 @@ Last verified: 2026-04-06
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-12: Modal tambah/edit OLT di halaman OLT dirapikan untuk desktop; `resources/js/Pages/Olts/Index.vue` kini merender modal via `Teleport` ke `body`, memakai wrapper fullscreen flex-center, panel max-height dengan body scroll sendiri, serta header/footer yang tetap rapi saat form lebih panjang. Docs: N/A.
 - 2026-04-11: Selesai auto register ONU kini memakai opsi tanpa auto-refresh tabel `ONU Registered`; `resources/js/Pages/Olts/Index.vue` tidak lagi memaksa filter ke `all` atau memuat ulang semua FSP setelah proses selesai, sehingga hasil registered tetap menunggu refresh manual user. Docs: N/A.
 - 2026-04-11: Popup auto register ONU kini mempertahankan status akhir di modal sampai ditutup manual user; `resources/js/Pages/Olts/Index.vue` menambah mode akhir `success/info/error`, tombol `Tutup`, dan menampilkan hasil akhir seperti sukses, sebagian gagal, atau `Tidak ada ONU unregistered` tetap di popup. Docs: N/A.
 - 2026-04-11: Layout popup progres auto register ONU dirapikan untuk desktop dengan render via `Teleport` ke `body` dan panel center-screen berbasis flex/fullscreen agar tidak ikut konteks layout halaman; `resources/js/Pages/Olts/Index.vue` juga memperbarui spacing, ukuran panel, dan progress card popup. Docs: N/A.

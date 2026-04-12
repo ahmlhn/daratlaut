@@ -59,10 +59,12 @@ class FinPayrollItem extends Model
     // Helpers
     public function calculateNet(): float
     {
-        return ($this->base_salary ?? 0) 
-            + ($this->overtime ?? 0) 
-            + ($this->teknisi_fee ?? 0) 
-            + ($this->sales_fee ?? 0) 
-            - ($this->deductions ?? 0);
+        return (float) (($this->base_salary ?? 0)
+            + ($this->overtime ?? 0)
+            + ($this->allowance ?? 0)
+            + ($this->fee_install ?? 0)
+            + ($this->fee_sales ?? 0)
+            + ($this->fee ?? 0)
+            - ($this->deduction ?? 0));
     }
 }

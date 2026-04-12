@@ -38,6 +38,11 @@ class FinApproval extends Model
 
     public function user(): BelongsTo
     {
-        return $this->belongsTo(NociUser::class, 'user_id');
+        return $this->belongsTo(NociUser::class, 'approved_by');
+    }
+
+    public function requester(): BelongsTo
+    {
+        return $this->belongsTo(NociUser::class, 'requested_by');
     }
 }

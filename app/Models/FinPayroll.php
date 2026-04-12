@@ -41,23 +41,23 @@ class FinPayroll extends Model
 
     public function scopeDraft($query)
     {
-        return $query->where('status', 'DRAFT');
+        return $query->where('status', 'draft');
     }
 
     public function scopeApproved($query)
     {
-        return $query->where('status', 'APPROVED');
+        return $query->where('status', 'approved');
     }
 
     public function scopePosted($query)
     {
-        return $query->where('status', 'POSTED');
+        return $query->where('status', 'posted');
     }
 
     // Relationships
     public function items(): HasMany
     {
-        return $this->hasMany(FinPayrollItem::class, 'payroll_id');
+        return $this->hasMany(FinPayrollItem::class, 'run_id');
     }
 
     public function creator(): BelongsTo
@@ -78,16 +78,16 @@ class FinPayroll extends Model
     // Helpers
     public function calculateTotal(): float
     {
-        return $this->items()->sum('net_amount');
+        return (float) $this->items()->sum('total');
     }
 
     public function isDraft(): bool
     {
-        return $this->status === 'DRAFT';
+        return strtolower((string) $this->status) === 'draft';
     }
 
     public function isPosted(): bool
     {
-        return $this->status === 'POSTED';
+        return strtolower((string) $this->status) === 'posted';
     }
 }

@@ -3341,134 +3341,147 @@ onBeforeUnmount(() => {
                     </div>
                     <pre class="p-4 text-[11px] bg-slate-900 text-slate-100 overflow-x-auto max-h-80 whitespace-pre-wrap">{{ logPanelText }}</pre>
                 </div>
-                <div v-if="showOltModal" class="fixed inset-0 z-[80]">
-                    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showOltModal = false"></div>
-                    <div class="absolute top-1/2 left-1/2 w-[92%] max-w-lg -translate-x-1/2 -translate-y-1/2 p-4">
-                        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl overflow-hidden">
-                            <div class="p-5 border-b border-slate-100 dark:border-white/10 flex items-center justify-between">
-                                <div class="text-sm font-black text-slate-800 dark:text-white uppercase">
-                                    {{ editingOltId ? 'Edit OLT' : 'Tambah OLT' }}
-                                </div>
-                                <button type="button" class="text-slate-400 hover:text-slate-600" @click="showOltModal = false">✕</button>
-                            </div>
-
-                            <div class="p-5 space-y-4">
-                                <div>
-                                    <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Nama OLT</label>
-                                    <input
-                                        v-model="formData.nama_olt"
-                                        type="text"
-                                        class="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/60"
-                                    />
-                                </div>
-
-                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                    <div class="sm:col-span-2">
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Host/IP</label>
-                                        <input
-                                            v-model="formData.host"
-                                            type="text"
-                                            class="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/60"
-                                        />
-                                    </div>
+                <Teleport to="body">
+                    <div v-if="showOltModal" class="fixed inset-0 z-[90]">
+                        <div class="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" @click="showOltModal = false"></div>
+                        <div class="relative flex min-h-full items-center justify-center p-4 sm:p-6">
+                            <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-slate-900">
+                                <div class="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
                                     <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Port</label>
-                                        <input
-                                            v-model="formData.port"
-                                            type="number"
-                                            class="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/60"
-                                        />
+                                        <div class="text-[11px] font-black uppercase tracking-[0.32em] text-slate-400 dark:text-slate-500">OLT Setup</div>
+                                        <div class="mt-1 text-base font-black text-slate-800 dark:text-white">
+                                            {{ editingOltId ? 'Edit OLT' : 'Tambah OLT' }}
+                                        </div>
                                     </div>
-                                </div>
-
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Username</label>
-                                        <input
-                                            v-model="formData.username"
-                                            type="text"
-                                            class="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/60"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">
-                                            Password {{ editingOltId ? '(kosongkan jika tidak diubah)' : '' }}
-                                        </label>
-                                        <input
-                                            v-model="formData.password"
-                                            type="password"
-                                            class="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/60"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">TCONT Default</label>
-                                        <input
-                                            v-model="formData.tcont_default"
-                                            type="text"
-                                            class="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/60"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">VLAN Default</label>
-                                        <input
-                                            v-model="formData.vlan_default"
-                                            type="number"
-                                            class="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/60"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">ONU Type Default</label>
-                                        <input
-                                            v-model="formData.onu_type_default"
-                                            type="text"
-                                            class="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/60"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Service-Port ID (Fixed)</label>
-                                        <input
-                                            v-model="formData.service_port_id_default"
-                                            type="number"
-                                            min="1"
-                                            max="65535"
-                                            class="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/60"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="p-5 border-t border-slate-100 dark:border-white/10 flex items-center justify-between gap-3">
-                                <button
-                                    v-if="editingOltId"
-                                    type="button"
-                                    class="h-11 px-4 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold transition"
-                                    @click="deleteOlt()"
-                                >
-                                    Hapus OLT
-                                </button>
-                                <div class="flex items-center gap-2 ml-auto">
                                     <button
                                         type="button"
-                                        class="h-11 px-4 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold transition"
+                                        class="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-lg text-slate-400 transition hover:border-slate-300 hover:text-slate-600 dark:border-white/10 dark:text-slate-500 dark:hover:border-white/20 dark:hover:text-slate-300"
                                         @click="showOltModal = false"
                                     >
-                                        Batal
+                                        ✕
                                     </button>
+                                </div>
+
+                                <div class="flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+                                    <div class="space-y-4">
+                                        <div>
+                                            <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Nama OLT</label>
+                                            <input
+                                                v-model="formData.nama_olt"
+                                                type="text"
+                                                class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                            />
+                                        </div>
+
+                                        <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                            <div class="sm:col-span-2">
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Host/IP</label>
+                                                <input
+                                                    v-model="formData.host"
+                                                    type="text"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Port</label>
+                                                <input
+                                                    v-model="formData.port"
+                                                    type="number"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                            <div>
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Username</label>
+                                                <input
+                                                    v-model="formData.username"
+                                                    type="text"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                                                    Password {{ editingOltId ? '(kosongkan jika tidak diubah)' : '' }}
+                                                </label>
+                                                <input
+                                                    v-model="formData.password"
+                                                    type="password"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                            <div>
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">TCONT Default</label>
+                                                <input
+                                                    v-model="formData.tcont_default"
+                                                    type="text"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">VLAN Default</label>
+                                                <input
+                                                    v-model="formData.vlan_default"
+                                                    type="number"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">ONU Type Default</label>
+                                                <input
+                                                    v-model="formData.onu_type_default"
+                                                    type="text"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Service-Port ID (Fixed)</label>
+                                                <input
+                                                    v-model="formData.service_port_id_default"
+                                                    type="number"
+                                                    min="1"
+                                                    max="65535"
+                                                    class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
                                     <button
+                                        v-if="editingOltId"
                                         type="button"
-                                        class="h-11 px-4 rounded-lg bg-slate-900 hover:bg-slate-950 text-white text-sm font-bold transition shadow-sm"
-                                        @click="saveOlt()"
+                                        class="h-11 rounded-lg bg-rose-600 px-4 text-sm font-bold text-white transition hover:bg-rose-700"
+                                        @click="deleteOlt()"
                                     >
-                                        Simpan
+                                        Hapus OLT
                                     </button>
+                                    <div class="ml-auto flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            class="h-11 rounded-lg bg-slate-100 px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+                                            @click="showOltModal = false"
+                                        >
+                                            Batal
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="h-11 rounded-lg bg-slate-900 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-slate-950"
+                                            @click="saveOlt()"
+                                        >
+                                            Simpan
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
+                </Teleport>
 
                 <div v-if="syncOpen" id="olt-sync-modal" class="fixed inset-0 z-[80]">
                     <div class="absolute inset-0 bg-slate-900/45 backdrop-blur-sm"></div>

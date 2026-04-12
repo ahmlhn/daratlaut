@@ -8,6 +8,19 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class FinTx extends Model
 {
+    public const STATUS_DRAFT = 'draft';
+    public const STATUS_PENDING = 'pending';
+    public const STATUS_APPROVED = 'approved';
+    public const STATUS_POSTED = 'posted';
+    public const STATUS_REJECTED = 'rejected';
+    public const STATUSES = [
+        self::STATUS_DRAFT,
+        self::STATUS_PENDING,
+        self::STATUS_APPROVED,
+        self::STATUS_POSTED,
+        self::STATUS_REJECTED,
+    ];
+
     protected $table = 'noci_fin_tx';
     
     protected $fillable = [
@@ -34,7 +47,7 @@ class FinTx extends Model
     protected $casts = [
         'tx_date' => 'date',
         'approved_at' => 'datetime',
-        'bukti' => 'array',
+        'posted_at' => 'datetime',
     ];
 
     // Scopes
@@ -45,17 +58,17 @@ class FinTx extends Model
 
     public function scopePending($query)
     {
-        return $query->where('status', 'PENDING');
+        return $query->where('status', self::STATUS_PENDING);
     }
 
     public function scopePosted($query)
     {
-        return $query->where('status', 'POSTED');
+        return $query->where('status', self::STATUS_POSTED);
     }
 
     public function scopeDraft($query)
     {
-        return $query->where('status', 'DRAFT');
+        return $query->where('status', self::STATUS_DRAFT);
     }
 
     public function scopeInPeriod($query, string $startDate, string $endDate)
@@ -107,22 +120,22 @@ class FinTx extends Model
 
     public function isPending(): bool
     {
-        return $this->status === 'PENDING';
+        return strtolower((string) $this->status) === self::STATUS_PENDING;
     }
 
     public function isPosted(): bool
     {
-        return $this->status === 'POSTED';
+        return strtolower((string) $this->status) === self::STATUS_POSTED;
     }
 
     // Status badge color
     public function getStatusColor(): string
     {
-        return match($this->status) {
-            'DRAFT' => 'red',
-            'PENDING' => 'yellow',
-            'POSTED' => 'green',
-            'REJECTED' => 'gray',
+        return match (strtolower((string) $this->status)) {
+            self::STATUS_DRAFT => 'red',
+            self::STATUS_PENDING => 'yellow',
+            self::STATUS_POSTED => 'green',
+            self::STATUS_REJECTED => 'gray',
             default => 'gray',
         };
     }

@@ -16,9 +16,13 @@ class FinTxLine extends Model
         'tenant_id',
         'tx_id',
         'coa_id',
-        'description',
+        'coa_code',
+        'line_desc',
         'debit',
         'credit',
+        'party_type',
+        'party_name',
+        'party_ref',
     ];
 
     protected $casts = [
@@ -41,6 +45,16 @@ class FinTxLine extends Model
     public function coa(): BelongsTo
     {
         return $this->belongsTo(FinCoa::class, 'coa_id');
+    }
+
+    public function getDescriptionAttribute(): ?string
+    {
+        return $this->line_desc;
+    }
+
+    public function setDescriptionAttribute(?string $value): void
+    {
+        $this->attributes['line_desc'] = $value;
     }
 
     // Helpers

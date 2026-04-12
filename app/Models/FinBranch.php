@@ -13,6 +13,7 @@ class FinBranch extends Model
         'tenant_id',
         'code',
         'name',
+        'mode',
         'is_active',
     ];
 

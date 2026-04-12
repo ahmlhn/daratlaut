@@ -3,18 +3,16 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\ActionLog;
+use App\Models\FinApproval;
+use App\Models\FinBranch;
 use App\Models\FinCoa;
 use App\Models\FinTx;
 use App\Models\FinTxLine;
-use App\Models\FinBranch;
-use App\Models\FinApproval;
-use App\Models\FinPayroll;
-use App\Models\FinPayrollItem;
-use App\Models\FinSettings;
-use App\Models\ActionLog;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\SuperAdminAccess;
 
 class FinanceController extends Controller
 {
@@ -23,7 +21,11 @@ class FinanceController extends Controller
      */
     public function dashboard(Request $request): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['view finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         $today = now()->format('Y-m-d');
         $startOfMonth = now()->startOfMonth()->format('Y-m-d');
         $endOfMonth = now()->endOfMonth()->format('Y-m-d');
@@ -75,7 +77,11 @@ class FinanceController extends Controller
      */
     public function listCoa(Request $request): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['view finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         
         $coas = FinCoa::forTenant($tenantId)
             ->orderBy('code')
@@ -96,7 +102,11 @@ class FinanceController extends Controller
      */
     public function coaDropdown(Request $request): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['view finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         
         $coas = FinCoa::forTenant($tenantId)
             ->active()
@@ -115,16 +125,21 @@ class FinanceController extends Controller
      */
     public function saveCoa(Request $request): JsonResponse
     {
+        $requiredPermission = $request->filled('id') ? 'edit finance' : 'create finance';
+        if ($forbidden = $this->authorizeFinance($request, [$requiredPermission])) {
+            return $forbidden;
+        }
+
         $request->validate([
             'code' => 'required|string|max:20',
             'name' => 'required|string|max:100',
-            'category' => 'required|in:asset,liability,equity,revenue,expense',
+            'category' => 'required|in:asset,liability,equity,revenue,expense,other',
             'type' => 'required|in:header,detail',
             'parent_id' => 'nullable|integer',
             'normal_balance' => 'nullable|in:debit,credit',
         ]);
         
-        $tenantId = $request->user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId($request);
         
         $data = [
             'tenant_id' => $tenantId,
@@ -147,7 +162,14 @@ class FinanceController extends Controller
             $message = 'COA berhasil ditambahkan';
         }
         
-        ActionLog::record('coa', $coa->id, $request->filled('id') ? 'update' : 'create', $data);
+        ActionLog::record(
+            $tenantId,
+            auth()->id(),
+            $request->filled('id') ? 'UPDATE' : 'CREATE',
+            'finance_coa',
+            $coa->id,
+            $data
+        );
         
         return response()->json([
             'status' => 'ok',
@@ -161,7 +183,11 @@ class FinanceController extends Controller
      */
     public function deleteCoa(Request $request, int $id): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['delete finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         $coa = FinCoa::forTenant($tenantId)->findOrFail($id);
         
         // Check if has children
@@ -195,15 +221,27 @@ class FinanceController extends Controller
      */
     public function listTransactions(Request $request): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
-        $perPage = $request->input('per_page', 20);
+        if ($forbidden = $this->authorizeFinance($request, ['view finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
+        $perPage = max(1, (int) $request->input('per_page', 20));
         
         $query = FinTx::forTenant($tenantId)
-            ->with(['lines.coa', 'branch']);
+            ->with(['lines.coa', 'branch', 'creator', 'approver']);
         
         // Filters
         if ($request->filled('status')) {
-            $query->where('status', $request->status);
+            $status = $this->normalizeDbStatus($request->status);
+            if (!$status) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Status transaksi tidak valid',
+                ], 422);
+            }
+
+            $query->where('status', $status);
         }
         
         if ($request->filled('branch_id')) {
@@ -215,21 +253,29 @@ class FinanceController extends Controller
         }
         
         if ($request->filled('search')) {
-            $search = $request->search;
+            $search = trim((string) $request->search);
             $query->where(function ($q) use ($search) {
                 $q->where('description', 'like', "%{$search}%")
                   ->orWhere('ref_no', 'like', "%{$search}%")
-                  ->orWhere('party_name', 'like', "%{$search}%");
+                  ->orWhereHas('lines', function ($lineQuery) use ($search) {
+                      $lineQuery->where('line_desc', 'like', "%{$search}%")
+                          ->orWhere('party_name', 'like', "%{$search}%");
+                  });
             });
         }
         
         $transactions = $query->orderBy('tx_date', 'desc')
             ->orderBy('id', 'desc')
             ->paginate($perPage);
+
+        $formatted = collect($transactions->items())
+            ->map(fn($tx) => $this->formatTransaction($tx))
+            ->values()
+            ->all();
         
         return response()->json([
             'status' => 'ok',
-            'data' => $transactions->items(),
+            'data' => $formatted,
             'pagination' => [
                 'total' => $transactions->total(),
                 'per_page' => $transactions->perPage(),
@@ -244,10 +290,14 @@ class FinanceController extends Controller
      */
     public function getTransaction(Request $request, int $id): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['view finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         
         $tx = FinTx::forTenant($tenantId)
-            ->with(['lines.coa', 'branch', 'approval.user'])
+            ->with(['lines.coa', 'branch', 'approval.user', 'creator', 'approver'])
             ->findOrFail($id);
         
         return response()->json([
@@ -261,6 +311,10 @@ class FinanceController extends Controller
      */
     public function createTransaction(Request $request): JsonResponse
     {
+        if ($forbidden = $this->authorizeFinance($request, ['create finance'])) {
+            return $forbidden;
+        }
+
         $request->validate([
             'tx_date' => 'required|date',
             'description' => 'required|string|max:500',
@@ -270,16 +324,35 @@ class FinanceController extends Controller
             'lines.*.credit' => 'nullable|numeric|min:0',
         ]);
         
-        $tenantId = $request->user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId($request);
+        $user = $request->user();
+        $partyName = trim((string) $request->input('party_name', ''));
         
         // Validate balanced
-        $totalDebit = collect($request->lines)->sum('debit');
-        $totalCredit = collect($request->lines)->sum('credit');
+        $totalDebit = (float) collect($request->lines)->sum('debit');
+        $totalCredit = (float) collect($request->lines)->sum('credit');
         
         if (abs($totalDebit - $totalCredit) > 0.01) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Transaksi tidak balance (Debit: ' . number_format($totalDebit, 0) . ', Credit: ' . number_format($totalCredit, 0) . ')',
+            ], 422);
+        }
+
+        $coaIds = collect($request->lines)
+            ->pluck('coa_id')
+            ->map(fn($coaId) => (int) $coaId)
+            ->unique()
+            ->values();
+
+        $coaCodes = FinCoa::forTenant($tenantId)
+            ->whereIn('id', $coaIds)
+            ->pluck('code', 'id');
+
+        if ($coaCodes->count() !== $coaIds->count()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Sebagian akun COA tidak valid untuk tenant ini',
             ], 422);
         }
         
@@ -290,34 +363,69 @@ class FinanceController extends Controller
                 'tx_date' => $request->tx_date,
                 'ref_no' => $request->ref_no,
                 'description' => $request->description,
-                'status' => 'PENDING',
+                'status' => FinTx::STATUS_PENDING,
                 'branch_id' => $request->branch_id,
-                'party_name' => $request->party_name,
                 'method' => $request->method,
-                'bukti' => $request->bukti ?? [],
-                'created_by' => auth()->id(),
-                'notes' => $request->notes,
+                'total_debit' => $totalDebit,
+                'total_credit' => $totalCredit,
+                'created_by' => $user?->id,
+                'created_by_name' => $user?->name ?? $user?->username,
+                'created_role' => $user?->role,
             ]);
             
             foreach ($request->lines as $line) {
+                $coaId = (int) ($line['coa_id'] ?? 0);
+                $linePartyName = trim((string) ($line['party_name'] ?? $partyName));
                 FinTxLine::create([
                     'tenant_id' => $tenantId,
                     'tx_id' => $tx->id,
-                    'coa_id' => $line['coa_id'],
-                    'description' => $line['description'] ?? '',
-                    'debit' => $line['debit'] ?? 0,
-                    'credit' => $line['credit'] ?? 0,
+                    'coa_id' => $coaId,
+                    'coa_code' => $coaCodes[$coaId] ?? null,
+                    'line_desc' => trim((string) ($line['description'] ?? '')),
+                    'debit' => (float) ($line['debit'] ?? 0),
+                    'credit' => (float) ($line['credit'] ?? 0),
+                    'party_name' => $linePartyName !== '' ? $linePartyName : null,
                 ]);
             }
+
+            FinApproval::updateOrCreate(
+                [
+                    'tenant_id' => $tenantId,
+                    'tx_id' => $tx->id,
+                ],
+                [
+                    'status' => 'pending',
+                    'requested_by' => $user?->id,
+                    'requested_role' => $user?->role,
+                    'requested_at' => now(),
+                    'approved_by' => null,
+                    'approved_at' => null,
+                    'note' => $request->notes,
+                ]
+            );
             
             DB::commit();
             
-            ActionLog::record('finance_tx', $tx->id, 'create', $tx->toArray());
+            ActionLog::record(
+                $tenantId,
+                $user?->id,
+                'CREATE',
+                'finance_tx',
+                $tx->id,
+                [
+                    'ref_no' => $tx->ref_no,
+                    'tx_date' => $tx->tx_date?->format('Y-m-d'),
+                    'total_debit' => $totalDebit,
+                    'total_credit' => $totalCredit,
+                ]
+            );
+
+            $tx->load(['lines.coa', 'branch', 'creator', 'approver']);
             
             return response()->json([
                 'status' => 'ok',
                 'message' => 'Transaksi berhasil dibuat',
-                'data' => $tx->load('lines.coa'),
+                'data' => $this->formatTransaction($tx),
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -333,10 +441,16 @@ class FinanceController extends Controller
      */
     public function updateTransaction(Request $request, int $id): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['edit finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         $tx = FinTx::forTenant($tenantId)->findOrFail($id);
+        $user = $request->user();
+        $partyName = trim((string) $request->input('party_name', ''));
         
-        if ($tx->status === 'POSTED') {
+        if ($tx->isPosted()) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Transaksi yang sudah diposting tidak dapat diedit',
@@ -350,13 +464,30 @@ class FinanceController extends Controller
         ]);
         
         // Validate balanced
-        $totalDebit = collect($request->lines)->sum('debit');
-        $totalCredit = collect($request->lines)->sum('credit');
+        $totalDebit = (float) collect($request->lines)->sum('debit');
+        $totalCredit = (float) collect($request->lines)->sum('credit');
         
         if (abs($totalDebit - $totalCredit) > 0.01) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Transaksi tidak balance',
+            ], 422);
+        }
+
+        $coaIds = collect($request->lines)
+            ->pluck('coa_id')
+            ->map(fn($coaId) => (int) $coaId)
+            ->unique()
+            ->values();
+
+        $coaCodes = FinCoa::forTenant($tenantId)
+            ->whereIn('id', $coaIds)
+            ->pluck('code', 'id');
+
+        if ($coaCodes->count() !== $coaIds->count()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Sebagian akun COA tidak valid untuk tenant ini',
             ], 422);
         }
         
@@ -367,10 +498,13 @@ class FinanceController extends Controller
                 'ref_no' => $request->ref_no,
                 'description' => $request->description,
                 'branch_id' => $request->branch_id,
-                'party_name' => $request->party_name,
                 'method' => $request->method,
-                'bukti' => $request->bukti ?? $tx->bukti,
-                'notes' => $request->notes,
+                'status' => FinTx::STATUS_PENDING,
+                'total_debit' => $totalDebit,
+                'total_credit' => $totalCredit,
+                'approved_by' => null,
+                'approved_at' => null,
+                'posted_at' => null,
             ]);
             
             // Delete old lines
@@ -378,24 +512,58 @@ class FinanceController extends Controller
             
             // Create new lines
             foreach ($request->lines as $line) {
+                $coaId = (int) ($line['coa_id'] ?? 0);
+                $linePartyName = trim((string) ($line['party_name'] ?? $partyName));
                 FinTxLine::create([
                     'tenant_id' => $tenantId,
                     'tx_id' => $tx->id,
-                    'coa_id' => $line['coa_id'],
-                    'description' => $line['description'] ?? '',
-                    'debit' => $line['debit'] ?? 0,
-                    'credit' => $line['credit'] ?? 0,
+                    'coa_id' => $coaId,
+                    'coa_code' => $coaCodes[$coaId] ?? null,
+                    'line_desc' => trim((string) ($line['description'] ?? '')),
+                    'debit' => (float) ($line['debit'] ?? 0),
+                    'credit' => (float) ($line['credit'] ?? 0),
+                    'party_name' => $linePartyName !== '' ? $linePartyName : null,
                 ]);
             }
+
+            FinApproval::updateOrCreate(
+                [
+                    'tenant_id' => $tenantId,
+                    'tx_id' => $tx->id,
+                ],
+                [
+                    'status' => 'pending',
+                    'requested_by' => $user?->id ?? $tx->created_by,
+                    'requested_role' => $user?->role ?? $tx->created_role,
+                    'requested_at' => now(),
+                    'approved_by' => null,
+                    'approved_at' => null,
+                    'note' => $request->notes,
+                ]
+            );
             
             DB::commit();
             
-            ActionLog::record('finance_tx', $tx->id, 'update', $tx->toArray());
+            ActionLog::record(
+                $tenantId,
+                $user?->id,
+                'UPDATE',
+                'finance_tx',
+                $tx->id,
+                [
+                    'ref_no' => $tx->ref_no,
+                    'tx_date' => $tx->tx_date?->format('Y-m-d'),
+                    'total_debit' => $totalDebit,
+                    'total_credit' => $totalCredit,
+                ]
+            );
+
+            $tx->load(['lines.coa', 'branch', 'creator', 'approver']);
             
             return response()->json([
                 'status' => 'ok',
                 'message' => 'Transaksi berhasil diupdate',
-                'data' => $tx->load('lines.coa'),
+                'data' => $this->formatTransaction($tx),
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -411,10 +579,15 @@ class FinanceController extends Controller
      */
     public function deleteTransaction(Request $request, int $id): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['delete finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
+        $user = $request->user();
         $tx = FinTx::forTenant($tenantId)->findOrFail($id);
         
-        if ($tx->status === 'POSTED') {
+        if ($tx->isPosted()) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Transaksi yang sudah diposting tidak dapat dihapus',
@@ -422,9 +595,17 @@ class FinanceController extends Controller
         }
         
         $tx->lines()->delete();
+        FinApproval::forTenant($tenantId)->where('tx_id', $tx->id)->delete();
         $tx->delete();
         
-        ActionLog::record('finance_tx', $id, 'delete', ['id' => $id]);
+        ActionLog::record(
+            $tenantId,
+            $user?->id,
+            'DELETE',
+            'finance_tx',
+            $id,
+            ['id' => $id]
+        );
         
         return response()->json([
             'status' => 'ok',
@@ -439,13 +620,25 @@ class FinanceController extends Controller
      */
     public function listApprovals(Request $request): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['approve finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         
         $query = FinTx::forTenant($tenantId)
-            ->with(['lines.coa', 'branch', 'creator']);
+            ->with(['lines.coa', 'branch', 'creator', 'approver']);
         
         if ($request->filled('status')) {
-            $query->where('status', $request->status);
+            $status = $this->normalizeDbStatus($request->status);
+            if (!$status) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Status transaksi tidak valid',
+                ], 422);
+            }
+
+            $query->where('status', $status);
         } else {
             $query->pending();
         }
@@ -465,10 +658,15 @@ class FinanceController extends Controller
      */
     public function approveTransaction(Request $request, int $id): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['approve finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
+        $user = $request->user();
         $tx = FinTx::forTenant($tenantId)->findOrFail($id);
         
-        if ($tx->status !== 'PENDING') {
+        if (!$tx->isPending()) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Hanya transaksi PENDING yang dapat diapprove',
@@ -476,20 +674,36 @@ class FinanceController extends Controller
         }
         
         $tx->update([
-            'status' => 'POSTED',
-            'approved_by' => auth()->id(),
+            'status' => FinTx::STATUS_POSTED,
+            'approved_by' => $user?->id,
             'approved_at' => now(),
+            'posted_at' => now(),
         ]);
         
-        FinApproval::create([
-            'tenant_id' => $tenantId,
-            'tx_id' => $tx->id,
-            'action' => 'APPROVE',
-            'notes' => $request->notes,
-            'user_id' => auth()->id(),
-        ]);
+        FinApproval::updateOrCreate(
+            [
+                'tenant_id' => $tenantId,
+                'tx_id' => $tx->id,
+            ],
+            [
+                'status' => 'approved',
+                'requested_by' => $tx->created_by,
+                'requested_role' => $tx->created_role,
+                'requested_at' => $tx->created_at,
+                'approved_by' => $user?->id,
+                'approved_at' => now(),
+                'note' => $request->notes,
+            ]
+        );
         
-        ActionLog::record('finance_approval', $tx->id, 'approve', ['notes' => $request->notes]);
+        ActionLog::record(
+            $tenantId,
+            $user?->id,
+            'APPROVE',
+            'finance_tx',
+            $tx->id,
+            ['notes' => $request->notes]
+        );
         
         return response()->json([
             'status' => 'ok',
@@ -502,10 +716,15 @@ class FinanceController extends Controller
      */
     public function rejectTransaction(Request $request, int $id): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['approve finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
+        $user = $request->user();
         $tx = FinTx::forTenant($tenantId)->findOrFail($id);
         
-        if ($tx->status !== 'PENDING') {
+        if (!$tx->isPending()) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Hanya transaksi PENDING yang dapat direject',
@@ -513,18 +732,36 @@ class FinanceController extends Controller
         }
         
         $tx->update([
-            'status' => 'REJECTED',
+            'status' => FinTx::STATUS_REJECTED,
+            'approved_by' => $user?->id,
+            'approved_at' => now(),
+            'posted_at' => null,
         ]);
         
-        FinApproval::create([
-            'tenant_id' => $tenantId,
-            'tx_id' => $tx->id,
-            'action' => 'REJECT',
-            'notes' => $request->notes ?? $request->reason,
-            'user_id' => auth()->id(),
-        ]);
+        FinApproval::updateOrCreate(
+            [
+                'tenant_id' => $tenantId,
+                'tx_id' => $tx->id,
+            ],
+            [
+                'status' => 'rejected',
+                'requested_by' => $tx->created_by,
+                'requested_role' => $tx->created_role,
+                'requested_at' => $tx->created_at,
+                'approved_by' => $user?->id,
+                'approved_at' => now(),
+                'note' => $request->notes ?? $request->reason,
+            ]
+        );
         
-        ActionLog::record('finance_approval', $tx->id, 'reject', ['reason' => $request->reason]);
+        ActionLog::record(
+            $tenantId,
+            $user?->id,
+            'REJECT',
+            'finance_tx',
+            $tx->id,
+            ['reason' => $request->reason]
+        );
         
         return response()->json([
             'status' => 'ok',
@@ -537,37 +774,51 @@ class FinanceController extends Controller
      */
     public function bulkApprove(Request $request): JsonResponse
     {
+        if ($forbidden = $this->authorizeFinance($request, ['approve finance'])) {
+            return $forbidden;
+        }
+
         $request->validate([
             'ids' => 'required|array|min:1',
             'ids.*' => 'integer',
         ]);
         
-        $tenantId = $request->user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId($request);
+        $user = $request->user();
         $successCount = 0;
         $errors = [];
         
-        foreach ($request->ids as $id) {
+        foreach (collect($request->ids)->unique()->all() as $id) {
             try {
                 $tx = FinTx::forTenant($tenantId)->findOrFail($id);
                 
-                if ($tx->status !== 'PENDING') {
+                if (!$tx->isPending()) {
                     $errors[] = "TX #{$id}: bukan PENDING";
                     continue;
                 }
                 
                 $tx->update([
-                    'status' => 'POSTED',
-                    'approved_by' => auth()->id(),
+                    'status' => FinTx::STATUS_POSTED,
+                    'approved_by' => $user?->id,
                     'approved_at' => now(),
+                    'posted_at' => now(),
                 ]);
                 
-                FinApproval::create([
-                    'tenant_id' => $tenantId,
-                    'tx_id' => $tx->id,
-                    'action' => 'APPROVE',
-                    'notes' => $request->notes ?? 'Bulk approve',
-                    'user_id' => auth()->id(),
-                ]);
+                FinApproval::updateOrCreate(
+                    [
+                        'tenant_id' => $tenantId,
+                        'tx_id' => $tx->id,
+                    ],
+                    [
+                        'status' => 'approved',
+                        'requested_by' => $tx->created_by,
+                        'requested_role' => $tx->created_role,
+                        'requested_at' => $tx->created_at,
+                        'approved_by' => $user?->id,
+                        'approved_at' => now(),
+                        'note' => $request->notes ?? 'Bulk approve',
+                    ]
+                );
                 
                 $successCount++;
             } catch (\Exception $e) {
@@ -590,7 +841,11 @@ class FinanceController extends Controller
      */
     public function listBranches(Request $request): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['view finance'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         
         $branches = FinBranch::forTenant($tenantId)
             ->orderBy('name')
@@ -607,17 +862,24 @@ class FinanceController extends Controller
      */
     public function saveBranch(Request $request): JsonResponse
     {
+        $requiredPermission = $request->filled('id') ? 'edit finance' : 'create finance';
+        if ($forbidden = $this->authorizeFinance($request, [$requiredPermission])) {
+            return $forbidden;
+        }
+
         $request->validate([
             'code' => 'required|string|max:20',
-            'name' => 'required|string|max:100',
+            'name' => 'required|string|max:80',
+            'mode' => 'nullable|in:standalone,consolidated',
         ]);
         
-        $tenantId = $request->user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId($request);
         
         $data = [
             'tenant_id' => $tenantId,
             'code' => $request->code,
             'name' => $request->name,
+            'mode' => $request->mode ?? 'standalone',
             'is_active' => $request->is_active ?? true,
         ];
         
@@ -642,7 +904,11 @@ class FinanceController extends Controller
      */
     public function trialBalance(Request $request): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['view finance', 'view reports'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         $endDate = $request->end_date ?? now()->format('Y-m-d');
         
         $coas = FinCoa::forTenant($tenantId)
@@ -697,7 +963,11 @@ class FinanceController extends Controller
      */
     public function incomeStatement(Request $request): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['view finance', 'view reports'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         $startDate = $request->start_date ?? now()->startOfMonth()->format('Y-m-d');
         $endDate = $request->end_date ?? now()->format('Y-m-d');
         
@@ -730,7 +1000,11 @@ class FinanceController extends Controller
      */
     public function balanceSheet(Request $request): JsonResponse
     {
-        $tenantId = $request->user()->tenant_id ?? 1;
+        if ($forbidden = $this->authorizeFinance($request, ['view finance', 'view reports'])) {
+            return $forbidden;
+        }
+
+        $tenantId = $this->tenantId($request);
         $endDate = $request->end_date ?? now()->format('Y-m-d');
         
         $assets = $this->getCategoryBreakdown($tenantId, 'asset', null, $endDate);
@@ -770,11 +1044,15 @@ class FinanceController extends Controller
      */
     public function accountLedger(Request $request): JsonResponse
     {
+        if ($forbidden = $this->authorizeFinance($request, ['view finance', 'view reports'])) {
+            return $forbidden;
+        }
+
         $request->validate([
             'coa_id' => 'required|integer',
         ]);
         
-        $tenantId = $request->user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId($request);
         $startDate = $request->start_date ?? now()->startOfMonth()->format('Y-m-d');
         $endDate = $request->end_date ?? now()->format('Y-m-d');
         
@@ -787,8 +1065,7 @@ class FinanceController extends Controller
         $lines = FinTxLine::forTenant($tenantId)
             ->where('coa_id', $request->coa_id)
             ->whereHas('transaction', function ($q) use ($startDate, $endDate) {
-                $q->whereBetween('tx_date', [$startDate, $endDate])
-                  ->where('status', 'POSTED');
+                $q->whereBetween('tx_date', [$startDate, $endDate])->posted();
             })
             ->with('transaction')
             ->orderBy('id')
@@ -807,7 +1084,7 @@ class FinanceController extends Controller
             $ledger[] = [
                 'date' => $line->transaction->tx_date->format('Y-m-d'),
                 'ref_no' => $line->transaction->ref_no,
-                'description' => $line->description ?: $line->transaction->description,
+                'description' => $line->line_desc ?: $line->transaction->description,
                 'debit' => $line->debit,
                 'credit' => $line->credit,
                 'balance' => $runningBalance,
@@ -908,7 +1185,7 @@ class FinanceController extends Controller
     {
         $tree = [];
         foreach ($coas as $coa) {
-            if ($coa->parent_id === $parentId) {
+            if ($coa->parent_id == $parentId) {
                 $node = $coa->toArray();
                 $node['children'] = $this->buildCoaTree($coas, $coa->id);
                 $tree[] = $node;
@@ -921,32 +1198,89 @@ class FinanceController extends Controller
     {
         $totalDebit = $tx->lines->sum('debit');
         $totalCredit = $tx->lines->sum('credit');
+        $partyName = $tx->lines->pluck('party_name')->filter()->first();
         
         return [
             'id' => $tx->id,
             'tx_date' => $tx->tx_date->format('Y-m-d'),
             'ref_no' => $tx->ref_no,
             'description' => $tx->description,
-            'status' => $tx->status,
+            'status' => strtoupper((string) $tx->status),
+            'branch_id' => $tx->branch_id,
             'branch' => $tx->branch?->name,
-            'party_name' => $tx->party_name,
+            'party_name' => $partyName,
             'method' => $tx->method,
             'total_debit' => $totalDebit,
             'total_credit' => $totalCredit,
-            'bukti' => $tx->bukti,
             'lines' => $tx->lines->map(fn($l) => [
                 'id' => $l->id,
                 'coa_id' => $l->coa_id,
-                'coa_code' => $l->coa?->code,
+                'coa_code' => $l->coa_code ?: $l->coa?->code,
                 'coa_name' => $l->coa?->name,
-                'description' => $l->description,
+                'description' => $l->line_desc,
                 'debit' => $l->debit,
                 'credit' => $l->credit,
+                'party_name' => $l->party_name,
             ]),
             'created_at' => $tx->created_at?->format('Y-m-d H:i'),
-            'created_by' => $tx->creator?->username,
+            'created_by' => $tx->creator?->username ?? $tx->creator?->name ?? $tx->created_by_name,
             'approved_at' => $tx->approved_at?->format('Y-m-d H:i'),
-            'approved_by' => $tx->approver?->username,
+            'approved_by' => $tx->approver?->username ?? $tx->approver?->name ?? $tx->approved_by_name,
         ];
+    }
+
+    private function tenantId(Request $request): int
+    {
+        return (int) ($request->user()?->tenant_id ?? 1);
+    }
+
+    private function authorizeFinance(Request $request, array $permissions): ?JsonResponse
+    {
+        $user = $request->user() ?: auth()->user();
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        if (SuperAdminAccess::hasAccess($user)) {
+            return null;
+        }
+
+        $legacyRole = $this->normalizeRole($user->role ?? null);
+        if (in_array($legacyRole, ['admin', 'owner'], true)) {
+            return null;
+        }
+
+        $required = collect($permissions)
+            ->push('manage finance')
+            ->map(fn($perm) => trim((string) $perm))
+            ->filter()
+            ->unique()
+            ->values();
+
+        if (method_exists($user, 'can')) {
+            foreach ($required as $permission) {
+                if ($user->can($permission)) {
+                    return null;
+                }
+            }
+        }
+
+        return response()->json(['message' => 'Forbidden'], 403);
+    }
+
+    private function normalizeRole(?string $role): string
+    {
+        $normalized = strtolower(trim((string) $role));
+        return $normalized === 'svp lapangan' ? 'svp_lapangan' : $normalized;
+    }
+
+    private function normalizeDbStatus(?string $status): ?string
+    {
+        $value = strtolower(trim((string) $status));
+        if ($value === '') {
+            return null;
+        }
+
+        return in_array($value, FinTx::STATUSES, true) ? $value : null;
     }
 }
