@@ -1147,12 +1147,47 @@ async function scanUncfg() {
     }
 }
 
-async function writeConfig() {
+const writeConfigConfirmOpen = ref(false);
+const writeConfigFromTeknisi = ref(false);
+const writeConfigBusy = ref(false);
+
+function requestWriteConfig(fromTeknisi = false) {
+    if (!selectedOltId.value) {
+        setUncfgStatus('Pilih OLT dulu.', 'error');
+        return;
+    }
+    if (fromTeknisi && !teknisiWriteReady.value) {
+        setUncfgStatus('Tidak ada data yang harus disimpan.', 'info');
+        return;
+    }
+
+    writeConfigFromTeknisi.value = !!fromTeknisi;
+    writeConfigConfirmOpen.value = true;
+}
+
+function hideWriteConfigConfirm() {
+    if (writeConfigBusy.value) return;
+    writeConfigConfirmOpen.value = false;
+}
+
+async function confirmWriteConfig() {
+    if (writeConfigBusy.value) return;
+    writeConfigBusy.value = true;
+    writeConfigConfirmOpen.value = false;
+
+    const ok = await writeConfigInternal();
+    if (ok && writeConfigFromTeknisi.value) {
+        teknisiWriteReady.value = false;
+    }
+    writeConfigFromTeknisi.value = false;
+    writeConfigBusy.value = false;
+}
+
+async function writeConfigInternal() {
     if (!selectedOltId.value) {
         setUncfgStatus('Pilih OLT dulu.', 'error');
         return false;
     }
-    if (!confirm('Simpan config OLT sekarang? (write)')) return;
 
     setUncfgStatus('Menulis konfigurasi (write)...', 'loading');
     try {
@@ -1172,12 +1207,7 @@ async function writeConfig() {
 
 async function writeConfigTeknisi() {
     if (!isTeknisi.value) return;
-    if (!teknisiWriteReady.value) {
-        setUncfgStatus('Tidak ada data yang harus disimpan.', 'info');
-        return;
-    }
-    const ok = await writeConfig();
-    if (ok) teknisiWriteReady.value = false;
+    requestWriteConfig(true);
 }
 
 async function autoRegister() {
@@ -2830,7 +2860,7 @@ onBeforeUnmount(() => {
                                         type="button"
                                         class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-5 text-sm font-bold text-amber-800 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/15"
                                         :disabled="registerBusy"
-                                        @click="writeConfig()"
+                                        @click="requestWriteConfig(false)"
                                     >
                                         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5h14v14H5zM8 5v4h8V5" />
@@ -3829,6 +3859,43 @@ onBeforeUnmount(() => {
                                         @click="registerSelectedOnu()"
                                     >
                                         {{ registerBusy ? 'Registrasi...' : 'Registrasi ONU' }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </Teleport>
+
+                <Teleport to="body">
+                    <div v-if="writeConfigConfirmOpen" class="fixed inset-0 z-[94]">
+                        <div class="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" @click="hideWriteConfigConfirm()"></div>
+                        <div class="relative flex min-h-full items-center justify-center p-4 sm:p-6">
+                            <div class="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-slate-900">
+                                <div class="border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <div class="text-lg font-black text-slate-800 dark:text-white">Simpan Config</div>
+                                    <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                        Konfirmasi penulisan konfigurasi ke OLT.
+                                    </div>
+                                </div>
+                                <div class="px-5 py-5 text-sm text-slate-600 dark:text-slate-300 sm:px-6">
+                                    Lanjutkan write-config untuk OLT terpilih?
+                                </div>
+                                <div class="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <button
+                                        type="button"
+                                        class="h-10 rounded-lg bg-slate-100 px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                        :disabled="writeConfigBusy"
+                                        @click="hideWriteConfigConfirm()"
+                                    >
+                                        Batal
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="h-10 rounded-lg bg-amber-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                        :disabled="writeConfigBusy"
+                                        @click="confirmWriteConfig()"
+                                    >
+                                        Simpan
                                     </button>
                                 </div>
                             </div>
