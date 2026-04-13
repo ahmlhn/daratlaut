@@ -1289,6 +1289,7 @@ class OltController extends Controller
     {
         $request->validate([
             'fsp' => 'required|string|regex:/^\d+\/\d+\/\d+$/',
+            'sn' => 'required|string|regex:/^[A-Za-z]{4}[A-Fa-f0-9]{8}$/',
             'onu_id' => 'nullable|integer|min:1|max:128',
         ]);
 
@@ -1302,7 +1303,8 @@ class OltController extends Controller
             $service->connect($olt);
             $data = $service->previewUnconfiguredAttenuation(
                 (string) $request->input('fsp'),
-                $request->filled('onu_id') ? (int) $request->input('onu_id') : null
+                $request->filled('onu_id') ? (int) $request->input('onu_id') : null,
+                (string) $request->input('sn')
             );
             $service->disconnect();
 
@@ -1360,7 +1362,8 @@ class OltController extends Controller
             if ($isTeknisi) {
                 $attenuation = $service->previewUnconfiguredAttenuation(
                     (string) $request->input('fsp'),
-                    $requestedOnuId
+                    $requestedOnuId,
+                    (string) $request->input('sn')
                 );
                 $rawOnuRx = $attenuation['downstream']['onu_rx'] ?? null;
                 $measuredOnuRx = is_numeric($rawOnuRx) ? (float) $rawOnuRx : null;

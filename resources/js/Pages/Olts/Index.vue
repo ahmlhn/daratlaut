@@ -863,7 +863,7 @@ async function loadManualRegisterAttenuation() {
     manualRegisterAttenuation.value = null;
 
     try {
-        const params = new URLSearchParams({ fsp: String(item.fsp || '') });
+        const params = new URLSearchParams({ fsp: String(item.fsp || ''), sn: String(item.sn || '') });
         let onuId = Number(item?.onu_id || 0);
         if (!onuId && item?.interface) {
             const match = String(item.interface).match(/:(\d+)/);
@@ -3787,17 +3787,11 @@ onBeforeUnmount(() => {
                                             {{ manualRegisterAttenuationError }}
                                         </div>
 
-                                        <div v-else-if="manualRegisterAttenuation" class="mt-3 grid grid-cols-2 gap-3 text-xs">
+                                        <div v-else-if="manualRegisterAttenuation" class="mt-3 text-xs">
                                             <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
                                                 <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Rx</div>
                                                 <div class="mt-1 font-bold" :class="getAttenuationRxClass(manualRegisterAttenuation.downstream?.onu_rx)">
                                                     {{ formatAttenuationValue(manualRegisterAttenuation.downstream?.onu_rx, 'dBm') }}
-                                                </div>
-                                            </div>
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
-                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">OLT Rx</div>
-                                                <div class="mt-1 font-bold" :class="getAttenuationRxClass(manualRegisterAttenuation.upstream?.olt_rx)">
-                                                    {{ formatAttenuationValue(manualRegisterAttenuation.upstream?.olt_rx, 'dBm') }}
                                                 </div>
                                             </div>
                                         </div>
