@@ -451,7 +451,39 @@ class OltService
             throw $this->commandException("show pon power attenuation gpon-onu_{$fsp}:{$onuId}", $out);
         }
 
-        return $this->parseAttenuationOutput($out, $fsp, $onuId);
+        $data = $this->parseAttenuationOutput($out, $fsp, $onuId);
+        $onuRx = $this->readOnuRxFromPonPower($fsp, $onuId);
+        if ($onuRx !== null) {
+            $data['downstream']['onu_rx'] = $onuRx;
+        }
+        return $data;
+    }
+
+    private function readOnuRxFromPonPower(string $fsp, int $onuId): ?float
+    {
+        try {
+            $rxOut = $this->sendCommand("show pon power onu-rx gpon-olt_{$fsp}");
+            $rxMap = $this->parseRxOutput($rxOut, $fsp);
+            $key = "{$fsp}:{$onuId}";
+            if (array_key_exists($key, $rxMap)) {
+                return $this->normalizeRxValue($rxMap[$key]);
+            }
+        } catch (Throwable) {
+            // ignore and fallback
+        }
+
+        try {
+            $rxOut = $this->sendCommand("show gpon onu optical-info gpon-olt_{$fsp}");
+            $rxMap = $this->parseRxOutput($rxOut, $fsp);
+            $key = "{$fsp}:{$onuId}";
+            if (array_key_exists($key, $rxMap)) {
+                return $this->normalizeRxValue($rxMap[$key]);
+            }
+        } catch (Throwable) {
+            // ignore
+        }
+
+        return null;
     }
 
     /**
