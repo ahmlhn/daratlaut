@@ -26,7 +26,7 @@ class OltService
     // Regex patterns
     const UNCFG_LINE_RE = '/^\s*(\d+\/\d+\/\d+)\s+([A-Za-z0-9]+)\s*$/';
     const FSP_TOKEN_RE = '/^\d+\/\d+\/\d+$/';
-    const GPON_ONU_RE = '/gpon-onu_(\d+\/\d+\/\d+):\d+/i';
+    const GPON_ONU_RE = '/gpon-onu[_\s]+(\d+\/\d+\/\d+):(\d+)/i';
     const GPON_ONU_ID_RE = '/gpon-onu[_\s]+(\d+\/\d+\/\d+):(\d+)/i';
     const SN_STRICT_RE = '/^[A-Za-z]{4}[A-Fa-f0-9]{8}$/';
     const SN_TOKEN_RE = '/^(?=.{8,20}$)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]+$/';
@@ -1139,7 +1139,11 @@ class OltService
                 }
                 if (preg_match(self::GPON_ONU_RE, $t, $m2)) {
                     $fsp = $m2[1];
+                    $onuId = (int) ($m2[2] ?? 0);
                     $interface = trim($t);
+                    if ($onuId > 0 && $interface === '') {
+                        $interface = "gpon-onu_{$fsp}:{$onuId}";
+                    }
                     break;
                 }
             }

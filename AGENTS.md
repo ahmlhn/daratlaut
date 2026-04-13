@@ -53,6 +53,7 @@ Last verified: 2026-04-13
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-13: Preview redaman unregistered kini lebih akurat saat output `show gpon onu uncfg` memakai format `gpon-onu 1/2/2:1`; parser menangkap `onu_id` dari format tanpa underscore dan UI menurunkan `onu_id` dari `interface` bila field kosong agar request redaman dan registrasi manual memakai slot yang sama. Docs: N/A.
 - 2026-04-13: Konfirmasi `Simpan Config` di halaman OLT kini memakai modal internal pengganti popup browser; `resources/js/Pages/Olts/Index.vue` menambah dialog konfirmasi write-config dan mengganti pemanggilan `confirm()`. Docs: N/A.
 - 2026-04-13: Pencarian ONU by SN kini mengenali output `No related information` sebagai data kosong dan mendukung format `gpon-onu 1/2/2:2` (tanpa underscore) agar verifikasi registrasi tidak salah gagal pada output CLI; `app/Services/OltService.php` memperbarui regex dan pengecekan response. Docs: N/A.
 - 2026-04-13: Registrasi ONU kini memverifikasi hasil dengan `show gpon onu by sn` agar false-positive tidak muncul saat SN sudah terdaftar; `app/Services/OltService.php` mengecek hasil binding dan menolak registrasi bila SN ditemukan di interface berbeda. Docs: N/A.

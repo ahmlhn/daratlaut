@@ -864,7 +864,11 @@ async function loadManualRegisterAttenuation() {
 
     try {
         const params = new URLSearchParams({ fsp: String(item.fsp || '') });
-        const onuId = Number(item?.onu_id || 0);
+        let onuId = Number(item?.onu_id || 0);
+        if (!onuId && item?.interface) {
+            const match = String(item.interface).match(/:(\d+)/);
+            if (match) onuId = Number(match[1] || 0);
+        }
         if (onuId > 0) {
             params.set('onu_id', String(onuId));
         }
@@ -1351,7 +1355,11 @@ async function registerSelectedOnu() {
 
     try {
         const payload = { fsp: item.fsp, sn: item.sn, name };
-        const requestedOnuId = Number(item?.onu_id || 0);
+        let requestedOnuId = Number(item?.onu_id || 0);
+        if (!requestedOnuId && item?.interface) {
+            const match = String(item.interface).match(/:(\d+)/);
+            if (match) requestedOnuId = Number(match[1] || 0);
+        }
         if (requestedOnuId > 0) {
             payload.onu_id = requestedOnuId;
         }
