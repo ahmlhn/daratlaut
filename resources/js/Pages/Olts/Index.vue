@@ -7,8 +7,8 @@ const page = usePage();
 const API_BASE = '/api/v1';
 const AUTO_REGISTER_BATCH_SIZE = 10;
 const OLT_LAST_SELECTED_STORAGE_KEY = 'noci:olt:last-selected';
-const DEFAULT_TEKNISI_ONU_RX_MAX_DBM = -11;
-const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24;
+const DEFAULT_TEKNISI_ONU_RX_MAX_DBM = -11.0;
+const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24.99;
 
 const role = computed(() => String(page.props.auth?.user?.role || '').trim().toLowerCase());
 const isTeknisi = computed(() => ['teknisi', 'svp lapangan', 'svp_lapangan'].includes(role.value));

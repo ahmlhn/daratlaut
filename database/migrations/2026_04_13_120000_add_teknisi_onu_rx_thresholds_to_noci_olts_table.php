@@ -14,11 +14,11 @@ return new class extends Migration
 
         Schema::table('noci_olts', function (Blueprint $table) {
             if (!Schema::hasColumn('noci_olts', 'teknisi_onu_rx_max_dbm')) {
-                $table->decimal('teknisi_onu_rx_max_dbm', 8, 2)->default(-11);
+                $table->decimal('teknisi_onu_rx_max_dbm', 8, 2)->default(-11.00);
             }
 
             if (!Schema::hasColumn('noci_olts', 'teknisi_onu_rx_min_dbm')) {
-                $table->decimal('teknisi_onu_rx_min_dbm', 8, 2)->default(-24);
+                $table->decimal('teknisi_onu_rx_min_dbm', 8, 2)->default(-24.99);
             }
         });
     }

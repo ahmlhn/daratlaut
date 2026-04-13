@@ -18,7 +18,7 @@ use Throwable;
 class OltController extends Controller
 {
     private const DEFAULT_TEKNISI_ONU_RX_MAX_DBM = -11.0;
-    private const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24.0;
+    private const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24.99;
 
     private function hasTeknisiOnuRxThresholdColumns(): bool
     {
