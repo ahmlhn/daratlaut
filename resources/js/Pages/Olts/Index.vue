@@ -152,6 +152,12 @@ function formatRxLimitValue(value) {
     return `${parsed.toFixed(2)} dBm`;
 }
 
+function formatRxInputValue(value, fallback) {
+    const parsed = extractRxValue(value);
+    if (parsed === null) return String((fallback ?? 0).toFixed(2));
+    return parsed.toFixed(2);
+}
+
 function formatSampledAt(value) {
     if (!value) return '-';
     const text = String(value).trim();
@@ -393,8 +399,8 @@ const formData = ref({
     vlan_default: 200,
     onu_type_default: 'ALL-ONT',
     service_port_id_default: 1,
-    teknisi_onu_rx_max_dbm: DEFAULT_TEKNISI_ONU_RX_MAX_DBM,
-    teknisi_onu_rx_min_dbm: DEFAULT_TEKNISI_ONU_RX_MIN_DBM,
+    teknisi_onu_rx_max_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MAX_DBM, DEFAULT_TEKNISI_ONU_RX_MAX_DBM),
+    teknisi_onu_rx_min_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MIN_DBM, DEFAULT_TEKNISI_ONU_RX_MIN_DBM),
 });
 
 // ========== Deep Sync Modal (Native Parity) ==========
@@ -446,8 +452,14 @@ async function openOltModal(mode) {
                 vlan_default: Number(olt.vlan_default || 200),
                 onu_type_default: olt.onu_type_default || 'ALL-ONT',
                 service_port_id_default: Number(olt.service_port_id_default || 1),
-                teknisi_onu_rx_max_dbm: Number(olt.teknisi_onu_rx_max_dbm ?? DEFAULT_TEKNISI_ONU_RX_MAX_DBM),
-                teknisi_onu_rx_min_dbm: Number(olt.teknisi_onu_rx_min_dbm ?? DEFAULT_TEKNISI_ONU_RX_MIN_DBM),
+                teknisi_onu_rx_max_dbm: formatRxInputValue(
+                    olt.teknisi_onu_rx_max_dbm,
+                    DEFAULT_TEKNISI_ONU_RX_MAX_DBM
+                ),
+                teknisi_onu_rx_min_dbm: formatRxInputValue(
+                    olt.teknisi_onu_rx_min_dbm,
+                    DEFAULT_TEKNISI_ONU_RX_MIN_DBM
+                ),
             };
 
             showOltModal.value = true;
@@ -469,8 +481,8 @@ async function openOltModal(mode) {
         vlan_default: 200,
         onu_type_default: 'ALL-ONT',
         service_port_id_default: 1,
-        teknisi_onu_rx_max_dbm: DEFAULT_TEKNISI_ONU_RX_MAX_DBM,
-        teknisi_onu_rx_min_dbm: DEFAULT_TEKNISI_ONU_RX_MIN_DBM,
+        teknisi_onu_rx_max_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MAX_DBM, DEFAULT_TEKNISI_ONU_RX_MAX_DBM),
+        teknisi_onu_rx_min_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MIN_DBM, DEFAULT_TEKNISI_ONU_RX_MIN_DBM),
     };
     showOltModal.value = true;
 }
