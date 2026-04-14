@@ -2870,8 +2870,9 @@ onBeforeUnmount(() => {
                                     Slot Port
                                 </button>
 
-                                <template v-if="isTeknisi && teknisiWriteReady">
+                                <template v-if="isTeknisi">
                                     <button
+                                        v-if="teknisiWriteReady"
                                         type="button"
                                         class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
                                         :disabled="registerBusy"
@@ -3798,23 +3799,6 @@ onBeforeUnmount(() => {
                                 </div>
 
                                 <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 sm:px-6">
-                                    <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm dark:border-white/10 dark:bg-slate-950/40">
-                                        <div class="flex items-baseline gap-2">
-                                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Port</span>
-                                            <span class="text-base font-black text-slate-800 dark:text-white">{{ portSlotTotals.total_ports }}</span>
-                                        </div>
-                                        <span class="hidden text-slate-300 sm:inline">/</span>
-                                        <div class="flex items-baseline gap-2">
-                                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Terpakai</span>
-                                            <span class="text-base font-black text-slate-800 dark:text-white">{{ portSlotTotals.total_used_slots }}</span>
-                                        </div>
-                                        <span class="hidden text-slate-300 sm:inline">/</span>
-                                        <div class="flex items-baseline gap-2">
-                                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Kosong</span>
-                                            <span class="text-base font-black text-emerald-600 dark:text-emerald-300">{{ portSlotTotals.total_empty_slots }}</span>
-                                        </div>
-                                    </div>
-
                                     <div v-if="portSlotSummaryLoading" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm font-semibold text-slate-500 dark:border-white/10 dark:bg-slate-950/40 dark:text-slate-400">
                                         Memuat ringkasan slot port...
                                     </div>
@@ -3830,7 +3814,7 @@ onBeforeUnmount(() => {
                                                     <tr>
                                                         <th class="px-4 py-3">Port</th>
                                                         <th class="px-4 py-3">Terpakai</th>
-                                                        <th class="px-4 py-3">Kosong</th>
+                                                        <th class="px-4 py-3">Tersedia</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody class="divide-y divide-slate-100 dark:divide-white/5">
@@ -3917,7 +3901,7 @@ onBeforeUnmount(() => {
                                                 </div>
                                             </div>
                                             <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
-                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Kosong</div>
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Tersedia</div>
                                                 <div class="mt-1 text-base font-black text-emerald-600 dark:text-emerald-300">
                                                     {{ manualRegisterSlotSummary.empty_slots }}
                                                 </div>

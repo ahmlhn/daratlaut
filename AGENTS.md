@@ -53,6 +53,9 @@ Last verified: 2026-04-15
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-15: Tombol admin `Auto Register` tidak lagi muncul ke teknisi; `resources/js/Pages/Olts/Index.vue` memisahkan cabang render teknisi vs non-teknisi agar `v-else` tidak memunculkan aksi admin saat `teknisiWriteReady` false. Docs: N/A.
+- 2026-04-15: Popup `Slot Port OLT` disederhanakan lagi dengan menghapus ringkasan total di atas tabel; `resources/js/Pages/Olts/Index.vue` kini hanya menampilkan tabel port. Docs: N/A.
+- 2026-04-15: Label `Kosong` pada ringkasan slot OLT diganti menjadi `Tersedia` agar lebih jelas; `resources/js/Pages/Olts/Index.vue` memperbarui popup `Slot Port OLT` dan modal registrasi ONU. Docs: N/A.
 - 2026-04-15: Header popup `Slot Port OLT` disederhanakan; `resources/js/Pages/Olts/Index.vue` menghapus teks keterangan di bawah judul agar header lebih ringkas. Docs: N/A.
 - 2026-04-15: Ringkasan `total port / terpakai / kosong` pada popup `Slot Port OLT` dipadatkan menjadi baris statistik ringkas agar tidak memakan tinggi layar; `resources/js/Pages/Olts/Index.vue` mengganti tiga kartu besar menjadi summary inline. Docs: N/A.
 - 2026-04-15: Tombol `Simpan Config` untuk teknisi kini disembunyikan saat tidak ada perubahan yang perlu ditulis; `resources/js/Pages/Olts/Index.vue` hanya merender tombol ketika `teknisiWriteReady` aktif. Docs: N/A.
