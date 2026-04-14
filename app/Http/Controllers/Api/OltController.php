@@ -1343,9 +1343,6 @@ class OltController extends Controller
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         $table = (new OltOnu())->getTable();
         $hasTenantId = Schema::hasColumn($table, 'tenant_id');
-        $hasStatus = Schema::hasColumn($table, 'status');
-        $hasState = Schema::hasColumn($table, 'state');
-
         $query = OltOnu::query()
             ->where('olt_id', $olt->id)
             ->whereNotNull('fsp')
@@ -1355,13 +1352,6 @@ class OltController extends Controller
         if ($hasTenantId) {
             $query->where('tenant_id', $tenantId);
         }
-        if ($hasStatus) {
-            $query->addSelect('status');
-        }
-        if ($hasState) {
-            $query->addSelect('state');
-        }
-
         $rows = $query->get();
         $fspList = is_array($olt->fsp_cache) ? array_values(array_filter($olt->fsp_cache, 'is_string')) : [];
         if (empty($fspList)) {
@@ -1382,13 +1372,11 @@ class OltController extends Controller
                 'fsp' => $fsp,
                 'used_slots' => 0,
                 'empty_slots' => self::ONU_SLOT_MAX,
-                'online_onus' => 0,
                 'total_slots' => self::ONU_SLOT_MAX,
             ];
         }
 
         $seenSlots = [];
-        $seenOnline = [];
         foreach ($rows as $row) {
             $fsp = (string) ($row->fsp ?? '');
             $onuId = (int) ($row->onu_id ?? 0);
@@ -1401,7 +1389,6 @@ class OltController extends Controller
                     'fsp' => $fsp,
                     'used_slots' => 0,
                     'empty_slots' => self::ONU_SLOT_MAX,
-                    'online_onus' => 0,
                     'total_slots' => self::ONU_SLOT_MAX,
                 ];
             }
@@ -1410,14 +1397,6 @@ class OltController extends Controller
             if (!isset($seenSlots[$slotKey])) {
                 $seenSlots[$slotKey] = true;
                 $summaryMap[$fsp]['used_slots']++;
-            }
-
-            $status = strtolower(trim((string) ($row->status ?? '')));
-            $state = strtolower(trim((string) ($row->state ?? '')));
-            $isOnline = $status === 'online' || in_array($state, ['ready', 'working', 'online'], true);
-            if ($isOnline && !isset($seenOnline[$slotKey])) {
-                $seenOnline[$slotKey] = true;
-                $summaryMap[$fsp]['online_onus']++;
             }
         }
 
@@ -1434,7 +1413,6 @@ class OltController extends Controller
                 'total_ports' => count($items),
                 'total_used_slots' => array_sum(array_column($items, 'used_slots')),
                 'total_empty_slots' => array_sum(array_column($items, 'empty_slots')),
-                'total_online_onus' => array_sum(array_column($items, 'online_onus')),
             ],
         ]);
     }

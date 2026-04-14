@@ -708,7 +708,6 @@ const portSlotTotals = ref({
     total_ports: 0,
     total_used_slots: 0,
     total_empty_slots: 0,
-    total_online_onus: 0,
 });
 const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
@@ -850,7 +849,6 @@ async function loadPortSlotSummary() {
             total_ports: Number(payload.total_ports || 0),
             total_used_slots: Number(payload.total_used_slots || 0),
             total_empty_slots: Number(payload.total_empty_slots || 0),
-            total_online_onus: Number(payload.total_online_onus || 0),
         };
     } catch (e) {
         portSlotSummaryError.value = e.message || 'Ringkasan slot port tidak tersedia.';
@@ -859,7 +857,6 @@ async function loadPortSlotSummary() {
             total_ports: 0,
             total_used_slots: 0,
             total_empty_slots: 0,
-            total_online_onus: 0,
         };
     } finally {
         portSlotSummaryLoading.value = false;
@@ -3781,7 +3778,7 @@ onBeforeUnmount(() => {
                     <div v-if="portSlotModalOpen" class="fixed inset-0 z-[93]">
                         <div class="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" @click="closePortSlotModal()"></div>
                         <div class="relative flex min-h-full items-center justify-center p-4 sm:p-6">
-                            <div class="w-full max-w-4xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-slate-900">
+                            <div class="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-slate-900">
                                 <div class="border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
                                     <div class="flex items-start justify-between gap-3">
                                         <div>
@@ -3803,7 +3800,7 @@ onBeforeUnmount(() => {
                                     </div>
                                 </div>
 
-                                <div class="space-y-4 px-5 py-5 sm:px-6">
+                                <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 sm:px-6">
                                     <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
                                         <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
                                             <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Port</div>
@@ -3817,10 +3814,6 @@ onBeforeUnmount(() => {
                                             <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Kosong</div>
                                             <div class="mt-1 text-lg font-black text-emerald-600 dark:text-emerald-300">{{ portSlotTotals.total_empty_slots }}</div>
                                         </div>
-                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
-                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Online</div>
-                                            <div class="mt-1 text-lg font-black text-blue-600 dark:text-blue-300">{{ portSlotTotals.total_online_onus }}</div>
-                                        </div>
                                     </div>
 
                                     <div v-if="portSlotSummaryLoading" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm font-semibold text-slate-500 dark:border-white/10 dark:bg-slate-950/40 dark:text-slate-400">
@@ -3832,19 +3825,18 @@ onBeforeUnmount(() => {
                                     </div>
 
                                     <div v-else class="overflow-hidden rounded-2xl border border-slate-200 dark:border-white/10">
-                                        <div class="overflow-x-auto">
+                                        <div class="max-h-[48vh] overflow-auto">
                                             <table class="w-full text-left text-sm whitespace-nowrap">
                                                 <thead class="bg-slate-50 text-xs uppercase text-slate-500 font-bold border-b border-slate-100 dark:bg-slate-900/60 dark:text-slate-400 dark:border-white/10">
                                                     <tr>
                                                         <th class="px-4 py-3">Port</th>
                                                         <th class="px-4 py-3">Terpakai</th>
                                                         <th class="px-4 py-3">Kosong</th>
-                                                        <th class="px-4 py-3">ONU Online</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody class="divide-y divide-slate-100 dark:divide-white/5">
                                                     <tr v-if="!portSlotSummary.length">
-                                                        <td colspan="4" class="px-4 py-10 text-center text-slate-400 italic">
+                                                        <td colspan="3" class="px-4 py-10 text-center text-slate-400 italic">
                                                             Belum ada data port.
                                                         </td>
                                                     </tr>
@@ -3852,7 +3844,6 @@ onBeforeUnmount(() => {
                                                         <td class="px-4 py-3 font-bold text-slate-800 dark:text-white">{{ item.fsp }}</td>
                                                         <td class="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{{ item.used_slots }} / {{ item.total_slots }}</td>
                                                         <td class="px-4 py-3 font-semibold text-emerald-600 dark:text-emerald-300">{{ item.empty_slots }}</td>
-                                                        <td class="px-4 py-3 font-semibold text-blue-600 dark:text-blue-300">{{ item.online_onus }}</td>
                                                     </tr>
                                                 </tbody>
                                             </table>

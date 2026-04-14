@@ -53,6 +53,8 @@ Last verified: 2026-04-15
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-15: Metrik `ONU online` pada popup `Slot Port OLT` dihapus agar ringkasan fokus ke `slot terpakai` dan `slot kosong`; `app/Http/Controllers/Api/OltController.php` menyederhanakan payload `port-slot-summary` dan `resources/js/Pages/Olts/Index.vue` menghapus kartu/kolom `ONU online`. Docs: N/A.
+- 2026-04-15: Popup `Slot Port OLT` kini bisa discroll saat data port panjang; `resources/js/Pages/Olts/Index.vue` mengubah modal menjadi layout `header/body/footer` dengan body scroll dan area tabel `max-height`. Docs: N/A.
 - 2026-04-15: Halaman OLT kini punya popup `Slot Port OLT` yang menampilkan `port/fsp`, `slot terpakai`, `slot kosong`, dan `ONU online` per port; `app/Http/Controllers/Api/OltController.php` menambah endpoint cache `port-slot-summary`, `routes/api.php` menambah route baru, dan `resources/js/Pages/Olts/Index.vue` menambah tombol + modal ringkasan per port. Docs: N/A.
 - 2026-04-15: Endpoint mutasi profil OLT kini terkunci untuk teknisi dan `svp lapangan`; `app/Http/Controllers/Api/OltController.php` menambah guard `authorizeManageOltProfile()` pada `store/update/destroy` agar threshold redaman dan profil OLT tidak bisa diubah lewat request langsung. Docs: N/A.
 - 2026-04-15: Modal registrasi ONU kini menampilkan jumlah slot interface terpakai dan slot kosong per `fsp`; `app/Http/Controllers/Api/OltController.php` menambah endpoint cache `register-slot-summary`, `routes/api.php` menambah route baru, dan `resources/js/Pages/Olts/Index.vue` memuat lalu merender ringkasan `terpakai/kosong` saat modal dibuka. Docs: N/A.
