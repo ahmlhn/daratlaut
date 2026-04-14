@@ -1353,34 +1353,13 @@ class OltController extends Controller
         $logExcerpt = '';
         $logId = null;
         $measuredOnuRx = null;
+        $result = null;
+        $rolledBack = false;
         try {
             $service = new OltService($tenantId);
             $service->setSuppressActionLog(true);
             $service->connect($olt);
             $service->startTrace();
-
-            if ($isTeknisi) {
-                $attenuation = $service->previewUnconfiguredAttenuation(
-                    (string) $request->input('fsp'),
-                    $requestedOnuId,
-                    (string) $request->input('sn')
-                );
-                $rawOnuRx = $attenuation['downstream']['onu_rx'] ?? null;
-                $measuredOnuRx = is_numeric($rawOnuRx) ? (float) $rawOnuRx : null;
-
-                if ($measuredOnuRx === null) {
-                    throw new RuntimeException('ONU Rx tidak tersedia. Registrasi teknisi membutuhkan data redaman ONU Rx.');
-                }
-
-                if ($measuredOnuRx < $thresholds['min'] || $measuredOnuRx > $thresholds['max']) {
-                    throw new RuntimeException(sprintf(
-                        'ONU Rx %.3f dBm di luar rentang OLT (%.2f s/d %.2f dBm). Registrasi teknisi ditolak.',
-                        $measuredOnuRx,
-                        $thresholds['min'],
-                        $thresholds['max']
-                    ));
-                }
-            }
 
             $result = $service->registerOnu(
                 $request->fsp,
@@ -1388,6 +1367,40 @@ class OltController extends Controller
                 $request->name,
                 $requestedOnuId
             );
+
+            if ($isTeknisi) {
+                $registeredFsp = (string) ($result['fsp'] ?? $request->fsp);
+                $registeredOnuId = (int) ($result['onu_id'] ?? ($request->onu_id ?? 0));
+                $measuredOnuRx = $service->waitForRegisteredOnuRx($registeredFsp, $registeredOnuId);
+
+                if ($measuredOnuRx === null) {
+                    try {
+                        $service->deleteOnu($registeredFsp, $registeredOnuId);
+                        $rolledBack = true;
+                    } catch (Throwable $rollbackError) {
+                        throw new RuntimeException(
+                            'Registrasi dibatalkan karena data redaman ONU tidak tersedia, dan rollback ONU gagal: '
+                            . $rollbackError->getMessage()
+                        );
+                    }
+
+                    throw new RuntimeException('Registrasi dibatalkan karena data redaman ONU tidak tersedia.');
+                }
+
+                if ($measuredOnuRx < $thresholds['min'] || $measuredOnuRx > $thresholds['max']) {
+                    try {
+                        $service->deleteOnu($registeredFsp, $registeredOnuId);
+                        $rolledBack = true;
+                    } catch (Throwable $rollbackError) {
+                        throw new RuntimeException(
+                            'Registrasi dibatalkan karena redaman ONU tidak memenuhi syarat, dan rollback ONU gagal: '
+                            . $rollbackError->getMessage()
+                        );
+                    }
+
+                    throw new RuntimeException('Registrasi dibatalkan karena redaman ONU tidak memenuhi syarat.');
+                }
+            }
 
             // Native parity: don't auto write-config unless explicitly requested.
             if ($saveConfig) {
@@ -1410,6 +1423,7 @@ class OltController extends Controller
                 'onu_rx' => $measuredOnuRx,
                 'teknisi_onu_rx_max_dbm' => $thresholds['max'],
                 'teknisi_onu_rx_min_dbm' => $thresholds['min'],
+                'rolled_back' => false,
             ];
             $logId = OltLog::logAction(
                 $tenantId,
@@ -1455,14 +1469,15 @@ class OltController extends Controller
                 'count' => 1,
                 'success' => 0,
                 'error' => 1,
-                'fsp' => (string) $request->fsp,
-                'onu_id' => (int) ($request->onu_id ?? 0),
-                'sn' => (string) $request->sn,
-                'onu_name' => (string) $request->name,
+                'fsp' => (string) ($result['fsp'] ?? $request->fsp),
+                'onu_id' => (int) ($result['onu_id'] ?? ($request->onu_id ?? 0)),
+                'sn' => (string) ($result['sn'] ?? $request->sn),
+                'onu_name' => (string) ($result['name'] ?? $request->name),
                 'save_config' => $saveConfig,
                 'onu_rx' => $measuredOnuRx,
                 'teknisi_onu_rx_max_dbm' => $thresholds['max'],
                 'teknisi_onu_rx_min_dbm' => $thresholds['min'],
+                'rolled_back' => $rolledBack,
                 'message' => $e->getMessage(),
             ];
             $logId = OltLog::logAction(

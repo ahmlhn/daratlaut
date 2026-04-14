@@ -504,6 +504,32 @@ class OltService
         return $data;
     }
 
+    public function waitForRegisteredOnuRx(
+        string $fsp,
+        int $onuId,
+        int $initialDelaySeconds = 10,
+        int $pollAttempts = 3,
+        int $pollDelaySeconds = 3
+    ): ?float {
+        if ($initialDelaySeconds > 0) {
+            sleep($initialDelaySeconds);
+        }
+
+        $tries = max(1, $pollAttempts);
+        while ($tries-- > 0) {
+            $onuRx = $this->readOnuRxFromPonPower($fsp, $onuId);
+            if ($onuRx !== null) {
+                return $onuRx;
+            }
+
+            if ($tries > 0 && $pollDelaySeconds > 0) {
+                sleep($pollDelaySeconds);
+            }
+        }
+
+        return null;
+    }
+
     /**
      * @return array{
      *  fsp:string,

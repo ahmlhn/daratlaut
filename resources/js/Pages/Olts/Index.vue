@@ -146,12 +146,6 @@ function normalizeOnuRxBounds(maxValue, minValue) {
     };
 }
 
-function formatRxLimitValue(value) {
-    const parsed = extractRxValue(value);
-    if (parsed === null) return '-';
-    return `${parsed.toFixed(2)} dBm`;
-}
-
 function formatRxInputValue(value, fallback) {
     const parsed = extractRxValue(value);
     if (parsed === null) return String((fallback ?? 0).toFixed(2));
@@ -269,9 +263,6 @@ const olts = ref([]);
 const loadingOlts = ref(false);
 const selectedOltId = ref('');
 const selectedOlt = computed(() => olts.value.find(o => String(o.id) === String(selectedOltId.value)) || null);
-const selectedOltOnuRxBounds = computed(() =>
-    normalizeOnuRxBounds(selectedOlt.value?.teknisi_onu_rx_max_dbm, selectedOlt.value?.teknisi_onu_rx_min_dbm)
-);
 
 function readLastSelectedOltId() {
     try {
@@ -701,59 +692,10 @@ const registerName = ref('');
 const registerBusy = ref(false);
 const manualRegisterActive = ref(false);
 const manualRegisterModalOpen = ref(false);
-const manualRegisterAttenuationLoading = ref(false);
-const manualRegisterAttenuationError = ref('');
-const manualRegisterAttenuation = ref(null);
 const manualRegisterResultOpen = ref(false);
 const manualRegisterResultTone = ref('error');
 const manualRegisterResultTitle = ref('');
 const manualRegisterResultMessage = ref('');
-const manualRegisterOnuRxValue = computed(() => extractRxValue(manualRegisterAttenuation.value?.downstream?.onu_rx));
-const manualRegisterTeknisiGuard = computed(() => {
-    if (!isTeknisi.value) {
-        return { allowed: true, message: '', tone: 'info' };
-    }
-
-    if (manualRegisterAttenuationLoading.value) {
-        return {
-            allowed: false,
-            message: 'Mengambil data ONU Rx...',
-            tone: 'info',
-        };
-    }
-
-    if (manualRegisterAttenuationError.value) {
-        return {
-            allowed: false,
-            message: 'ONU Rx belum tersedia.',
-            tone: 'error',
-        };
-    }
-
-    const bounds = selectedOltOnuRxBounds.value;
-    const onuRx = manualRegisterOnuRxValue.value;
-    if (onuRx === null) {
-        return {
-            allowed: false,
-            message: 'ONU Rx belum terbaca.',
-            tone: 'error',
-        };
-    }
-
-    if (onuRx < bounds.min || onuRx > bounds.max) {
-        return {
-            allowed: false,
-            message: `ONU Rx ${formatRxLimitValue(onuRx)} tidak memenuhi syarat registrasi.`,
-            tone: 'error',
-        };
-    }
-
-    return {
-        allowed: true,
-        message: '',
-        tone: 'success',
-    };
-});
 const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
@@ -835,9 +777,6 @@ function clearUncfgSelection() {
     uncfgSelectedIndex.value = null;
     registerName.value = '';
     manualRegisterModalOpen.value = false;
-    manualRegisterAttenuationLoading.value = false;
-    manualRegisterAttenuationError.value = '';
-    manualRegisterAttenuation.value = null;
 }
 
 function showManualRegisterResult(title, message, tone = 'error') {
@@ -857,55 +796,11 @@ function selectUncfg(idx) {
     uncfgSelectedIndex.value = idx;
     registerName.value = '';
     manualRegisterModalOpen.value = true;
-    loadManualRegisterAttenuation().catch(() => {});
 }
 
 function hideManualRegisterModal() {
     if (registerBusy.value || manualRegisterActive.value) return;
     manualRegisterModalOpen.value = false;
-}
-
-function formatAttenuationValue(value, unit = 'dB') {
-    if (value === null || value === undefined || value === '') return '-';
-    const num = Number(value);
-    if (!Number.isFinite(num)) return '-';
-    return `${num.toFixed(3)} ${unit}`;
-}
-
-function getAttenuationRxClass(value) {
-    return getRxToneClass(extractRxValue(value));
-}
-
-async function loadManualRegisterAttenuation() {
-    const item = uncfgSelected.value;
-    if (!manualRegisterModalOpen.value || !item || !selectedOltId.value) {
-        manualRegisterAttenuationLoading.value = false;
-        manualRegisterAttenuationError.value = '';
-        manualRegisterAttenuation.value = null;
-        return;
-    }
-
-    manualRegisterAttenuationLoading.value = true;
-    manualRegisterAttenuationError.value = '';
-    manualRegisterAttenuation.value = null;
-
-    try {
-        const params = new URLSearchParams({ fsp: String(item.fsp || ''), sn: String(item.sn || '') });
-        let onuId = Number(item?.onu_id || 0);
-        if (!onuId && item?.interface) {
-            const match = String(item.interface).match(/:(\d+)/);
-            if (match) onuId = Number(match[1] || 0);
-        }
-        if (onuId > 0) {
-            params.set('onu_id', String(onuId));
-        }
-        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/uncfg-attenuation?${params}`);
-        manualRegisterAttenuation.value = data?.data && typeof data.data === 'object' ? data.data : null;
-    } catch (e) {
-        manualRegisterAttenuationError.value = e.message || 'Redaman tidak tersedia.';
-    } finally {
-        manualRegisterAttenuationLoading.value = false;
-    }
 }
 
 function removeUncfgItemsByKeys(keys) {
@@ -1367,11 +1262,6 @@ async function registerSelectedOnu() {
     const name = String(registerName.value || '').trim();
     if (!name) {
         setUncfgStatus('Nama ONU wajib diisi.', 'error');
-        return;
-    }
-
-    if (!manualRegisterTeknisiGuard.value.allowed) {
-        setUncfgStatus(manualRegisterTeknisiGuard.value.message || 'ONU Rx di luar rentang teknisi.', 'error');
         return;
     }
 
@@ -3817,42 +3707,10 @@ onBeforeUnmount(() => {
                                         </div>
                                     </div>
 
-                                    <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
-                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Redaman</div>
-
-                                        <div v-if="manualRegisterAttenuationLoading" class="mt-2 text-sm font-semibold text-slate-500 dark:text-slate-400">
-                                            Memuat redaman...
-                                        </div>
-
-                                        <div v-else-if="manualRegisterAttenuationError" class="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-300">
-                                            {{ manualRegisterAttenuationError }}
-                                        </div>
-
-                                        <div v-else-if="manualRegisterAttenuation" class="mt-3 text-xs">
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
-                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Rx</div>
-                                                <div class="mt-1 font-bold" :class="getAttenuationRxClass(manualRegisterAttenuation.downstream?.onu_rx)">
-                                                    {{ formatAttenuationValue(manualRegisterAttenuation.downstream?.onu_rx, 'dBm') }}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div v-else class="mt-2 text-sm font-semibold text-slate-400">
-                                            Redaman belum tersedia.
-                                        </div>
-
-                                        <div
-                                            v-if="isTeknisi && manualRegisterTeknisiGuard.message && !manualRegisterAttenuationLoading"
-                                            class="mt-3 rounded-xl border px-3 py-2 text-[11px] font-semibold"
-                                            :class="
-                                                manualRegisterTeknisiGuard.tone === 'success'
-                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200'
-                                                    : manualRegisterTeknisiGuard.tone === 'error'
-                                                      ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200'
-                                                      : 'border-slate-200 bg-white text-slate-600 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300'
-                                            "
-                                        >
-                                            {{ manualRegisterTeknisiGuard.message }}
+                                    <div v-if="isTeknisi" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Validasi Redaman</div>
+                                        <div class="mt-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
+                                            Redaman ONU akan dicek otomatis setelah registrasi selesai.
                                         </div>
                                     </div>
 
@@ -3898,7 +3756,7 @@ onBeforeUnmount(() => {
                                         v-if="!manualRegisterActive"
                                         type="button"
                                         class="h-11 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
-                                        :disabled="registerBusy || !manualRegisterTeknisiGuard.allowed"
+                                        :disabled="registerBusy"
                                         @click="registerSelectedOnu()"
                                     >
                                         {{ registerBusy ? 'Registrasi...' : 'Registrasi ONU' }}
