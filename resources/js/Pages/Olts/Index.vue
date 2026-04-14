@@ -1436,7 +1436,7 @@ async function registerSelectedOnu() {
                 sn,
                 name: savedName,
             };
-            await toggleRegDetail(regItem);
+            await toggleRegDetail(regItem, { skipLoad: true });
         }
     } catch (e) {
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
@@ -2390,7 +2390,7 @@ function closeRegDetailModal() {
     cancelEditOnuName();
 }
 
-async function toggleRegDetail(onu) {
+async function toggleRegDetail(onu, { skipLoad = false } = {}) {
     const key = onuKey(onu);
     if (regDetailModalOpen.value && regExpandedKey.value === key) {
         closeRegDetailModal();
@@ -2401,7 +2401,9 @@ async function toggleRegDetail(onu) {
     regRxHistoryOpen.value = false;
     regRxHistoryRange.value = '24h';
     regRxHistoryPage.value = 1;
-    await loadOnuDetail(onu, { force: true, silent: true });
+    if (!skipLoad) {
+        await loadOnuDetail(onu, { force: true, silent: true });
+    }
 }
 
 async function loadOnuDetail(onu, { force = false, silent = false, throwOnError = false } = {}) {

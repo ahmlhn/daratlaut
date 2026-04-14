@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-04-13
-Last verified: 2026-04-13
+Last updated: 2026-04-14
+Last verified: 2026-04-14
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -53,6 +53,7 @@ Last verified: 2026-04-13
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-14: Detail ONU setelah registrasi manual kini dibuka tanpa reload ke OLT; `resources/js/Pages/Olts/Index.vue` menambah opsi `skipLoad` pada `toggleRegDetail` dan memakainya saat sukses registrasi. Docs: N/A.
 - 2026-04-14: Registrasi manual kini membuka modal detail ONU saat sukses dan menampilkan popup error saat gagal; `resources/js/Pages/Olts/Index.vue` memanggil modal detail registered setelah register dan menambah modal hasil gagal. Docs: N/A.
 - 2026-04-14: Preview redaman unregistered kini menunggu 10 detik setelah registrasi sementara dan melakukan polling ulang tiap 3 detik bila Rx belum muncul; `app/Services/OltService.php` menyesuaikan delay sebelum pembacaan `ONU Rx`. Docs: N/A.
 - 2026-04-13: Default rentang `ONU Rx` teknisi di OLT diubah menjadi `-11.00` s/d `-24.99`; `resources/js/Pages/Olts/Index.vue`, `app/Http/Controllers/Api/OltController.php`, dan migration `2026_04_13_120000_add_teknisi_onu_rx_thresholds_to_noci_olts_table.php` disesuaikan. Docs: N/A.
