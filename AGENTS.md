@@ -53,6 +53,7 @@ Last verified: 2026-04-15
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-15: Layout tombol aksi OLT di desktop dirapikan per role; `resources/js/Pages/Olts/Index.vue` kini memakai grid desktop terpisah untuk teknisi vs admin agar jumlah kolom sesuai tombol yang tampil dan ukuran tombol konsisten. Docs: N/A.
 - 2026-04-15: Hasil `Scan ONU Baru` di frontend kini menampilkan `Tidak ada onu yang perlu diregistrasi.` saat jumlah hasil `0`, bukan `Scan selesai. Ditemukan 0 ONU.`; `resources/js/Pages/Olts/Index.vue` menyesuaikan cabang sukses `scanUncfg()`. Docs: N/A.
 - 2026-04-15: Notifikasi hasil scan OLT saat tidak ada ONU baru kini memakai teks `Tidak ada onu yang perlu diregistrasi.`; `app/Http/Controllers/Api/OltController.php` dan `resources/js/Pages/Olts/Index.vue` menyamakan pesan backend/frontend. Docs: N/A.
 - 2026-04-15: Susunan tombol aksi di workspace OLT dirapikan; `resources/js/Pages/Olts/Index.vue` kini menaruh aksi utama lebih dulu dan `Slot Port` sebagai aksi sekunder terakhir untuk admin maupun teknisi. Docs: N/A.

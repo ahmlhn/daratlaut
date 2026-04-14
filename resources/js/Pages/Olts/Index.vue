@@ -2827,24 +2827,26 @@ onBeforeUnmount(() => {
 
                     <div v-if="selectedOlt" class="space-y-4 border-t border-slate-200 pt-4 dark:border-white/10">
                         <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
-                            <div class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto xl:min-w-[430px] xl:grid-cols-3">
-                                <button
-                                    type="button"
-                                    class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
-                                    :disabled="uncfgLoading || registerBusy"
-                                    @click="scanUncfg()"
+                            <template v-if="isTeknisi">
+                                <div
+                                    class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:ml-auto xl:w-auto"
+                                    :class="teknisiWriteReady ? 'xl:grid-cols-3' : 'xl:grid-cols-2'"
                                 >
-                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m14.836 2A8.001 8.001 0 005.582 9m0 0H9m11 11v-5h-.581m0 0A8.003 8.003 0 016.582 15m13.418 0H15" />
-                                    </svg>
-                                    {{ uncfgLoading ? 'Scanning...' : 'Scan ONU Baru' }}
-                                </button>
-
-                                <template v-if="isTeknisi">
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70 xl:min-w-[148px]"
+                                        :disabled="uncfgLoading || registerBusy"
+                                        @click="scanUncfg()"
+                                    >
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m14.836 2A8.001 8.001 0 005.582 9m0 0H9m11 11v-5h-.581m0 0A8.003 8.003 0 016.582 15m13.418 0H15" />
+                                        </svg>
+                                        {{ uncfgLoading ? 'Scanning...' : 'Scan ONU Baru' }}
+                                    </button>
                                     <button
                                         v-if="teknisiWriteReady"
                                         type="button"
-                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70 xl:min-w-[148px]"
                                         :disabled="registerBusy"
                                         @click="writeConfigTeknisi()"
                                     >
@@ -2855,7 +2857,7 @@ onBeforeUnmount(() => {
                                     </button>
                                     <button
                                         type="button"
-                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70 xl:min-w-[148px]"
                                         :disabled="registerBusy"
                                         @click="openPortSlotModal()"
                                     >
@@ -2864,12 +2866,25 @@ onBeforeUnmount(() => {
                                         </svg>
                                         Slot Port
                                     </button>
-                                </template>
+                                </div>
+                            </template>
 
-                                <template v-else>
+                            <template v-else>
+                                <div class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:ml-auto xl:w-auto xl:grid-cols-4">
                                     <button
                                         type="button"
-                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-slate-900 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-70"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70 xl:min-w-[148px]"
+                                        :disabled="uncfgLoading || registerBusy"
+                                        @click="scanUncfg()"
+                                    >
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m14.836 2A8.001 8.001 0 005.582 9m0 0H9m11 11v-5h-.581m0 0A8.003 8.003 0 016.582 15m13.418 0H15" />
+                                        </svg>
+                                        {{ uncfgLoading ? 'Scanning...' : 'Scan ONU Baru' }}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-slate-900 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-70 xl:min-w-[148px]"
                                         :disabled="registerBusy"
                                         @click="autoRegister()"
                                     >
@@ -2880,7 +2895,7 @@ onBeforeUnmount(() => {
                                     </button>
                                     <button
                                         type="button"
-                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-5 text-sm font-bold text-amber-800 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/15"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-5 text-sm font-bold text-amber-800 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/15 xl:min-w-[148px]"
                                         :disabled="registerBusy"
                                         @click="requestWriteConfig(false)"
                                     >
@@ -2891,7 +2906,7 @@ onBeforeUnmount(() => {
                                     </button>
                                     <button
                                         type="button"
-                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70 xl:min-w-[148px]"
                                         :disabled="registerBusy"
                                         @click="openPortSlotModal()"
                                     >
@@ -2900,8 +2915,8 @@ onBeforeUnmount(() => {
                                         </svg>
                                         Slot Port
                                     </button>
-                                </template>
-                            </div>
+                                </div>
+                            </template>
                         </div>
 
                         <div v-if="uncfgStatus.message" class="pt-4">
