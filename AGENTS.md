@@ -53,6 +53,9 @@ Last verified: 2026-04-15
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-15: Header popup `Slot Port OLT` disederhanakan; `resources/js/Pages/Olts/Index.vue` menghapus teks keterangan di bawah judul agar header lebih ringkas. Docs: N/A.
+- 2026-04-15: Ringkasan `total port / terpakai / kosong` pada popup `Slot Port OLT` dipadatkan menjadi baris statistik ringkas agar tidak memakan tinggi layar; `resources/js/Pages/Olts/Index.vue` mengganti tiga kartu besar menjadi summary inline. Docs: N/A.
+- 2026-04-15: Tombol `Simpan Config` untuk teknisi kini disembunyikan saat tidak ada perubahan yang perlu ditulis; `resources/js/Pages/Olts/Index.vue` hanya merender tombol ketika `teknisiWriteReady` aktif. Docs: N/A.
 - 2026-04-15: Metrik `ONU online` pada popup `Slot Port OLT` dihapus agar ringkasan fokus ke `slot terpakai` dan `slot kosong`; `app/Http/Controllers/Api/OltController.php` menyederhanakan payload `port-slot-summary` dan `resources/js/Pages/Olts/Index.vue` menghapus kartu/kolom `ONU online`. Docs: N/A.
 - 2026-04-15: Popup `Slot Port OLT` kini bisa discroll saat data port panjang; `resources/js/Pages/Olts/Index.vue` mengubah modal menjadi layout `header/body/footer` dengan body scroll dan area tabel `max-height`. Docs: N/A.
 - 2026-04-15: Halaman OLT kini punya popup `Slot Port OLT` yang menampilkan `port/fsp`, `slot terpakai`, `slot kosong`, dan `ONU online` per port; `app/Http/Controllers/Api/OltController.php` menambah endpoint cache `port-slot-summary`, `routes/api.php` menambah route baru, dan `resources/js/Pages/Olts/Index.vue` menambah tombol + modal ringkasan per port. Docs: N/A.

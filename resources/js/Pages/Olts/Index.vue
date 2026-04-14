@@ -2870,7 +2870,7 @@ onBeforeUnmount(() => {
                                     Slot Port
                                 </button>
 
-                                <template v-if="isTeknisi">
+                                <template v-if="isTeknisi && teknisiWriteReady">
                                     <button
                                         type="button"
                                         class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
@@ -3783,9 +3783,6 @@ onBeforeUnmount(() => {
                                     <div class="flex items-start justify-between gap-3">
                                         <div>
                                             <div class="text-lg font-black text-slate-800 dark:text-white">Slot Port OLT</div>
-                                            <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                                Ringkasan slot terpakai, slot kosong, dan ONU online per port.
-                                            </div>
                                         </div>
                                         <button
                                             type="button"
@@ -3801,18 +3798,20 @@ onBeforeUnmount(() => {
                                 </div>
 
                                 <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 sm:px-6">
-                                    <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
-                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Port</div>
-                                            <div class="mt-1 text-lg font-black text-slate-800 dark:text-white">{{ portSlotTotals.total_ports }}</div>
+                                    <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm dark:border-white/10 dark:bg-slate-950/40">
+                                        <div class="flex items-baseline gap-2">
+                                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Port</span>
+                                            <span class="text-base font-black text-slate-800 dark:text-white">{{ portSlotTotals.total_ports }}</span>
                                         </div>
-                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
-                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Terpakai</div>
-                                            <div class="mt-1 text-lg font-black text-slate-800 dark:text-white">{{ portSlotTotals.total_used_slots }}</div>
+                                        <span class="hidden text-slate-300 sm:inline">/</span>
+                                        <div class="flex items-baseline gap-2">
+                                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Terpakai</span>
+                                            <span class="text-base font-black text-slate-800 dark:text-white">{{ portSlotTotals.total_used_slots }}</span>
                                         </div>
-                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
-                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Kosong</div>
-                                            <div class="mt-1 text-lg font-black text-emerald-600 dark:text-emerald-300">{{ portSlotTotals.total_empty_slots }}</div>
+                                        <span class="hidden text-slate-300 sm:inline">/</span>
+                                        <div class="flex items-baseline gap-2">
+                                            <span class="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Kosong</span>
+                                            <span class="text-base font-black text-emerald-600 dark:text-emerald-300">{{ portSlotTotals.total_empty_slots }}</span>
                                         </div>
                                     </div>
 
