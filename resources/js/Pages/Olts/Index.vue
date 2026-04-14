@@ -696,6 +696,7 @@ const manualRegisterResultOpen = ref(false);
 const manualRegisterResultTone = ref('error');
 const manualRegisterResultTitle = ref('');
 const manualRegisterResultMessage = ref('');
+const manualRegisterResultOnuRx = ref(null);
 const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
@@ -779,15 +780,17 @@ function clearUncfgSelection() {
     manualRegisterModalOpen.value = false;
 }
 
-function showManualRegisterResult(title, message, tone = 'error') {
+function showManualRegisterResult(title, message, tone = 'error', onuRx = null) {
     manualRegisterResultTitle.value = String(title || 'Registrasi gagal');
     manualRegisterResultMessage.value = String(message || '');
     manualRegisterResultTone.value = tone === 'success' ? 'success' : 'error';
+    manualRegisterResultOnuRx.value = extractRxValue(onuRx);
     manualRegisterResultOpen.value = true;
 }
 
 function closeManualRegisterResult() {
     manualRegisterResultOpen.value = false;
+    manualRegisterResultOnuRx.value = null;
 }
 
 function selectUncfg(idx) {
@@ -1331,7 +1334,12 @@ async function registerSelectedOnu() {
     } catch (e) {
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setUncfgStatus(e.message || 'Gagal register', 'error');
-        showManualRegisterResult('Registrasi gagal', e.message || 'Registrasi ONU tidak berhasil.');
+        showManualRegisterResult(
+            'Registrasi gagal',
+            e.message || 'Registrasi ONU tidak berhasil.',
+            'error',
+            e?.data?.data?.onu_rx
+        );
     } finally {
         registerBusy.value = false;
         manualRegisterActive.value = false;
@@ -3782,6 +3790,15 @@ onBeforeUnmount(() => {
                                 </div>
                                 <div class="px-5 py-5 text-sm text-slate-600 dark:text-slate-300 sm:px-6">
                                     {{ manualRegisterResultMessage }}
+                                    <div
+                                        v-if="manualRegisterResultOnuRx !== null"
+                                        class="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40"
+                                    >
+                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Rx</div>
+                                        <div class="mt-1 text-base font-black" :class="getRxToneClass(manualRegisterResultOnuRx)">
+                                            {{ formatRx(manualRegisterResultOnuRx) }}
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="flex items-center justify-end border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
                                     <button

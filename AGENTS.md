@@ -53,6 +53,7 @@ Last verified: 2026-04-14
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-14: Popup gagal registrasi manual kini menampilkan `ONU Rx` bila registrasi dibatalkan setelah validasi redaman; `resources/js/Pages/Olts/Index.vue` menyimpan `onu_rx` dari response error dan merender kartu ringkas `ONU Rx` di modal gagal. Docs: N/A.
 - 2026-04-14: Validasi redaman teknisi kini dipindah ke sesudah registrasi ONU penuh; `app/Http/Controllers/Api/OltController.php` mendaftarkan ONU dulu, membaca `ONU Rx`, lalu rollback `deleteOnu` bila redaman tidak memenuhi syarat atau tidak tersedia, `app/Services/OltService.php` menambah polling `waitForRegisteredOnuRx()`, dan `resources/js/Pages/Olts/Index.vue` menghapus pre-check redaman sebelum submit. Docs: N/A.
 - 2026-04-14: Detail ONU setelah registrasi manual kini dibuka tanpa reload ke OLT; `resources/js/Pages/Olts/Index.vue` menambah opsi `skipLoad` pada `toggleRegDetail` dan memakainya saat sukses registrasi. Docs: N/A.
 - 2026-04-14: Registrasi manual kini membuka modal detail ONU saat sukses dan menampilkan popup error saat gagal; `resources/js/Pages/Olts/Index.vue` memanggil modal detail registered setelah register dan menambah modal hasil gagal. Docs: N/A.
