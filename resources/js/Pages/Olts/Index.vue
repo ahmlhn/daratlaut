@@ -1134,7 +1134,11 @@ async function scanUncfg() {
         uncfg.value = data.status === 'ok' ? (Array.isArray(data.data) ? data.data : []) : [];
         clearUncfgSelection();
         storeUncfgCache(selectedOltId.value);
-        setUncfgStatus(`Scan selesai. Ditemukan ${uncfg.value.length} ONU.`, 'success');
+        if (uncfg.value.length > 0) {
+            setUncfgStatus(`Scan selesai. Ditemukan ${uncfg.value.length} ONU.`, 'success');
+        } else {
+            setUncfgStatus('Tidak ada onu yang perlu diregistrasi.', 'info');
+        }
     } catch (e) {
         setUncfgStatus(e.message || 'Gagal scan ONU.', 'error');
     } finally {

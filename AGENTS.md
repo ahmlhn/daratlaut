@@ -53,6 +53,7 @@ Last verified: 2026-04-15
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-15: Hasil `Scan ONU Baru` di frontend kini menampilkan `Tidak ada onu yang perlu diregistrasi.` saat jumlah hasil `0`, bukan `Scan selesai. Ditemukan 0 ONU.`; `resources/js/Pages/Olts/Index.vue` menyesuaikan cabang sukses `scanUncfg()`. Docs: N/A.
 - 2026-04-15: Notifikasi hasil scan OLT saat tidak ada ONU baru kini memakai teks `Tidak ada onu yang perlu diregistrasi.`; `app/Http/Controllers/Api/OltController.php` dan `resources/js/Pages/Olts/Index.vue` menyamakan pesan backend/frontend. Docs: N/A.
 - 2026-04-15: Susunan tombol aksi di workspace OLT dirapikan; `resources/js/Pages/Olts/Index.vue` kini menaruh aksi utama lebih dulu dan `Slot Port` sebagai aksi sekunder terakhir untuk admin maupun teknisi. Docs: N/A.
 - 2026-04-15: Ringkasan teks OLT aktif (`nama OLT`, `IP:port`, dst.) di panel pilihan OLT dihapus; `resources/js/Pages/Olts/Index.vue` menghapus blok info dan computed `selectedInfoText`. Docs: N/A.
