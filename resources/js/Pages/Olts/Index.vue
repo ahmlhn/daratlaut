@@ -697,6 +697,9 @@ const manualRegisterResultTone = ref('error');
 const manualRegisterResultTitle = ref('');
 const manualRegisterResultMessage = ref('');
 const manualRegisterResultOnuRx = ref(null);
+const manualRegisterSlotSummaryLoading = ref(false);
+const manualRegisterSlotSummaryError = ref('');
+const manualRegisterSlotSummary = ref(null);
 const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
@@ -778,6 +781,9 @@ function clearUncfgSelection() {
     uncfgSelectedIndex.value = null;
     registerName.value = '';
     manualRegisterModalOpen.value = false;
+    manualRegisterSlotSummaryLoading.value = false;
+    manualRegisterSlotSummaryError.value = '';
+    manualRegisterSlotSummary.value = null;
 }
 
 function showManualRegisterResult(title, message, tone = 'error', onuRx = null) {
@@ -799,11 +805,36 @@ function selectUncfg(idx) {
     uncfgSelectedIndex.value = idx;
     registerName.value = '';
     manualRegisterModalOpen.value = true;
+    loadManualRegisterSlotSummary().catch(() => {});
 }
 
 function hideManualRegisterModal() {
     if (registerBusy.value || manualRegisterActive.value) return;
     manualRegisterModalOpen.value = false;
+}
+
+async function loadManualRegisterSlotSummary() {
+    const item = uncfgSelected.value;
+    if (!manualRegisterModalOpen.value || !item || !selectedOltId.value) {
+        manualRegisterSlotSummaryLoading.value = false;
+        manualRegisterSlotSummaryError.value = '';
+        manualRegisterSlotSummary.value = null;
+        return;
+    }
+
+    manualRegisterSlotSummaryLoading.value = true;
+    manualRegisterSlotSummaryError.value = '';
+
+    try {
+        const params = new URLSearchParams({ fsp: String(item.fsp || '') });
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/register-slot-summary?${params}`);
+        manualRegisterSlotSummary.value = data?.data && typeof data.data === 'object' ? data.data : null;
+    } catch (e) {
+        manualRegisterSlotSummaryError.value = e.message || 'Slot interface tidak tersedia.';
+        manualRegisterSlotSummary.value = null;
+    } finally {
+        manualRegisterSlotSummaryLoading.value = false;
+    }
 }
 
 function removeUncfgItemsByKeys(keys) {
@@ -3712,6 +3743,33 @@ onBeforeUnmount(() => {
                                         <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU</div>
                                         <div class="mt-1 text-sm font-bold text-slate-800 dark:text-white">
                                             <span>{{ uncfgSelected.fsp || '-' }}</span> | <span>{{ uncfgSelected.sn || '-' }}</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                        <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Slot Interface</div>
+
+                                        <div v-if="manualRegisterSlotSummaryLoading" class="mt-2 text-sm font-semibold text-slate-500 dark:text-slate-400">
+                                            Memuat slot interface...
+                                        </div>
+
+                                        <div v-else-if="manualRegisterSlotSummaryError" class="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-300">
+                                            {{ manualRegisterSlotSummaryError }}
+                                        </div>
+
+                                        <div v-else-if="manualRegisterSlotSummary" class="mt-3 grid grid-cols-2 gap-3 text-xs">
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Terpakai</div>
+                                                <div class="mt-1 text-base font-black text-slate-800 dark:text-white">
+                                                    {{ manualRegisterSlotSummary.used_slots }} / {{ manualRegisterSlotSummary.total_slots }}
+                                                </div>
+                                            </div>
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Kosong</div>
+                                                <div class="mt-1 text-base font-black text-emerald-600 dark:text-emerald-300">
+                                                    {{ manualRegisterSlotSummary.empty_slots }}
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 

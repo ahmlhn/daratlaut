@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-04-14
-Last verified: 2026-04-14
+Last updated: 2026-04-15
+Last verified: 2026-04-15
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -53,6 +53,7 @@ Last verified: 2026-04-14
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-15: Modal registrasi ONU kini menampilkan jumlah slot interface terpakai dan slot kosong per `fsp`; `app/Http/Controllers/Api/OltController.php` menambah endpoint cache `register-slot-summary`, `routes/api.php` menambah route baru, dan `resources/js/Pages/Olts/Index.vue` memuat lalu merender ringkasan `terpakai/kosong` saat modal dibuka. Docs: N/A.
 - 2026-04-14: Popup gagal registrasi manual kini menampilkan `ONU Rx` bila registrasi dibatalkan setelah validasi redaman; `resources/js/Pages/Olts/Index.vue` menyimpan `onu_rx` dari response error dan merender kartu ringkas `ONU Rx` di modal gagal. Docs: N/A.
 - 2026-04-14: Validasi redaman teknisi kini dipindah ke sesudah registrasi ONU penuh; `app/Http/Controllers/Api/OltController.php` mendaftarkan ONU dulu, membaca `ONU Rx`, lalu rollback `deleteOnu` bila redaman tidak memenuhi syarat atau tidak tersedia, `app/Services/OltService.php` menambah polling `waitForRegisteredOnuRx()`, dan `resources/js/Pages/Olts/Index.vue` menghapus pre-check redaman sebelum submit. Docs: N/A.
 - 2026-04-14: Detail ONU setelah registrasi manual kini dibuka tanpa reload ke OLT; `resources/js/Pages/Olts/Index.vue` menambah opsi `skipLoad` pada `toggleRegDetail` dan memakainya saat sukses registrasi. Docs: N/A.

@@ -17,6 +17,7 @@ use Throwable;
 
 class OltController extends Controller
 {
+    private const ONU_SLOT_MAX = 128;
     private const DEFAULT_TEKNISI_ONU_RX_MAX_DBM = -11.0;
     private const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24.99;
 
@@ -1278,6 +1279,43 @@ class OltController extends Controller
                 'min' => ($stats->min_rx ?? null) !== null ? (float) $stats->min_rx : null,
                 'max' => ($stats->max_rx ?? null) !== null ? (float) $stats->max_rx : null,
                 'avg' => ($stats->avg_rx ?? null) !== null ? round((float) $stats->avg_rx, 2) : null,
+            ],
+        ]);
+    }
+
+    /**
+     * Slot summary for manual register modal (from cache/DB, no OLT reload).
+     */
+    public function getRegisterSlotSummary(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'fsp' => 'required|string|regex:/^\d+\/\d+\/\d+$/',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $fsp = (string) $request->input('fsp');
+        $table = (new OltOnu())->getTable();
+
+        $query = OltOnu::query()
+            ->where('olt_id', $olt->id)
+            ->where('fsp', $fsp)
+            ->whereNotNull('onu_id');
+
+        if (Schema::hasColumn($table, 'tenant_id')) {
+            $query->where('tenant_id', $tenantId);
+        }
+
+        $usedCount = (clone $query)->distinct()->count('onu_id');
+        $emptyCount = max(0, self::ONU_SLOT_MAX - $usedCount);
+
+        return response()->json([
+            'status' => 'ok',
+            'data' => [
+                'fsp' => $fsp,
+                'used_slots' => $usedCount,
+                'empty_slots' => $emptyCount,
+                'total_slots' => self::ONU_SLOT_MAX,
             ],
         ]);
     }
