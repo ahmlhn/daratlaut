@@ -53,6 +53,8 @@ Last verified: 2026-04-13
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-14: Registrasi manual kini membuka modal detail ONU saat sukses dan menampilkan popup error saat gagal; `resources/js/Pages/Olts/Index.vue` memanggil modal detail registered setelah register dan menambah modal hasil gagal. Docs: N/A.
+- 2026-04-14: Preview redaman unregistered kini menunggu 10 detik setelah registrasi sementara dan melakukan polling ulang tiap 3 detik bila Rx belum muncul; `app/Services/OltService.php` menyesuaikan delay sebelum pembacaan `ONU Rx`. Docs: N/A.
 - 2026-04-13: Default rentang `ONU Rx` teknisi di OLT diubah menjadi `-11.00` s/d `-24.99`; `resources/js/Pages/Olts/Index.vue`, `app/Http/Controllers/Api/OltController.php`, dan migration `2026_04_13_120000_add_teknisi_onu_rx_thresholds_to_noci_olts_table.php` disesuaikan. Docs: N/A.
 - 2026-04-13: Input batas `ONU Rx` teknisi di modal OLT kini mempertahankan dua desimal saat ditampilkan; `resources/js/Pages/Olts/Index.vue` memformat nilai awal sebagai string `xx.xx` agar angka seperti `-24.99` tidak terpotong. Docs: N/A.
 - 2026-04-13: Preview redaman unregistered kini memakai alur registrasi sementara di server untuk membaca `ONU Rx` berdasarkan patokan registered; `app/Services/OltService.php` membuat ONU sementara dengan SN, polling `show pon power onu-rx`, lalu cleanup `no onu`, dan endpoint preview mewajibkan SN; UI modal registrasi hanya menampilkan `ONU Rx`. Docs: N/A.

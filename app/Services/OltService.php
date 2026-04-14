@@ -474,13 +474,16 @@ class OltService
         $onuId = $tempOnuId;
         $data = $this->buildEmptyAttenuation($fsp, $onuId);
 
+        sleep(10);
         $tries = 3;
         while ($tries-- > 0) {
             $onuRx = $this->readOnuRxFromPonPower($fsp, $onuId);
             if ($onuRx !== null) {
                 break;
             }
-            usleep(700000);
+            if ($tries > 0) {
+                sleep(3);
+            }
         }
 
         $data['downstream']['onu_rx'] = $onuRx;

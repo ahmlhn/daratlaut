@@ -704,6 +704,10 @@ const manualRegisterModalOpen = ref(false);
 const manualRegisterAttenuationLoading = ref(false);
 const manualRegisterAttenuationError = ref('');
 const manualRegisterAttenuation = ref(null);
+const manualRegisterResultOpen = ref(false);
+const manualRegisterResultTone = ref('error');
+const manualRegisterResultTitle = ref('');
+const manualRegisterResultMessage = ref('');
 const manualRegisterOnuRxValue = computed(() => extractRxValue(manualRegisterAttenuation.value?.downstream?.onu_rx));
 const manualRegisterTeknisiGuard = computed(() => {
     if (!isTeknisi.value) {
@@ -834,6 +838,17 @@ function clearUncfgSelection() {
     manualRegisterAttenuationLoading.value = false;
     manualRegisterAttenuationError.value = '';
     manualRegisterAttenuation.value = null;
+}
+
+function showManualRegisterResult(title, message, tone = 'error') {
+    manualRegisterResultTitle.value = String(title || 'Registrasi gagal');
+    manualRegisterResultMessage.value = String(message || '');
+    manualRegisterResultTone.value = tone === 'success' ? 'success' : 'error';
+    manualRegisterResultOpen.value = true;
+}
+
+function closeManualRegisterResult() {
+    manualRegisterResultOpen.value = false;
 }
 
 function selectUncfg(idx) {
@@ -1412,9 +1427,21 @@ async function registerSelectedOnu() {
             await changeRegFsp();
             if (onuId > 0) setRegHighlight(`gpon-onu_${fsp}:${onuId}`);
         }
+
+        if (fsp && onuId > 0) {
+            const key = `gpon-onu_${fsp}:${onuId}`;
+            const regItem = registered.value.find(it => onuKey(it) === key) || {
+                fsp,
+                onu_id: onuId,
+                sn,
+                name: savedName,
+            };
+            await toggleRegDetail(regItem);
+        }
     } catch (e) {
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setUncfgStatus(e.message || 'Gagal register', 'error');
+        showManualRegisterResult('Registrasi gagal', e.message || 'Registrasi ONU tidak berhasil.');
     } finally {
         registerBusy.value = false;
         manualRegisterActive.value = false;
@@ -3873,6 +3900,36 @@ onBeforeUnmount(() => {
                                         @click="registerSelectedOnu()"
                                     >
                                         {{ registerBusy ? 'Registrasi...' : 'Registrasi ONU' }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </Teleport>
+
+                <Teleport to="body">
+                    <div v-if="manualRegisterResultOpen" class="fixed inset-0 z-[96]">
+                        <div class="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" @click="closeManualRegisterResult()"></div>
+                        <div class="relative flex min-h-full items-center justify-center p-4 sm:p-6">
+                            <div class="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-slate-900">
+                                <div class="border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <div
+                                        class="text-lg font-black"
+                                        :class="manualRegisterResultTone === 'success' ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'"
+                                    >
+                                        {{ manualRegisterResultTitle }}
+                                    </div>
+                                </div>
+                                <div class="px-5 py-5 text-sm text-slate-600 dark:text-slate-300 sm:px-6">
+                                    {{ manualRegisterResultMessage }}
+                                </div>
+                                <div class="flex items-center justify-end border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <button
+                                        type="button"
+                                        class="h-10 rounded-lg bg-slate-100 px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+                                        @click="closeManualRegisterResult()"
+                                    >
+                                        Tutup
                                     </button>
                                 </div>
                             </div>
