@@ -700,6 +700,16 @@ const manualRegisterResultOnuRx = ref(null);
 const manualRegisterSlotSummaryLoading = ref(false);
 const manualRegisterSlotSummaryError = ref('');
 const manualRegisterSlotSummary = ref(null);
+const portSlotModalOpen = ref(false);
+const portSlotSummaryLoading = ref(false);
+const portSlotSummaryError = ref('');
+const portSlotSummary = ref([]);
+const portSlotTotals = ref({
+    total_ports: 0,
+    total_used_slots: 0,
+    total_empty_slots: 0,
+    total_online_onus: 0,
+});
 const registerProgressText = ref('Registrasi berjalan...');
 const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
@@ -811,6 +821,49 @@ function selectUncfg(idx) {
 function hideManualRegisterModal() {
     if (registerBusy.value || manualRegisterActive.value) return;
     manualRegisterModalOpen.value = false;
+}
+
+function openPortSlotModal() {
+    if (!selectedOltId.value) return;
+    portSlotModalOpen.value = true;
+    loadPortSlotSummary().catch(() => {});
+}
+
+function closePortSlotModal() {
+    if (portSlotSummaryLoading.value) return;
+    portSlotModalOpen.value = false;
+}
+
+async function loadPortSlotSummary() {
+    if (!selectedOltId.value || !portSlotModalOpen.value) {
+        portSlotSummaryLoading.value = false;
+        return;
+    }
+
+    portSlotSummaryLoading.value = true;
+    portSlotSummaryError.value = '';
+    try {
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/port-slot-summary`);
+        const payload = data?.data && typeof data.data === 'object' ? data.data : {};
+        portSlotSummary.value = Array.isArray(payload.items) ? payload.items : [];
+        portSlotTotals.value = {
+            total_ports: Number(payload.total_ports || 0),
+            total_used_slots: Number(payload.total_used_slots || 0),
+            total_empty_slots: Number(payload.total_empty_slots || 0),
+            total_online_onus: Number(payload.total_online_onus || 0),
+        };
+    } catch (e) {
+        portSlotSummaryError.value = e.message || 'Ringkasan slot port tidak tersedia.';
+        portSlotSummary.value = [];
+        portSlotTotals.value = {
+            total_ports: 0,
+            total_used_slots: 0,
+            total_empty_slots: 0,
+            total_online_onus: 0,
+        };
+    } finally {
+        portSlotSummaryLoading.value = false;
+    }
 }
 
 async function loadManualRegisterSlotSummary() {
@@ -2808,6 +2861,18 @@ onBeforeUnmount(() => {
                                     {{ uncfgLoading ? 'Scanning...' : 'Scan ONU Baru' }}
                                 </button>
 
+                                <button
+                                    type="button"
+                                    class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
+                                    :disabled="registerBusy"
+                                    @click="openPortSlotModal()"
+                                >
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
+                                    </svg>
+                                    Slot Port
+                                </button>
+
                                 <template v-if="isTeknisi">
                                     <button
                                         type="button"
@@ -3711,6 +3776,103 @@ onBeforeUnmount(() => {
                         </div>
                     </div>
                 </div>
+
+                <Teleport to="body">
+                    <div v-if="portSlotModalOpen" class="fixed inset-0 z-[93]">
+                        <div class="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" @click="closePortSlotModal()"></div>
+                        <div class="relative flex min-h-full items-center justify-center p-4 sm:p-6">
+                            <div class="w-full max-w-4xl overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_32px_90px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-slate-900">
+                                <div class="border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-lg font-black text-slate-800 dark:text-white">Slot Port OLT</div>
+                                            <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                                Ringkasan slot terpakai, slot kosong, dan ONU online per port.
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-400 transition hover:border-slate-300 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:text-slate-500 dark:hover:border-white/20 dark:hover:text-slate-300"
+                                            :disabled="portSlotSummaryLoading"
+                                            @click="closePortSlotModal()"
+                                        >
+                                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="space-y-4 px-5 py-5 sm:px-6">
+                                    <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Port</div>
+                                            <div class="mt-1 text-lg font-black text-slate-800 dark:text-white">{{ portSlotTotals.total_ports }}</div>
+                                        </div>
+                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Terpakai</div>
+                                            <div class="mt-1 text-lg font-black text-slate-800 dark:text-white">{{ portSlotTotals.total_used_slots }}</div>
+                                        </div>
+                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Kosong</div>
+                                            <div class="mt-1 text-lg font-black text-emerald-600 dark:text-emerald-300">{{ portSlotTotals.total_empty_slots }}</div>
+                                        </div>
+                                        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
+                                            <div class="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">ONU Online</div>
+                                            <div class="mt-1 text-lg font-black text-blue-600 dark:text-blue-300">{{ portSlotTotals.total_online_onus }}</div>
+                                        </div>
+                                    </div>
+
+                                    <div v-if="portSlotSummaryLoading" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm font-semibold text-slate-500 dark:border-white/10 dark:bg-slate-950/40 dark:text-slate-400">
+                                        Memuat ringkasan slot port...
+                                    </div>
+
+                                    <div v-else-if="portSlotSummaryError" class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-6 text-sm font-semibold text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                                        {{ portSlotSummaryError }}
+                                    </div>
+
+                                    <div v-else class="overflow-hidden rounded-2xl border border-slate-200 dark:border-white/10">
+                                        <div class="overflow-x-auto">
+                                            <table class="w-full text-left text-sm whitespace-nowrap">
+                                                <thead class="bg-slate-50 text-xs uppercase text-slate-500 font-bold border-b border-slate-100 dark:bg-slate-900/60 dark:text-slate-400 dark:border-white/10">
+                                                    <tr>
+                                                        <th class="px-4 py-3">Port</th>
+                                                        <th class="px-4 py-3">Terpakai</th>
+                                                        <th class="px-4 py-3">Kosong</th>
+                                                        <th class="px-4 py-3">ONU Online</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-slate-100 dark:divide-white/5">
+                                                    <tr v-if="!portSlotSummary.length">
+                                                        <td colspan="4" class="px-4 py-10 text-center text-slate-400 italic">
+                                                            Belum ada data port.
+                                                        </td>
+                                                    </tr>
+                                                    <tr v-for="item in portSlotSummary" :key="item.fsp" class="bg-white dark:bg-slate-900/40">
+                                                        <td class="px-4 py-3 font-bold text-slate-800 dark:text-white">{{ item.fsp }}</td>
+                                                        <td class="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{{ item.used_slots }} / {{ item.total_slots }}</td>
+                                                        <td class="px-4 py-3 font-semibold text-emerald-600 dark:text-emerald-300">{{ item.empty_slots }}</td>
+                                                        <td class="px-4 py-3 font-semibold text-blue-600 dark:text-blue-300">{{ item.online_onus }}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="flex items-center justify-end border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                    <button
+                                        type="button"
+                                        class="h-10 rounded-lg bg-slate-100 px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+                                        @click="closePortSlotModal()"
+                                    >
+                                        Tutup
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </Teleport>
 
                 <Teleport to="body">
                     <div v-if="manualRegisterModalOpen && canManualRegister && uncfgSelected" class="fixed inset-0 z-[94]">

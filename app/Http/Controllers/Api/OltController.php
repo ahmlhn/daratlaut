@@ -8,6 +8,7 @@ use App\Models\Olt;
 use App\Models\OltOnu;
 use App\Models\OltLog;
 use App\Services\OltService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -96,6 +97,13 @@ class OltController extends Controller
 
         $role = strtolower(trim((string) ($user->role ?? '')));
         return in_array($role, ['teknisi', 'svp_lapangan', 'svp lapangan'], true);
+    }
+
+    private function authorizeManageOltProfile(Request $request): void
+    {
+        if ($this->isTeknisiActor($request)) {
+            throw new AuthorizationException('Akses ditolak. Profil OLT hanya dapat dikelola oleh admin.');
+        }
     }
 
     private function onuCacheSnColumn(): string
@@ -396,6 +404,8 @@ class OltController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $this->authorizeManageOltProfile($request);
+
         $request->validate([
             'nama_olt' => 'required|string|max:100',
             'host' => 'required|string|max:100|regex:/^[A-Za-z0-9.-]+$/',
@@ -456,6 +466,8 @@ class OltController extends Controller
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        $this->authorizeManageOltProfile($request);
+
         $request->validate([
             'nama_olt' => 'string|max:100',
             'host' => 'string|max:100|regex:/^[A-Za-z0-9.-]+$/',
@@ -532,6 +544,8 @@ class OltController extends Controller
      */
     public function destroy(Request $request, int $id): JsonResponse
     {
+        $this->authorizeManageOltProfile($request);
+
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         
@@ -1316,6 +1330,111 @@ class OltController extends Controller
                 'used_slots' => $usedCount,
                 'empty_slots' => $emptyCount,
                 'total_slots' => self::ONU_SLOT_MAX,
+            ],
+        ]);
+    }
+
+    /**
+     * Slot summary for all ports/FSP on the selected OLT (from cache/DB, no OLT reload).
+     */
+    public function getPortSlotSummary(Request $request, int $id): JsonResponse
+    {
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $table = (new OltOnu())->getTable();
+        $hasTenantId = Schema::hasColumn($table, 'tenant_id');
+        $hasStatus = Schema::hasColumn($table, 'status');
+        $hasState = Schema::hasColumn($table, 'state');
+
+        $query = OltOnu::query()
+            ->where('olt_id', $olt->id)
+            ->whereNotNull('fsp')
+            ->whereNotNull('onu_id')
+            ->select(['fsp', 'onu_id']);
+
+        if ($hasTenantId) {
+            $query->where('tenant_id', $tenantId);
+        }
+        if ($hasStatus) {
+            $query->addSelect('status');
+        }
+        if ($hasState) {
+            $query->addSelect('state');
+        }
+
+        $rows = $query->get();
+        $fspList = is_array($olt->fsp_cache) ? array_values(array_filter($olt->fsp_cache, 'is_string')) : [];
+        if (empty($fspList)) {
+            $fspList = $rows->pluck('fsp')->filter(fn ($fsp) => is_string($fsp) && $fsp !== '')->unique()->values()->all();
+        }
+
+        usort($fspList, function (string $a, string $b) {
+            $pa = array_map('intval', explode('/', $a));
+            $pb = array_map('intval', explode('/', $b));
+            if (($pa[0] ?? 0) !== ($pb[0] ?? 0)) return ($pa[0] ?? 0) <=> ($pb[0] ?? 0);
+            if (($pa[1] ?? 0) !== ($pb[1] ?? 0)) return ($pa[1] ?? 0) <=> ($pb[1] ?? 0);
+            return ($pa[2] ?? 0) <=> ($pb[2] ?? 0);
+        });
+
+        $summaryMap = [];
+        foreach ($fspList as $fsp) {
+            $summaryMap[$fsp] = [
+                'fsp' => $fsp,
+                'used_slots' => 0,
+                'empty_slots' => self::ONU_SLOT_MAX,
+                'online_onus' => 0,
+                'total_slots' => self::ONU_SLOT_MAX,
+            ];
+        }
+
+        $seenSlots = [];
+        $seenOnline = [];
+        foreach ($rows as $row) {
+            $fsp = (string) ($row->fsp ?? '');
+            $onuId = (int) ($row->onu_id ?? 0);
+            if ($fsp === '' || $onuId < 1) {
+                continue;
+            }
+
+            if (!isset($summaryMap[$fsp])) {
+                $summaryMap[$fsp] = [
+                    'fsp' => $fsp,
+                    'used_slots' => 0,
+                    'empty_slots' => self::ONU_SLOT_MAX,
+                    'online_onus' => 0,
+                    'total_slots' => self::ONU_SLOT_MAX,
+                ];
+            }
+
+            $slotKey = $fsp . ':' . $onuId;
+            if (!isset($seenSlots[$slotKey])) {
+                $seenSlots[$slotKey] = true;
+                $summaryMap[$fsp]['used_slots']++;
+            }
+
+            $status = strtolower(trim((string) ($row->status ?? '')));
+            $state = strtolower(trim((string) ($row->state ?? '')));
+            $isOnline = $status === 'online' || in_array($state, ['ready', 'working', 'online'], true);
+            if ($isOnline && !isset($seenOnline[$slotKey])) {
+                $seenOnline[$slotKey] = true;
+                $summaryMap[$fsp]['online_onus']++;
+            }
+        }
+
+        $items = array_values(array_map(function (array $item): array {
+            $used = (int) ($item['used_slots'] ?? 0);
+            $item['empty_slots'] = max(0, self::ONU_SLOT_MAX - $used);
+            return $item;
+        }, $summaryMap));
+
+        return response()->json([
+            'status' => 'ok',
+            'data' => [
+                'items' => $items,
+                'total_ports' => count($items),
+                'total_used_slots' => array_sum(array_column($items, 'used_slots')),
+                'total_empty_slots' => array_sum(array_column($items, 'empty_slots')),
+                'total_online_onus' => array_sum(array_column($items, 'online_onus')),
             ],
         ]);
     }
