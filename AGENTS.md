@@ -53,6 +53,8 @@ Last verified: 2026-04-15
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-15: Notifikasi hasil scan OLT saat tidak ada ONU baru kini memakai teks `Tidak ada onu yang perlu diregistrasi.`; `app/Http/Controllers/Api/OltController.php` dan `resources/js/Pages/Olts/Index.vue` menyamakan pesan backend/frontend. Docs: N/A.
+- 2026-04-15: Susunan tombol aksi di workspace OLT dirapikan; `resources/js/Pages/Olts/Index.vue` kini menaruh aksi utama lebih dulu dan `Slot Port` sebagai aksi sekunder terakhir untuk admin maupun teknisi. Docs: N/A.
 - 2026-04-15: Ringkasan teks OLT aktif (`nama OLT`, `IP:port`, dst.) di panel pilihan OLT dihapus; `resources/js/Pages/Olts/Index.vue` menghapus blok info dan computed `selectedInfoText`. Docs: N/A.
 - 2026-04-15: Tabel `ONU Unregistered` kini disembunyikan saat hasil scan kosong; `resources/js/Pages/Olts/Index.vue` hanya merender blok tabel jika ada item unregistered. Docs: N/A.
 - 2026-04-15: Tombol admin `Auto Register` tidak lagi muncul ke teknisi; `resources/js/Pages/Olts/Index.vue` memisahkan cabang render teknisi vs non-teknisi agar `v-else` tidak memunculkan aksi admin saat `teknisiWriteReady` false. Docs: N/A.

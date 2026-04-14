@@ -1261,13 +1261,13 @@ async function submitAutoRegister() {
         if (!runId) {
             if (Number(summary.total_count || 0) === 0) {
                 completeAutoRegisterModal(
-                    data.message || 'Tidak ada ONU unregistered.',
+                    data.message || 'Tidak ada onu yang perlu diregistrasi.',
                     'Tidak ada ONU yang perlu diproses pada OLT ini.',
                     100,
                     'Selesai',
                     'info'
                 );
-                setUncfgStatus(data.message || 'Tidak ada ONU unregistered.', 'info');
+                setUncfgStatus(data.message || 'Tidak ada onu yang perlu diregistrasi.', 'info');
                 registerBusy.value = false;
                 return;
             }
@@ -2836,18 +2836,6 @@ onBeforeUnmount(() => {
                                     {{ uncfgLoading ? 'Scanning...' : 'Scan ONU Baru' }}
                                 </button>
 
-                                <button
-                                    type="button"
-                                    class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
-                                    :disabled="registerBusy"
-                                    @click="openPortSlotModal()"
-                                >
-                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
-                                    </svg>
-                                    Slot Port
-                                </button>
-
                                 <template v-if="isTeknisi">
                                     <button
                                         v-if="teknisiWriteReady"
@@ -2860,6 +2848,17 @@ onBeforeUnmount(() => {
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                                         </svg>
                                         Simpan Config
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
+                                        :disabled="registerBusy"
+                                        @click="openPortSlotModal()"
+                                    >
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
+                                        </svg>
+                                        Slot Port
                                     </button>
                                 </template>
 
@@ -2885,6 +2884,17 @@ onBeforeUnmount(() => {
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5h14v14H5zM8 5v4h8V5" />
                                         </svg>
                                         Write Config
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70"
+                                        :disabled="registerBusy"
+                                        @click="openPortSlotModal()"
+                                    >
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
+                                        </svg>
+                                        Slot Port
                                     </button>
                                 </template>
                             </div>

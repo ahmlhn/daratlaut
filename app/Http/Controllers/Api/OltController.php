@@ -2079,7 +2079,7 @@ class OltController extends Controller
                         'error' => 0,
                         'success_keys' => [],
                         'failed_items' => [],
-                        'state_text' => 'Tidak ada ONU unregistered.',
+                        'state_text' => 'Tidak ada onu yang perlu diregistrasi.',
                         'source' => !empty($providedItems) ? 'ui_last_scan' : 'olt_scan',
                         'queue_connection' => $queueTarget['connection'],
                         'queue' => $queueTarget['queue'],
@@ -2092,7 +2092,7 @@ class OltController extends Controller
 
                 return response()->json([
                     'status' => 'ok',
-                    'message' => 'Tidak ada ONU unregistered.',
+                    'message' => 'Tidak ada onu yang perlu diregistrasi.',
                     'summary' => [
                         'mode' => 'queued_batches',
                         'batch_size' => $batchSize,
