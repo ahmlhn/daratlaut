@@ -53,6 +53,7 @@ Last verified: 2026-04-15
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-15: Ringkasan teks OLT aktif (`nama OLT`, `IP:port`, dst.) di panel pilihan OLT dihapus; `resources/js/Pages/Olts/Index.vue` menghapus blok info dan computed `selectedInfoText`. Docs: N/A.
 - 2026-04-15: Tabel `ONU Unregistered` kini disembunyikan saat hasil scan kosong; `resources/js/Pages/Olts/Index.vue` hanya merender blok tabel jika ada item unregistered. Docs: N/A.
 - 2026-04-15: Tombol admin `Auto Register` tidak lagi muncul ke teknisi; `resources/js/Pages/Olts/Index.vue` memisahkan cabang render teknisi vs non-teknisi agar `v-else` tidak memunculkan aksi admin saat `teknisiWriteReady` false. Docs: N/A.
 - 2026-04-15: Popup `Slot Port OLT` disederhanakan lagi dengan menghapus ringkasan total di atas tabel; `resources/js/Pages/Olts/Index.vue` kini hanya menampilkan tabel port. Docs: N/A.

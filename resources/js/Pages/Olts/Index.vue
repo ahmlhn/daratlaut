@@ -285,21 +285,6 @@ function writeLastSelectedOltId(value) {
     }
 }
 
-const selectedInfoText = computed(() => {
-    if (!selectedOlt.value) {
-        return 'Belum memilih OLT.';
-    }
-
-    const name = selectedOlt.value.nama_olt || 'OLT';
-    const host = selectedOlt.value.host || '-';
-    const port = selectedOlt.value.port || '-';
-    const vlan = selectedOlt.value.vlan_default || '-';
-    const tcont = selectedOlt.value.tcont_default || '-';
-    const onuType = selectedOlt.value.onu_type_default || '-';
-    const spid = selectedOlt.value.service_port_id_default || '-';
-    return `${name} | ${host}:${port} | VLAN ${vlan} | TCONT ${tcont} | ONU ${onuType} | SP ${spid}`;
-});
-
 function sanitizeOnuName(value) {
     const text = String(value || '').trim();
     if (!text) return '';
@@ -2834,13 +2819,6 @@ onBeforeUnmount(() => {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536M9 11l6.768-6.768a2.5 2.5 0 113.536 3.536L12.536 14.536A4 4 0 019.708 15.7L7 16l.3-2.708A4 4 0 018.464 10.464L15.232 3.696" />
                             </svg>
                         </button>
-                    </div>
-
-                    <div
-                        id="olt-selected-info"
-                        class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-white/10 dark:bg-slate-900/60"
-                    >
-                        <div class="text-[11px] text-slate-600 dark:text-slate-300">{{ selectedInfoText }}</div>
                     </div>
 
                     <div v-if="selectedOlt" class="space-y-4 border-t border-slate-200 pt-4 dark:border-white/10">
