@@ -2927,7 +2927,7 @@ onBeforeUnmount(() => {
                                 </div>
                             </div>
                         </div>
-                        <div class="overflow-hidden rounded-2xl border border-slate-200 dark:border-white/10">
+                        <div v-if="uncfg.length" class="overflow-hidden rounded-2xl border border-slate-200 dark:border-white/10">
                             <div class="flex items-center justify-between gap-4 border-b border-slate-100 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-900/50">
                                 <div class="text-[11px] font-black uppercase tracking-wide text-slate-600 dark:text-slate-300">ONU Unregistered</div>
                                 <div class="text-xs text-slate-500 dark:text-slate-400">
@@ -2950,13 +2950,7 @@ onBeforeUnmount(() => {
                                         </tr>
                                     </thead>
                                     <tbody class="divide-y divide-slate-100 dark:divide-white/5">
-                                        <tr v-if="!uncfg.length">
-                                            <td :colspan="canManualRegister ? 3 : 2" class="px-3 sm:px-6 py-10 text-center text-slate-400 italic">
-                                                Belum ada data.
-                                            </td>
-                                        </tr>
-
-                                        <template v-else-if="canManualRegister">
+                                        <template v-if="canManualRegister">
                                             <tr
                                                 v-for="(item, idx) in uncfg"
                                                 :key="`${item.fsp}:${item.sn}`"
