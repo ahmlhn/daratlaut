@@ -53,6 +53,7 @@ Last verified: 2026-04-16
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-16: Gate GPS global teknisi kini mempertahankan status sinkron lokasi terakhir selama 5 menit per sesi browser agar pindah halaman tidak terus mengunci ulang modul saat izin lokasi sudah aktif; `resources/js/Composables/useGlobalGpsTracking.js` menambah cache `sessionStorage`, TTL akses, dan reset cache saat browser benar-benar menolak izin GPS. Docs: N/A.
 - 2026-04-16: Semua halaman berbasis `AdminLayout` kini mewajibkan GPS aktif untuk role `teknisi`; ditambah composable shared `resources/js/Composables/useGlobalGpsTracking.js`, `resources/js/Layouts/AdminLayout.vue` kini menampilkan status lokasi global + overlay blokir akses sampai sinkron sukses, dan `resources/js/Pages/Teknisi/Index.vue` dibersihkan dari tracker GPS lokal agar tidak dobel. Docs: N/A.
 - 2026-04-16: Modul `Tugas Saya` kini mengunci akses untuk role `teknisi` sampai GPS aktif dan sinkron lokasi berhasil; `resources/js/Pages/Teknisi/Index.vue` menambah gate wajib GPS, panel blokir akses, tombol retry, penundaan load data sampai lokasi sukses terkirim, serta tetap membuka deep-link `task_id` setelah GPS aktif. Docs: N/A.
 - 2026-04-16: Integrasi Laravel Reverb untuk auto register OLT dicabut agar kompatibel dengan shared hosting; dependency Reverb/Echo dihapus, file config/channel/event websocket dihapus, `resources/js/Pages/Olts/Index.vue` kembali ke polling penuh, dan bootstrap Laravel/JS tidak lagi memuat routing channel atau Echo. Docs: N/A.

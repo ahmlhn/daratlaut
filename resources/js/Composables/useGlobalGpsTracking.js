@@ -6,6 +6,8 @@ const GPS_REQUIRED_ROLES = new Set(['teknisi'])
 const LOCATION_SEND_MIN_INTERVAL_MS = 15000
 const LOCATION_HEARTBEAT_INTERVAL_MS = 60000
 const LOCATION_MIN_MOVE_METERS = 20
+const GPS_READY_STORAGE_KEY = 'noci_global_gps_ready_v1'
+const GPS_READY_TTL_MS = 5 * 60 * 1000
 
 const locationTracking = reactive({
   enabled: false,
@@ -14,6 +16,7 @@ const locationTracking = reactive({
   statusText: 'Lokasi belum aktif',
   tone: 'muted',
   lastSyncedAt: '',
+  lastSyncedAtMs: 0,
 })
 
 let locationWatchId = null
@@ -22,6 +25,7 @@ let locationLastPosition = null
 let locationLastSent = null
 let locationSending = false
 let locationFailedCount = 0
+let persistedGpsHydrated = false
 
 function normalizeRole(role) {
   const value = String(role || '').trim().toLowerCase()
@@ -135,6 +139,60 @@ function parseLocationError(err) {
   return 'Gagal membaca lokasi perangkat'
 }
 
+function getFreshGpsSyncAgeMs() {
+  const syncedAtMs = Number(locationTracking.lastSyncedAtMs || 0)
+  if (!Number.isFinite(syncedAtMs) || syncedAtMs <= 0) return null
+
+  const ageMs = Date.now() - syncedAtMs
+  if (ageMs < 0 || ageMs > GPS_READY_TTL_MS) return null
+  return ageMs
+}
+
+function persistGpsReadyState(syncedAtMs) {
+  if (typeof window === 'undefined') return
+  const timestamp = Number(syncedAtMs || Date.now())
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return
+
+  window.sessionStorage.setItem(
+    GPS_READY_STORAGE_KEY,
+    JSON.stringify({ syncedAtMs: timestamp })
+  )
+}
+
+function clearPersistedGpsReadyState() {
+  if (typeof window === 'undefined') return
+  window.sessionStorage.removeItem(GPS_READY_STORAGE_KEY)
+}
+
+function hydratePersistedGpsReadyState() {
+  if (persistedGpsHydrated || typeof window === 'undefined') return
+  persistedGpsHydrated = true
+
+  const raw = window.sessionStorage.getItem(GPS_READY_STORAGE_KEY)
+  if (!raw) return
+
+  try {
+    const parsed = JSON.parse(raw)
+    const syncedAtMs = Number(parsed?.syncedAtMs || 0)
+    if (!Number.isFinite(syncedAtMs) || syncedAtMs <= 0) {
+      clearPersistedGpsReadyState()
+      return
+    }
+
+    const ageMs = Date.now() - syncedAtMs
+    if (ageMs < 0 || ageMs > GPS_READY_TTL_MS) {
+      clearPersistedGpsReadyState()
+      return
+    }
+
+    locationTracking.lastSyncedAtMs = syncedAtMs
+    locationTracking.lastSyncedAt = formatClockTime(new Date(syncedAtMs))
+    setLocationStatus(`Lokasi aktif • sinkron ${locationTracking.lastSyncedAt}`, 'success')
+  } catch {
+    clearPersistedGpsReadyState()
+  }
+}
+
 function stopLocationTracking() {
   if (typeof navigator !== 'undefined' && navigator.geolocation && locationWatchId !== null) {
     navigator.geolocation.clearWatch(locationWatchId)
@@ -148,12 +206,13 @@ function stopLocationTracking() {
 }
 
 export function useGlobalGpsTracking(roleRef) {
+  hydratePersistedGpsReadyState()
+
   const normalizedRole = computed(() => normalizeRole(unref(roleRef)))
   const canTrackLocation = computed(() => LOCATION_TRACKING_ROLES.has(normalizedRole.value))
   const gpsRequiredForFeature = computed(() => GPS_REQUIRED_ROLES.has(normalizedRole.value))
-  const gpsAccessReady = computed(() =>
-    !gpsRequiredForFeature.value || (locationTracking.tone === 'success' && !!locationTracking.lastSyncedAt)
-  )
+  const hasFreshGpsSync = computed(() => getFreshGpsSyncAgeMs() != null)
+  const gpsAccessReady = computed(() => !gpsRequiredForFeature.value || hasFreshGpsSync.value)
   const gpsFeatureLocked = computed(() => gpsRequiredForFeature.value && !gpsAccessReady.value)
   const canRetryLocationTracking = computed(() =>
     canTrackLocation.value
@@ -194,13 +253,16 @@ export function useGlobalGpsTracking(roleRef) {
     locationSending = true
     try {
       await postLocation(payload)
+      const syncedAtMs = Date.now()
       locationLastSent = {
         latitude: payload.latitude,
         longitude: payload.longitude,
-        sentAt: Date.now(),
+        sentAt: syncedAtMs,
       }
       locationFailedCount = 0
-      locationTracking.lastSyncedAt = formatClockTime(new Date())
+      locationTracking.lastSyncedAtMs = syncedAtMs
+      locationTracking.lastSyncedAt = formatClockTime(new Date(syncedAtMs))
+      persistGpsReadyState(syncedAtMs)
       setLocationStatus(`Lokasi aktif • sinkron ${locationTracking.lastSyncedAt}`, 'success')
     } catch (e) {
       locationFailedCount += 1
@@ -213,11 +275,18 @@ export function useGlobalGpsTracking(roleRef) {
 
   function handleLocationSuccess(position) {
     locationLastPosition = position
-    if (!locationTracking.lastSyncedAt) setLocationStatus('Lokasi terdeteksi, sinkronisasi...', 'muted')
+    if (!locationTracking.lastSyncedAt) {
+      setLocationStatus('Lokasi terdeteksi, sinkronisasi...', 'muted')
+    }
     void sendLocationPosition(position, { eventName: 'live_tracking' })
   }
 
   function handleLocationError(err) {
+    if (Number(err?.code || 0) === 1) {
+      locationTracking.lastSyncedAt = ''
+      locationTracking.lastSyncedAtMs = 0
+      clearPersistedGpsReadyState()
+    }
     setLocationStatus(parseLocationError(err), Number(err?.code || 0) === 1 ? 'warning' : 'error')
     if (Number(err?.code || 0) === 1) stopLocationTracking()
   }
@@ -230,6 +299,9 @@ export function useGlobalGpsTracking(roleRef) {
     if (typeof window === 'undefined' || typeof navigator === 'undefined') return
     if (!navigator.geolocation) {
       locationTracking.supported = false
+      locationTracking.lastSyncedAt = ''
+      locationTracking.lastSyncedAtMs = 0
+      clearPersistedGpsReadyState()
       setLocationStatus('Browser tidak mendukung geolocation', 'warning')
       return
     }
@@ -237,12 +309,19 @@ export function useGlobalGpsTracking(roleRef) {
     locationTracking.supported = true
     locationTracking.secureContextOk = canUseGeolocationContext()
     if (!locationTracking.secureContextOk) {
+      locationTracking.lastSyncedAt = ''
+      locationTracking.lastSyncedAtMs = 0
+      clearPersistedGpsReadyState()
       setLocationStatus('Aktifkan HTTPS/localhost untuk izin lokasi', 'warning')
       return
     }
     if (locationWatchId !== null) return
 
-    setLocationStatus('Meminta izin lokasi...', 'muted')
+    if (hasFreshGpsSync.value) {
+      setLocationStatus(`Lokasi aktif • sinkron ${locationTracking.lastSyncedAt}`, 'success')
+    } else {
+      setLocationStatus('Meminta izin lokasi...', 'muted')
+    }
     locationTracking.enabled = true
 
     navigator.geolocation.getCurrentPosition(
