@@ -473,7 +473,7 @@ async function loadTasks() {
 const countAll = computed(() => allData.value.filter((item) => !isClosedStatus(item.status) && (!filters.pop || String(item.pop || '') === filters.pop)).length)
 
 const countMine = computed(() => allData.value.filter((item) => {
-  const mine = isAssignedToCurrent(item) && !['Selesai', 'Batal', 'Baru'].includes(item.status)
+  const mine = isAssignedToCurrent(item) && !isClosedStatus(item.status)
   const req = item.status === 'Req_Batal' && canPrivilegedTeknisi.value
   return mine || req
 }).length)
@@ -514,7 +514,6 @@ const filteredTasks = computed(() => {
       return true
     }
     if (!isAssignedToCurrent(item)) return false
-    if (item.status === 'Baru') return false
     if (status && item.status !== status) return false
     return true
   })

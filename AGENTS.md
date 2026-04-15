@@ -53,6 +53,7 @@ Last verified: 2026-04-15
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-15: Tab `Tugas Saya` kini menampilkan tugas status `Baru` yang sudah di-assign ke teknisi terkait; `resources/js/Pages/Teknisi/Index.vue` menyesuaikan filter daftar dan badge hitungan agar task assigned tidak hilang dari view teknisi. Docs: N/A.
 - 2026-04-15: Halaman OLT kini mendukung realtime progress auto register via Laravel Reverb dengan fallback polling; ditambah event `app/Events/OltAutoRegisterProgressUpdated.php`, broadcast update di `app/Jobs/AutoRegisterOnuBatchJob.php` dan `app/Http/Controllers/Api/OltController.php`, auth channel di `routes/channels.php`, config `config/broadcasting.php` + `config/reverb.php`, bootstrap Echo di `resources/js/bootstrap.js`/`resources/js/echo.js`, env contoh Reverb di `.env.example`, serta `resources/js/Pages/Olts/Index.vue` kini subscribe channel per `tenant/olt/run_id`. Docs: N/A.
 - 2026-04-15: Layout tombol aksi OLT di desktop dirapikan per role; `resources/js/Pages/Olts/Index.vue` kini memakai grid desktop terpisah untuk teknisi vs admin agar jumlah kolom sesuai tombol yang tampil dan ukuran tombol konsisten. Docs: N/A.
 - 2026-04-15: Hasil `Scan ONU Baru` di frontend kini menampilkan `Tidak ada onu yang perlu diregistrasi.` saat jumlah hasil `0`, bukan `Scan selesai. Ditemukan 0 ONU.`; `resources/js/Pages/Olts/Index.vue` menyesuaikan cabang sukses `scanUncfg()`. Docs: N/A.
