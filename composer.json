@@ -9,8 +9,10 @@
         "inertiajs/inertia-laravel": "^2.0",
         "laravel/framework": "^11.0",
         "laravel/pulse": "^1.6",
+        "laravel/reverb": "^1.10",
         "laravel/sanctum": "^4.3",
         "laravel/tinker": "^2.9",
+        "pusher/pusher-php-server": "^7.2",
         "spatie/laravel-permission": "^6.24"
     },
     "require-dev": {

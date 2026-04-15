@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Events\OltAutoRegisterProgressUpdated;
 use App\Jobs\AutoRegisterOnuBatchJob;
 use App\Http\Controllers\Controller;
 use App\Models\Olt;
@@ -278,6 +279,51 @@ class OltController extends Controller
             ->whereIn('status', ['queued', 'processing'])
             ->orderByDesc('id')
             ->first();
+    }
+
+    /**
+     * @param array<string, mixed> $summary
+     * @return array<string, mixed>
+     */
+    private function buildAutoRegisterStatusPayload(
+        int $runId,
+        string $status,
+        array $summary,
+        string $logText = '',
+        $createdAt = null
+    ): array {
+        return [
+            'run_id' => $runId,
+            'action' => 'register_auto',
+            'status' => $status,
+            'is_finished' => in_array($status, ['done', 'error'], true),
+            'created_at' => $createdAt,
+            'summary' => $summary,
+            'log_text' => $logText,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $summary
+     */
+    private function broadcastAutoRegisterStatus(
+        int $tenantId,
+        int $oltId,
+        int $runId,
+        string $status,
+        array $summary,
+        string $logText = '',
+        $createdAt = null
+    ): void {
+        try {
+            broadcast(new OltAutoRegisterProgressUpdated(
+                $tenantId,
+                $oltId,
+                $this->buildAutoRegisterStatusPayload($runId, $status, $summary, $logText, $createdAt)
+            ));
+        } catch (Throwable) {
+            // Realtime update is best-effort; polling remains as fallback.
+        }
     }
 
     /**
@@ -2149,6 +2195,18 @@ class OltController extends Controller
                 throw new RuntimeException('Gagal membuat tracker log auto register.');
             }
 
+            $this->broadcastAutoRegisterStatus(
+                $tenantId,
+                (int) $olt->id,
+                (int) $logId,
+                'queued',
+                $summary,
+                trim(($providedItems
+                    ? "Queue auto register dibuat dari hasil scan terakhir di layar untuk {$totalCount} ONU ({$totalBatches} batch)."
+                    : "Queue auto register dibuat untuk {$totalCount} ONU ({$totalBatches} batch).") . "\n\n{$logExcerpt}"),
+                now()->toDateTimeString()
+            );
+
             $firstBatch = array_slice($uncfg, 0, $batchSize);
             $remainingItems = array_slice($uncfg, $batchSize);
 
@@ -2232,15 +2290,13 @@ class OltController extends Controller
 
         return response()->json([
             'status' => 'ok',
-            'data' => [
-                'run_id' => (int) ($row->id ?? 0),
-                'action' => (string) ($row->action ?? 'register_auto'),
-                'status' => $status,
-                'is_finished' => $isFinished,
-                'created_at' => $row->created_at ?? null,
-                'summary' => $summary,
-                'log_text' => $logText,
-            ],
+            'data' => $this->buildAutoRegisterStatusPayload(
+                (int) ($row->id ?? 0),
+                $status,
+                $summary,
+                $logText,
+                $row->created_at ?? null
+            ),
         ]);
     }
 
