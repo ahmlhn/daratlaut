@@ -144,6 +144,7 @@ const {
   canTrackLocation,
   gpsRequiredForFeature,
   gpsFeatureLocked,
+  gpsValidationPending,
   canRetryLocationTracking,
   gpsLockMessage,
   locationTracking,
@@ -607,10 +608,19 @@ const breadcrumbs = computed(() => {
           </button>
         </div>
 
-        <div v-if="gpsFeatureLocked && gpsRequiredForFeature" class="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700 shadow-sm dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+        <div v-if="gpsValidationPending && gpsRequiredForFeature" class="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-slate-700 shadow-sm dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-200">
+          <div class="text-sm font-extrabold uppercase tracking-wide">Memeriksa GPS</div>
+          <div class="mt-2 text-sm leading-relaxed">
+            Sistem sedang memvalidasi status GPS perangkat sebelum halaman teknisi dibuka.
+          </div>
+          <div class="mt-3 rounded-xl border border-slate-200/80 bg-white/80 px-3 py-2 text-xs font-semibold dark:border-white/10 dark:bg-slate-950/40">
+            {{ locationTracking.statusText || 'Memeriksa GPS perangkat...' }}
+          </div>
+        </div>
+        <div v-else-if="gpsFeatureLocked && gpsRequiredForFeature" class="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700 shadow-sm dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
           <div class="text-sm font-extrabold uppercase tracking-wide">GPS wajib aktif</div>
           <div class="mt-2 text-sm leading-relaxed">
-            Role teknisi harus menyalakan GPS dan mengizinkan akses lokasi sebelum halaman apa pun bisa digunakan.
+            Peringatan ini baru tampil setelah browser memvalidasi bahwa GPS belum aktif atau izin lokasi tidak tersedia.
           </div>
           <div class="mt-3 rounded-xl border border-red-200/80 bg-white/70 px-3 py-2 text-xs font-semibold dark:border-red-500/20 dark:bg-slate-900/40">
             {{ gpsLockMessage }}

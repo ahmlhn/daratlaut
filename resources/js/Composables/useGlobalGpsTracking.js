@@ -17,6 +17,9 @@ const locationTracking = reactive({
   tone: 'muted',
   lastSyncedAt: '',
   lastSyncedAtMs: 0,
+  gpsValidated: false,
+  validationChecked: false,
+  validating: false,
 })
 
 let locationWatchId = null
@@ -187,6 +190,9 @@ function hydratePersistedGpsReadyState() {
 
     locationTracking.lastSyncedAtMs = syncedAtMs
     locationTracking.lastSyncedAt = formatClockTime(new Date(syncedAtMs))
+    locationTracking.gpsValidated = true
+    locationTracking.validationChecked = true
+    locationTracking.validating = false
     setLocationStatus(`Lokasi aktif • sinkron ${locationTracking.lastSyncedAt}`, 'success')
   } catch {
     clearPersistedGpsReadyState()
@@ -203,6 +209,7 @@ function stopLocationTracking() {
   locationLastPosition = null
   locationSending = false
   locationTracking.enabled = false
+  locationTracking.validating = false
 }
 
 export function useGlobalGpsTracking(roleRef) {
@@ -212,8 +219,15 @@ export function useGlobalGpsTracking(roleRef) {
   const canTrackLocation = computed(() => LOCATION_TRACKING_ROLES.has(normalizedRole.value))
   const gpsRequiredForFeature = computed(() => GPS_REQUIRED_ROLES.has(normalizedRole.value))
   const hasFreshGpsSync = computed(() => getFreshGpsSyncAgeMs() != null)
-  const gpsAccessReady = computed(() => !gpsRequiredForFeature.value || hasFreshGpsSync.value)
+  const gpsAccessReady = computed(() =>
+    !gpsRequiredForFeature.value || locationTracking.gpsValidated || hasFreshGpsSync.value
+  )
   const gpsFeatureLocked = computed(() => gpsRequiredForFeature.value && !gpsAccessReady.value)
+  const gpsValidationPending = computed(() =>
+    gpsRequiredForFeature.value
+    && !gpsAccessReady.value
+    && (!locationTracking.validationChecked || locationTracking.validating)
+  )
   const canRetryLocationTracking = computed(() =>
     canTrackLocation.value
     && locationTracking.supported
@@ -275,6 +289,9 @@ export function useGlobalGpsTracking(roleRef) {
 
   function handleLocationSuccess(position) {
     locationLastPosition = position
+    locationTracking.gpsValidated = true
+    locationTracking.validationChecked = true
+    locationTracking.validating = false
     if (!locationTracking.lastSyncedAt) {
       setLocationStatus('Lokasi terdeteksi, sinkronisasi...', 'muted')
     }
@@ -282,6 +299,9 @@ export function useGlobalGpsTracking(roleRef) {
   }
 
   function handleLocationError(err) {
+    locationTracking.gpsValidated = false
+    locationTracking.validationChecked = true
+    locationTracking.validating = false
     if (Number(err?.code || 0) === 1) {
       locationTracking.lastSyncedAt = ''
       locationTracking.lastSyncedAtMs = 0
@@ -301,6 +321,9 @@ export function useGlobalGpsTracking(roleRef) {
       locationTracking.supported = false
       locationTracking.lastSyncedAt = ''
       locationTracking.lastSyncedAtMs = 0
+      locationTracking.gpsValidated = false
+      locationTracking.validationChecked = true
+      locationTracking.validating = false
       clearPersistedGpsReadyState()
       setLocationStatus('Browser tidak mendukung geolocation', 'warning')
       return
@@ -311,6 +334,9 @@ export function useGlobalGpsTracking(roleRef) {
     if (!locationTracking.secureContextOk) {
       locationTracking.lastSyncedAt = ''
       locationTracking.lastSyncedAtMs = 0
+      locationTracking.gpsValidated = false
+      locationTracking.validationChecked = true
+      locationTracking.validating = false
       clearPersistedGpsReadyState()
       setLocationStatus('Aktifkan HTTPS/localhost untuk izin lokasi', 'warning')
       return
@@ -318,9 +344,15 @@ export function useGlobalGpsTracking(roleRef) {
     if (locationWatchId !== null) return
 
     if (hasFreshGpsSync.value) {
+      locationTracking.gpsValidated = true
+      locationTracking.validationChecked = true
+      locationTracking.validating = false
       setLocationStatus(`Lokasi aktif • sinkron ${locationTracking.lastSyncedAt}`, 'success')
     } else {
-      setLocationStatus('Meminta izin lokasi...', 'muted')
+      locationTracking.gpsValidated = false
+      locationTracking.validationChecked = false
+      locationTracking.validating = true
+      setLocationStatus('Memeriksa GPS perangkat...', 'muted')
     }
     locationTracking.enabled = true
 
@@ -356,6 +388,7 @@ export function useGlobalGpsTracking(roleRef) {
     gpsRequiredForFeature,
     gpsAccessReady,
     gpsFeatureLocked,
+    gpsValidationPending,
     canRetryLocationTracking,
     gpsLockMessage,
     locationTracking,
