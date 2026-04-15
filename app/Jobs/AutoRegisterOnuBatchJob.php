@@ -2,7 +2,6 @@
 
 namespace App\Jobs;
 
-use App\Events\OltAutoRegisterProgressUpdated;
 use App\Models\Olt;
 use App\Models\OltLog;
 use App\Services\OltService;
@@ -81,8 +80,6 @@ class AutoRegisterOnuBatchJob implements ShouldQueue
         $summary['state_text'] = "Memproses batch {$this->batchNumber}/{$this->totalBatches}.";
         $summary['started_at'] = $summary['started_at'] ?? now()->toDateTimeString();
         OltLog::updateLog($this->runLogId, 'processing', $summary, null, $this->actor);
-        $this->broadcastRunUpdate('processing', $summary, $this->readLogText());
-
         $service = null;
         $batchSuccess = 0;
         $batchError = 0;
@@ -162,8 +159,6 @@ class AutoRegisterOnuBatchJob implements ShouldQueue
                     $updatedLogText,
                     $this->actor
                 );
-                $this->broadcastRunUpdate('queued', $summary, $updatedLogText);
-
                 $nextBatchItems = array_slice($this->remainingItems, 0, $this->batchSize);
                 $nextRemaining = array_slice($this->remainingItems, $this->batchSize);
 
@@ -204,7 +199,6 @@ class AutoRegisterOnuBatchJob implements ShouldQueue
                 $updatedLogText,
                 $this->actor
             );
-            $this->broadcastRunUpdate('done', $summary, $updatedLogText);
         } catch (Throwable $e) {
             try {
                 if ($service) {
@@ -230,8 +224,6 @@ class AutoRegisterOnuBatchJob implements ShouldQueue
                 $updatedLogText,
                 $this->actor
             );
-            $this->broadcastRunUpdate('processing', $summary, $updatedLogText);
-
             throw $e;
         }
     }
@@ -256,7 +248,6 @@ class AutoRegisterOnuBatchJob implements ShouldQueue
             $updatedLogText,
             $this->actor
         );
-        $this->broadcastRunUpdate('error', $summary, $updatedLogText);
     }
 
     private function markRunFailed(string $message): void
@@ -275,7 +266,6 @@ class AutoRegisterOnuBatchJob implements ShouldQueue
             $updatedLogText,
             $this->actor
         );
-        $this->broadcastRunUpdate('error', $summary, $updatedLogText);
     }
 
     private function readRunSummary(): array
@@ -373,29 +363,5 @@ class AutoRegisterOnuBatchJob implements ShouldQueue
         }
 
         return $text;
-    }
-
-    /**
-     * @param array<string, mixed> $summary
-     */
-    private function broadcastRunUpdate(string $status, array $summary, string $logText = ''): void
-    {
-        try {
-            broadcast(new OltAutoRegisterProgressUpdated(
-                $this->tenantId,
-                $this->oltId,
-                [
-                    'run_id' => $this->runLogId,
-                    'action' => 'register_auto',
-                    'status' => $status,
-                    'is_finished' => in_array($status, ['done', 'error'], true),
-                    'created_at' => null,
-                    'summary' => $summary,
-                    'log_text' => $logText,
-                ]
-            ));
-        } catch (Throwable) {
-            // Realtime update is best-effort; polling remains as fallback.
-        }
     }
 }

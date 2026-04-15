@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Events\OltAutoRegisterProgressUpdated;
 use App\Jobs\AutoRegisterOnuBatchJob;
 use App\Http\Controllers\Controller;
 use App\Models\Olt;
@@ -301,29 +300,6 @@ class OltController extends Controller
             'summary' => $summary,
             'log_text' => $logText,
         ];
-    }
-
-    /**
-     * @param array<string, mixed> $summary
-     */
-    private function broadcastAutoRegisterStatus(
-        int $tenantId,
-        int $oltId,
-        int $runId,
-        string $status,
-        array $summary,
-        string $logText = '',
-        $createdAt = null
-    ): void {
-        try {
-            broadcast(new OltAutoRegisterProgressUpdated(
-                $tenantId,
-                $oltId,
-                $this->buildAutoRegisterStatusPayload($runId, $status, $summary, $logText, $createdAt)
-            ));
-        } catch (Throwable) {
-            // Realtime update is best-effort; polling remains as fallback.
-        }
     }
 
     /**
@@ -2194,18 +2170,6 @@ class OltController extends Controller
             if (!$logId) {
                 throw new RuntimeException('Gagal membuat tracker log auto register.');
             }
-
-            $this->broadcastAutoRegisterStatus(
-                $tenantId,
-                (int) $olt->id,
-                (int) $logId,
-                'queued',
-                $summary,
-                trim(($providedItems
-                    ? "Queue auto register dibuat dari hasil scan terakhir di layar untuk {$totalCount} ONU ({$totalBatches} batch)."
-                    : "Queue auto register dibuat untuk {$totalCount} ONU ({$totalBatches} batch).") . "\n\n{$logExcerpt}"),
-                now()->toDateTimeString()
-            );
 
             $firstBatch = array_slice($uncfg, 0, $batchSize);
             $remainingItems = array_slice($uncfg, $batchSize);

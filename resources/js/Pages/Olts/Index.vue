@@ -11,7 +11,6 @@ const DEFAULT_TEKNISI_ONU_RX_MAX_DBM = -11.0;
 const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24.99;
 
 const role = computed(() => String(page.props.auth?.user?.role || '').trim().toLowerCase());
-const authTenantId = computed(() => Number(page.props.auth?.user?.tenant_id || 0));
 const isTeknisi = computed(() => ['teknisi', 'svp lapangan', 'svp_lapangan'].includes(role.value));
 const canManualRegister = computed(() => isTeknisi.value || ['admin', 'cs', 'owner'].includes(role.value));
 
@@ -709,8 +708,6 @@ const autoRegisterModalNote = ref('Mohon tunggu, proses berjalan di queue worker
 const autoRegisterModalEta = ref('Estimasi: menunggu queue worker...');
 const autoRegisterModalPercent = ref(0);
 let autoRegisterPollTimer = null;
-let autoRegisterRealtimeChannel = null;
-let autoRegisterRealtimeChannelName = '';
 
 // Live status (native parity): rotate command lines while actions run.
 let statusTimer = null;
@@ -975,33 +972,6 @@ function completeAutoRegisterModal(text, note, percent = 100, eta = 'Selesai', t
     updateAutoRegisterModal(text, percent, note, eta, tone, true);
 }
 
-function hasAutoRegisterRealtime() {
-    return typeof window !== 'undefined' && !!window.Echo && authTenantId.value > 0;
-}
-
-function getAutoRegisterChannelName(runId) {
-    const oltId = String(selectedOltId.value || '').trim();
-    const tenantId = Number(authTenantId.value || 0);
-    const normalizedRunId = Number(runId || 0);
-    if (!tenantId || !oltId || !normalizedRunId) {
-        return '';
-    }
-
-    return `olt.auto-register.${tenantId}.${oltId}.${normalizedRunId}`;
-}
-
-function stopAutoRegisterRealtime() {
-    if (typeof window === 'undefined' || !window.Echo || !autoRegisterRealtimeChannelName) {
-        autoRegisterRealtimeChannel = null;
-        autoRegisterRealtimeChannelName = '';
-        return;
-    }
-
-    window.Echo.leave(autoRegisterRealtimeChannelName);
-    autoRegisterRealtimeChannel = null;
-    autoRegisterRealtimeChannelName = '';
-}
-
 function stopAutoRegisterPolling(resetRun = true) {
     if (autoRegisterPollTimer) {
         clearTimeout(autoRegisterPollTimer);
@@ -1009,7 +979,6 @@ function stopAutoRegisterPolling(resetRun = true) {
     }
     if (resetRun) {
         autoRegisterRunId.value = null;
-        stopAutoRegisterRealtime();
     }
 }
 
@@ -1018,29 +987,6 @@ function scheduleAutoRegisterPoll(runId, delay = 3000) {
     autoRegisterPollTimer = setTimeout(() => {
         pollAutoRegisterStatus(runId).catch(() => {});
     }, delay);
-}
-
-function subscribeAutoRegisterRealtime(runId) {
-    const channelName = getAutoRegisterChannelName(runId);
-    if (!channelName || !hasAutoRegisterRealtime()) {
-        return false;
-    }
-
-    if (autoRegisterRealtimeChannelName === channelName && autoRegisterRealtimeChannel) {
-        return true;
-    }
-
-    stopAutoRegisterRealtime();
-    autoRegisterRealtimeChannelName = channelName;
-    autoRegisterRealtimeChannel = window.Echo.private(channelName)
-        .listen('.olt.auto-register.progress', (event) => {
-            handleAutoRegisterPayload(event, { fromRealtime: true }).catch(() => {});
-        })
-        .error(() => {
-            scheduleAutoRegisterPoll(runId, 4000);
-        });
-
-    return true;
 }
 
 async function finishAutoRegisterRun(status, summary = {}) {
@@ -1080,7 +1026,7 @@ async function finishAutoRegisterRun(status, summary = {}) {
     loadLogs().catch(() => {});
 }
 
-async function handleAutoRegisterPayload(payload, { fromRealtime = false } = {}) {
+async function handleAutoRegisterPayload(payload) {
     const runId = Number(payload?.run_id || autoRegisterRunId.value || 0);
     if (!runId) return;
 
@@ -1122,7 +1068,7 @@ async function handleAutoRegisterPayload(payload, { fromRealtime = false } = {})
     );
     setUncfgStatus(`${progressText} Success ${successCount}, error ${errorCount}.`, 'loading');
 
-    scheduleAutoRegisterPoll(runId, fromRealtime ? 15000 : hasAutoRegisterRealtime() ? 15000 : 3000);
+    scheduleAutoRegisterPoll(runId, 3000);
 }
 
 async function pollAutoRegisterStatus(runId) {
@@ -1134,7 +1080,7 @@ async function pollAutoRegisterStatus(runId) {
 
     try {
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/auto-register-status?run_id=${encodeURIComponent(runId)}`);
-        await handleAutoRegisterPayload(data?.data || {}, { fromRealtime: false });
+        await handleAutoRegisterPayload(data?.data || {});
     } catch (e) {
         if ([403, 404, 422].includes(Number(e?.status || 0))) {
             stopAutoRegisterPolling();
@@ -1342,7 +1288,6 @@ async function submitAutoRegister() {
         }
 
         autoRegisterRunId.value = runId;
-        subscribeAutoRegisterRealtime(runId);
         const totalCount = Number(summary.total_count || 0);
         const totalBatches = Number(summary.total_batches || Math.ceil(totalCount / AUTO_REGISTER_BATCH_SIZE));
         updateAutoRegisterModal(
@@ -1370,7 +1315,6 @@ async function submitAutoRegister() {
                 false
             );
             setUncfgStatus(e.message || 'Auto register sedang berjalan. Menyambungkan polling status...', 'loading');
-            subscribeAutoRegisterRealtime(autoRegisterRunId.value);
             await pollAutoRegisterStatus(autoRegisterRunId.value);
             return;
         }
@@ -2672,7 +2616,6 @@ async function loadLogs() {
                 const summary = parseSummaryJson(activeRun.summary_json);
                 const progressText = String(summary.state_text || '').trim() || 'Auto register sedang berjalan.';
                 setUncfgStatus(progressText, 'loading');
-                subscribeAutoRegisterRealtime(autoRegisterRunId.value);
                 scheduleAutoRegisterPoll(autoRegisterRunId.value, 1500);
             }
         }

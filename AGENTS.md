@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-04-15
-Last verified: 2026-04-15
+Last updated: 2026-04-16
+Last verified: 2026-04-16
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -53,6 +53,7 @@ Last verified: 2026-04-15
 - Run `php artisan test` when touching business logic where feasible.
 
 ## Change log
+- 2026-04-16: Integrasi Laravel Reverb untuk auto register OLT dicabut agar kompatibel dengan shared hosting; dependency Reverb/Echo dihapus, file config/channel/event websocket dihapus, `resources/js/Pages/Olts/Index.vue` kembali ke polling penuh, dan bootstrap Laravel/JS tidak lagi memuat routing channel atau Echo. Docs: N/A.
 - 2026-04-15: Tab `Tugas Saya` kini menampilkan tugas status `Baru` yang sudah di-assign ke teknisi terkait; `resources/js/Pages/Teknisi/Index.vue` menyesuaikan filter daftar dan badge hitungan agar task assigned tidak hilang dari view teknisi. Docs: N/A.
 - 2026-04-15: Halaman OLT kini mendukung realtime progress auto register via Laravel Reverb dengan fallback polling; ditambah event `app/Events/OltAutoRegisterProgressUpdated.php`, broadcast update di `app/Jobs/AutoRegisterOnuBatchJob.php` dan `app/Http/Controllers/Api/OltController.php`, auth channel di `routes/channels.php`, config `config/broadcasting.php` + `config/reverb.php`, bootstrap Echo di `resources/js/bootstrap.js`/`resources/js/echo.js`, env contoh Reverb di `.env.example`, serta `resources/js/Pages/Olts/Index.vue` kini subscribe channel per `tenant/olt/run_id`. Docs: N/A.
 - 2026-04-15: Layout tombol aksi OLT di desktop dirapikan per role; `resources/js/Pages/Olts/Index.vue` kini memakai grid desktop terpisah untuk teknisi vs admin agar jumlah kolom sesuai tombol yang tampil dan ukuran tombol konsisten. Docs: N/A.
