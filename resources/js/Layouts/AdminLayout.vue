@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { Link, usePage, router } from '@inertiajs/vue3'
 import ToastContainer from '@/Components/ToastContainer.vue'
+import { useGlobalGpsTracking } from '@/Composables/useGlobalGpsTracking'
 
 const sidebarOpen = ref(false)
 const sidebarCollapsed = ref(false)
@@ -63,6 +64,10 @@ onMounted(() => {
   
   // Keyboard shortcuts
   window.addEventListener('keydown', handleKeyboardShortcuts)
+
+  if (canTrackLocation.value) {
+    startLocationTracking()
+  }
 })
 
 onUnmounted(() => {
@@ -75,6 +80,8 @@ onUnmounted(() => {
       themeMediaQuery.removeListener(handleSystemThemeChange)
     }
   }
+
+  stopLocationTracking()
 })
 
 const setThemeMode = (mode) => {
@@ -130,8 +137,31 @@ const formattedTime = computed(() => {
 const page = usePage()
 const currentPath = computed(() => page.url)
 const user = computed(() => page.props.auth?.user || { name: 'Guest', email: '' })
+const currentUserRole = computed(() => String(user.value?.role || '').trim().toLowerCase())
 const layoutOptions = computed(() => page.props.layoutOptions || {})
 const tenantFeatures = computed(() => page.props.tenantFeatures || {})
+const {
+  canTrackLocation,
+  gpsRequiredForFeature,
+  gpsFeatureLocked,
+  canRetryLocationTracking,
+  gpsLockMessage,
+  locationTracking,
+  locationStatusClass,
+  locationStatusDotClass,
+  startLocationTracking,
+  stopLocationTracking,
+  retryLocationTracking,
+} = useGlobalGpsTracking(currentUserRole)
+
+watch(canTrackLocation, (enabled) => {
+  if (enabled) {
+    startLocationTracking()
+    return
+  }
+
+  stopLocationTracking()
+})
 
 const userPermissions = computed(() => user.value?.permissions || [])
 
@@ -563,7 +593,35 @@ const breadcrumbs = computed(() => {
 
       <!-- Page content -->
       <main :class="layoutOptions.fullBleed ? 'p-0' : 'p-4 sm:p-6 lg:p-8'" id="main-content" role="main">
-        <slot />
+        <div v-if="canTrackLocation" :class="['mb-4 flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-[11px] font-semibold', locationStatusClass]">
+          <div class="flex min-w-0 items-center gap-2">
+            <span :class="['inline-block h-2.5 w-2.5 rounded-full shrink-0', locationStatusDotClass]"></span>
+            <span class="truncate">{{ locationTracking.statusText }}</span>
+          </div>
+          <button
+            v-if="canRetryLocationTracking"
+            @click="retryLocationTracking"
+            class="h-7 shrink-0 rounded-lg border border-current/30 px-2 text-[10px] font-bold transition hover:bg-white/40 dark:hover:bg-white/10"
+          >
+            Coba Lagi
+          </button>
+        </div>
+
+        <div v-if="gpsFeatureLocked && gpsRequiredForFeature" class="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700 shadow-sm dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+          <div class="text-sm font-extrabold uppercase tracking-wide">GPS wajib aktif</div>
+          <div class="mt-2 text-sm leading-relaxed">
+            Role teknisi harus menyalakan GPS dan mengizinkan akses lokasi sebelum halaman apa pun bisa digunakan.
+          </div>
+          <div class="mt-3 rounded-xl border border-red-200/80 bg-white/70 px-3 py-2 text-xs font-semibold dark:border-red-500/20 dark:bg-slate-900/40">
+            {{ gpsLockMessage }}
+          </div>
+          <div class="mt-4 flex flex-wrap gap-2">
+            <button @click="retryLocationTracking" class="h-11 rounded-xl bg-red-600 px-4 text-sm font-bold text-white shadow transition hover:bg-red-700">
+              Coba Aktifkan GPS Lagi
+            </button>
+          </div>
+        </div>
+        <slot v-else />
       </main>
     </div>
 
