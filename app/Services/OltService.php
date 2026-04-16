@@ -440,79 +440,6 @@ class OltService
         return $detail;
     }
 
-    /**
-     * Preview attenuation for an ONU candidate on an unregistered slot.
-     *
-     * @return array{
-     *   fsp:string,
-     *   onu_id:int,
-     *   upstream:array{olt_rx:?float,onu_tx:?float,attenuation:?float},
-     *   downstream:array{olt_tx:?float,onu_rx:?float,attenuation:?float}
-     * }
-     */
-    public function previewUnconfiguredAttenuation(string $fsp, ?int $onuId = null, ?string $sn = null): array
-    {
-        $sn = preg_replace('/[^A-Za-z0-9]/', '', (string) $sn);
-        if ($sn === '') {
-            throw new RuntimeException('SN ONU tidak valid untuk cek redaman.');
-        }
-
-        if ($onuId === null || $onuId < 1) {
-            $onuId = $this->findAvailableOnuId($fsp);
-        }
-        $onuType = $this->sanitizeCliToken((string) ($this->olt->onu_type_default ?? self::DEFAULT_ONU_TYPE));
-        if ($onuType === '') $onuType = self::DEFAULT_ONU_TYPE;
-
-        $tempOnuId = $onuId;
-        $onuRx = null;
-        $data = $this->buildEmptyAttenuation($fsp, $onuId);
-
-        $this->enterConfigMode();
-        try {
-            $this->sendCommandStrict("interface gpon-olt_{$fsp}");
-            $createOut = $this->sendCommandStrict("onu {$onuId} type {$onuType} sn {$sn}", 25, true);
-            if ($this->outputHasExistingEntry($createOut)) {
-                $tempOnuId = $this->findAvailableOnuId($fsp);
-                $this->sendCommandStrict("onu {$tempOnuId} type {$onuType} sn {$sn}", 25, true);
-            }
-            $this->sendCommandStrict('exit');
-        } finally {
-            $this->sendCommand('end');
-        }
-
-        $onuId = $tempOnuId;
-        $data = $this->buildEmptyAttenuation($fsp, $onuId);
-
-        sleep(10);
-        $tries = 3;
-        while ($tries-- > 0) {
-            $onuRx = $this->readOnuRxFromPonPower($fsp, $onuId);
-            if ($onuRx !== null) {
-                break;
-            }
-            if ($tries > 0) {
-                sleep(3);
-            }
-        }
-
-        $data['downstream']['onu_rx'] = $onuRx;
-
-        $this->enterConfigMode();
-        try {
-            $this->sendCommandStrict("interface gpon-olt_{$fsp}");
-            $this->sendCommandStrict("no onu {$onuId}", 25, true);
-            $this->sendCommandStrict('exit');
-        } finally {
-            $this->sendCommand('end');
-        }
-
-        if ($onuRx === null) {
-            throw new RuntimeException('ONU Rx tidak tersedia setelah registrasi sementara.');
-        }
-
-        return $data;
-    }
-
     public function waitForRegisteredOnuRx(
         string $fsp,
         int $onuId,
@@ -537,32 +464,6 @@ class OltService
         }
 
         return null;
-    }
-
-    /**
-     * @return array{
-     *  fsp:string,
-     *  onu_id:int,
-     *  upstream:array{olt_rx:?float,onu_tx:?float,attenuation:?float},
-     *  downstream:array{olt_tx:?float,onu_rx:?float,attenuation:?float}
-     * }
-     */
-    private function buildEmptyAttenuation(string $fsp, int $onuId): array
-    {
-        return [
-            'fsp' => $fsp,
-            'onu_id' => $onuId,
-            'upstream' => [
-                'olt_rx' => null,
-                'onu_tx' => null,
-                'attenuation' => null,
-            ],
-            'downstream' => [
-                'olt_tx' => null,
-                'onu_rx' => null,
-                'attenuation' => null,
-            ],
-        ];
     }
 
     private function readOnuRxFromPonPower(string $fsp, int $onuId): ?float
@@ -1740,51 +1641,6 @@ class OltService
         }
         
         return $detail;
-    }
-
-    private function parseAttenuationOutput(string $out, string $fsp, int $onuId): array
-    {
-        $data = [
-            'fsp' => $fsp,
-            'onu_id' => $onuId,
-            'upstream' => [
-                'olt_rx' => null,
-                'onu_tx' => null,
-                'attenuation' => null,
-            ],
-            'downstream' => [
-                'olt_tx' => null,
-                'onu_rx' => null,
-                'attenuation' => null,
-            ],
-        ];
-
-        $lines = preg_split('/\r?\n/', $out);
-        foreach ($lines as $line) {
-            $raw = trim((string) $line);
-            if ($raw === '') {
-                continue;
-            }
-
-            if (preg_match('/^up\s+Rx\s*:\s*(-?\d+(?:\.\d+)?)\(dbm\)\s+Tx\s*:\s*(-?\d+(?:\.\d+)?)\(dbm\)\s+(-?\d+(?:\.\d+)?)\(dB\)/i', $raw, $m)) {
-                $data['upstream'] = [
-                    'olt_rx' => (float) $m[1],
-                    'onu_tx' => (float) $m[2],
-                    'attenuation' => (float) $m[3],
-                ];
-                continue;
-            }
-
-            if (preg_match('/^down\s+Tx\s*:\s*(-?\d+(?:\.\d+)?)\(dbm\)\s+Rx\s*:\s*(-?\d+(?:\.\d+)?)\(dbm\)\s+(-?\d+(?:\.\d+)?)\(dB\)/i', $raw, $m)) {
-                $data['downstream'] = [
-                    'olt_tx' => (float) $m[1],
-                    'onu_rx' => (float) $m[2],
-                    'attenuation' => (float) $m[3],
-                ];
-            }
-        }
-
-        return $data;
     }
 
     /**

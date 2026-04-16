@@ -1424,14 +1424,6 @@ async function registerSelectedOnu() {
 
     try {
         const payload = { fsp: item.fsp, sn: item.sn, name };
-        let requestedOnuId = Number(item?.onu_id || 0);
-        if (!requestedOnuId && item?.interface) {
-            const match = String(item.interface).match(/:(\d+)/);
-            if (match) requestedOnuId = Number(match[1] || 0);
-        }
-        if (requestedOnuId > 0) {
-            payload.onu_id = requestedOnuId;
-        }
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/register-onu`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

@@ -1881,52 +1881,6 @@ class OltController extends Controller
     }
 
     /**
-     * Preview attenuation for an unregistered ONU candidate.
-     */
-    public function previewUnconfiguredAttenuation(Request $request, int $id): JsonResponse
-    {
-        $request->validate([
-            'fsp' => 'required|string|regex:/^\d+\/\d+\/\d+$/',
-            'sn' => 'required|string|regex:/^[A-Za-z]{4}[A-Fa-f0-9]{8}$/',
-            'onu_id' => 'nullable|integer|min:1|max:128',
-        ]);
-
-        $tenantId = $request->user()->tenant_id ?? 1;
-        $olt = Olt::forTenant($tenantId)->findOrFail($id);
-
-        $service = null;
-        try {
-            $service = new OltService($tenantId);
-            $service->setSuppressActionLog(true);
-            $service->connect($olt);
-            $data = $service->previewUnconfiguredAttenuation(
-                (string) $request->input('fsp'),
-                $request->filled('onu_id') ? (int) $request->input('onu_id') : null,
-                (string) $request->input('sn')
-            );
-            $service->disconnect();
-
-            return response()->json([
-                'status' => 'ok',
-                'data' => $data,
-            ]);
-        } catch (RuntimeException $e) {
-            try {
-                if ($service) {
-                    $service->disconnect();
-                }
-            } catch (Throwable) {
-                // ignore
-            }
-
-            return response()->json([
-                'status' => 'error',
-                'message' => $e->getMessage(),
-            ], 422);
-        }
-    }
-
-    /**
      * Register ONU
      */
     public function registerOnu(Request $request, int $id): JsonResponse
@@ -1945,7 +1899,6 @@ class OltController extends Controller
         $actor = $this->actorName($request);
         $isTeknisi = $this->isTeknisiActor($request);
         $thresholds = $this->getOltTeknisiOnuRxThresholds($olt);
-        $requestedOnuId = $request->filled('onu_id') ? (int) $request->input('onu_id') : null;
         
         $service = null;
         $logExcerpt = '';
@@ -1963,7 +1916,7 @@ class OltController extends Controller
                 $request->fsp,
                 $request->sn,
                 $request->name,
-                $requestedOnuId
+                null
             );
 
             if ($isTeknisi) {
