@@ -2905,6 +2905,18 @@ const selectedLogSummaryPretty = computed(() => {
     }
 });
 
+const selectedLogSummaryEntries = computed(() => {
+    const summary = parseSummaryJson(selectedLogEntry.value?.summary_json);
+    return Object.entries(summary || {})
+        .filter(([, value]) => value !== null && value !== undefined && value !== '')
+        .slice(0, 12)
+        .map(([key, value]) => ({
+            key,
+            label: formatLogSummaryLabel(key),
+            value: formatLogSummaryValue(value),
+        }));
+});
+
 const selectedLogTranscript = computed(() => {
     const selectedText = String(selectedLogEntry.value?.log_text || '').trim();
     if (selectedText) return selectedText;
@@ -2912,6 +2924,14 @@ const selectedLogTranscript = computed(() => {
     if (fallbackText) return fallbackText;
     return 'Belum ada transcript command.';
 });
+
+const hasActiveLogFilters = computed(() => !!(
+    logFilters.value.actor
+    || logFilters.value.action
+    || logFilters.value.status
+    || !logFilters.value.hideConnectFailed
+    || Number(logFilters.value.limit || 100) !== 100
+));
 
 const logFilterQueryKey = computed(() => JSON.stringify({
     actor: logFilters.value.actor || '',
@@ -2958,6 +2978,42 @@ function formatLogAction(action) {
         delete_profile: 'Hapus Profil',
     };
     return labels[key] || (key ? key.replace(/_/g, ' ') : '-');
+}
+
+function formatLogSummaryLabel(key) {
+    const text = String(key || '')
+        .trim()
+        .replace(/_/g, ' ')
+        .replace(/\s+/g, ' ');
+    if (!text) return '-';
+    return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function formatLogSummaryValue(value) {
+    if (value === null || value === undefined || value === '') return '-';
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+        return value
+            .map(item => {
+                if (item === null || item === undefined || item === '') return null;
+                if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') return String(item);
+                try {
+                    return JSON.stringify(item);
+                } catch {
+                    return '[data]';
+                }
+            })
+            .filter(Boolean)
+            .join(', ');
+    }
+    if (typeof value === 'object') {
+        try {
+            return JSON.stringify(value);
+        } catch {
+            return '[data]';
+        }
+    }
+    return String(value);
 }
 
 function extractLogHeadline(text) {
@@ -4117,42 +4173,52 @@ onBeforeUnmount(() => {
                     v-if="selectedOlt && !isTeknisi"
                     class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-white/10 overflow-hidden"
                 >
-                    <div class="p-4 border-b border-slate-100 dark:border-white/5 space-y-3">
-                        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                            <div class="flex items-center gap-2">
-                                <div class="text-xs font-black text-slate-700 dark:text-slate-200 uppercase">Log Command</div>
-                                <span v-if="logsLoading" class="inline-flex items-center gap-2 text-[11px] text-slate-400">
-                                    <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                    </svg>
-                                    Loading
-                                </span>
-                                <span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300">
-                                    {{ logMeta.filtered_total || 0 }} / {{ logMeta.total || 0 }} log
-                                </span>
+                    <div class="space-y-3 border-b border-slate-100 p-4 dark:border-white/5">
+                        <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div class="min-w-0 space-y-1">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <div class="text-xs font-black uppercase text-slate-700 dark:text-slate-200">Log Command</div>
+                                    <span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300">
+                                        {{ logMeta.filtered_total || 0 }} / {{ logMeta.total || 0 }} log
+                                    </span>
+                                    <span v-if="logsLoading" class="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200">
+                                        <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                            <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                        </svg>
+                                        Memuat
+                                    </span>
+                                </div>
+                                <div class="text-[11px] text-slate-500 dark:text-slate-400">
+                                    List log dibuat lebih ringkas. Pilih satu baris untuk melihat transcript command.
+                                </div>
                             </div>
-                            <div class="flex items-center gap-2 shrink-0">
+                            <div class="flex flex-wrap items-center gap-2 shrink-0">
                                 <button
                                     type="button"
-                                    class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
+                                    class="h-8 rounded-lg border border-slate-200 px-3 text-[11px] font-bold transition dark:border-white/10"
+                                    :class="selectedLogEntry
+                                        ? 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700/40'
+                                        : 'cursor-not-allowed text-slate-300 dark:text-slate-600'"
+                                    :disabled="!selectedLogEntry"
                                     @click="copyCurrentLog()"
                                 >
                                     Copy Detail
                                 </button>
                                 <button
+                                    v-if="hasActiveLogFilters"
                                     type="button"
-                                    class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
+                                    class="h-8 rounded-lg border border-slate-200 px-3 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-700/40"
                                     @click="resetLogFilters()"
                                 >
                                     Reset Filter
                                 </button>
                             </div>
                         </div>
-                        <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
+                        <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,1.1fr)_140px_auto]">
                             <select
                                 v-model="logFilters.actor"
-                                class="h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                                class="h-9 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                             >
                                 <option value="">Semua actor</option>
                                 <option v-for="actor in logMeta.actors" :key="`log-actor-${actor}`" :value="actor">
@@ -4161,7 +4227,7 @@ onBeforeUnmount(() => {
                             </select>
                             <select
                                 v-model="logFilters.action"
-                                class="h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                                class="h-9 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                             >
                                 <option value="">Semua aksi</option>
                                 <option v-for="action in logMeta.actions" :key="`log-action-${action}`" :value="action">
@@ -4170,7 +4236,7 @@ onBeforeUnmount(() => {
                             </select>
                             <select
                                 v-model="logFilters.status"
-                                class="h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                                class="h-9 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                             >
                                 <option value="">Semua status</option>
                                 <option v-for="status in logMeta.statuses" :key="`log-status-${status}`" :value="status">
@@ -4179,105 +4245,121 @@ onBeforeUnmount(() => {
                             </select>
                             <select
                                 v-model.number="logFilters.limit"
-                                class="h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                                class="h-9 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                             >
                                 <option :value="50">50 log</option>
                                 <option :value="100">100 log</option>
                                 <option :value="200">200 log</option>
                             </select>
-                            <label class="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50/80 dark:bg-slate-900/60 px-3 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
+                            <label class="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50/80 dark:bg-slate-900/60 px-3 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
                                 <input
                                     v-model="logFilters.hideConnectFailed"
                                     type="checkbox"
                                     class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
                                 >
-                                <span>Sembunyikan connect failed</span>
+                                <span class="whitespace-nowrap">Sembunyikan connect failed</span>
                             </label>
                         </div>
                     </div>
-                    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-                        <div class="border-b xl:border-b-0 xl:border-r border-slate-100 dark:border-white/5">
+                    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+                        <div class="border-b border-slate-100 dark:border-white/5 lg:border-b-0 lg:border-r">
                             <div v-if="!logs.length" class="p-5 text-sm text-slate-500 dark:text-slate-400">
                                 Tidak ada log yang cocok dengan filter saat ini.
                             </div>
-                            <div v-else class="max-h-[34rem] overflow-y-auto divide-y divide-slate-100 dark:divide-white/5">
+                            <div v-else class="max-h-[22rem] overflow-y-auto divide-y divide-slate-100 dark:divide-white/5 lg:max-h-[34rem]">
                                 <button
                                     v-for="entry in logs"
                                     :key="`log-row-${entry.id}`"
                                     type="button"
-                                    class="w-full p-4 text-left transition"
+                                    class="w-full p-3 text-left transition sm:p-4"
                                     :class="selectedLogEntry && String(selectedLogEntry.id) === String(entry.id)
                                         ? 'bg-slate-50 dark:bg-slate-900/70'
                                         : 'hover:bg-slate-50/80 dark:hover:bg-slate-900/40'"
                                     @click="selectedLogId = entry.id"
                                 >
-                                    <div class="flex items-start justify-between gap-3">
-                                        <div class="min-w-0 space-y-2">
-                                            <div class="flex flex-wrap items-center gap-2">
-                                                <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide" :class="logStatusTone(entry.status)">
-                                                    {{ formatLogStatus(entry.status) }}
-                                                </span>
-                                                <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">
-                                                    {{ formatLogAction(entry.action) }}
-                                                </span>
-                                            </div>
-                                            <div class="text-xs font-semibold text-slate-600 dark:text-slate-300 break-words">
-                                                {{ summarizeLogEntry(entry) || 'Tanpa ringkasan tambahan.' }}
-                                            </div>
-                                            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 dark:text-slate-500">
-                                                <span>{{ formatLogCreatedAt(entry.created_at) }}</span>
-                                                <span>{{ entry.actor || '-' }}</span>
-                                                <span v-if="entry.olt_name">{{ entry.olt_name }}</span>
-                                            </div>
+                                    <div class="min-w-0 space-y-2">
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                                                {{ formatLogAction(entry.action) }}
+                                            </span>
+                                            <span class="text-[11px] text-slate-400 dark:text-slate-500">
+                                                {{ formatLogCreatedAt(entry.created_at) }}
+                                            </span>
+                                        </div>
+                                        <div class="break-words text-xs font-semibold leading-relaxed text-slate-600 dark:text-slate-300">
+                                            {{ summarizeLogEntry(entry) || 'Tanpa ringkasan tambahan.' }}
+                                        </div>
+                                        <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 dark:text-slate-500">
+                                            <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide" :class="logStatusTone(entry.status)">
+                                                {{ formatLogStatus(entry.status) }}
+                                            </span>
+                                            <span>{{ entry.actor || '-' }}</span>
+                                            <span v-if="entry.olt_name">{{ entry.olt_name }}</span>
                                         </div>
                                     </div>
                                 </button>
                             </div>
                         </div>
-                        <div class="bg-slate-50/60 dark:bg-slate-900/40">
-                            <div class="p-4 sm:p-5 space-y-4">
+                        <div class="bg-slate-50/50 dark:bg-slate-900/30">
+                            <div class="p-4 sm:p-5">
                                 <template v-if="selectedLogEntry">
-                                    <div class="space-y-2">
-                                        <div class="flex flex-wrap items-center gap-2">
-                                            <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide" :class="logStatusTone(selectedLogEntry.status)">
-                                                {{ formatLogStatus(selectedLogEntry.status) }}
-                                            </span>
-                                            <div class="text-sm font-black text-slate-800 dark:text-white">
-                                                {{ formatLogAction(selectedLogEntry.action) }}
+                                    <div class="space-y-4">
+                                        <div class="space-y-2">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide" :class="logStatusTone(selectedLogEntry.status)">
+                                                    {{ formatLogStatus(selectedLogEntry.status) }}
+                                                </span>
+                                                <div class="text-sm font-black text-slate-800 dark:text-white">
+                                                    {{ formatLogAction(selectedLogEntry.action) }}
+                                                </div>
+                                            </div>
+                                            <div class="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                                                {{ summarizeLogEntry(selectedLogEntry) || 'Tanpa ringkasan tambahan.' }}
                                             </div>
                                         </div>
-                                        <div class="text-xs text-slate-500 dark:text-slate-400">
-                                            {{ summarizeLogEntry(selectedLogEntry) || 'Tanpa ringkasan tambahan.' }}
-                                        </div>
-                                    </div>
 
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px]">
-                                        <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 px-3 py-2">
-                                            <div class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">Waktu</div>
-                                            <div class="mt-1 font-semibold text-slate-700 dark:text-slate-200">{{ formatLogCreatedAt(selectedLogEntry.created_at) }}</div>
+                                        <div class="flex flex-wrap items-center gap-2 text-[11px]">
+                                            <span class="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-600 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300">
+                                                {{ formatLogCreatedAt(selectedLogEntry.created_at) }}
+                                            </span>
+                                            <span class="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-600 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300">
+                                                {{ selectedLogEntry.actor || '-' }}
+                                            </span>
+                                            <span v-if="selectedLogEntry.olt_name" class="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-600 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300">
+                                                {{ selectedLogEntry.olt_name }}
+                                            </span>
+                                            <span class="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-500 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-400">
+                                                #{{ selectedLogEntry.id }}
+                                            </span>
                                         </div>
-                                        <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 px-3 py-2">
-                                            <div class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">Actor</div>
-                                            <div class="mt-1 font-semibold text-slate-700 dark:text-slate-200">{{ selectedLogEntry.actor || '-' }}</div>
-                                        </div>
-                                        <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 px-3 py-2">
-                                            <div class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">OLT</div>
-                                            <div class="mt-1 font-semibold text-slate-700 dark:text-slate-200">{{ selectedLogEntry.olt_name || '-' }}</div>
-                                        </div>
-                                        <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 px-3 py-2">
-                                            <div class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">Log ID</div>
-                                            <div class="mt-1 font-semibold text-slate-700 dark:text-slate-200">#{{ selectedLogEntry.id }}</div>
-                                        </div>
-                                    </div>
 
-                                    <div v-if="selectedLogSummaryPretty" class="space-y-2">
-                                        <div class="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Summary JSON</div>
-                                        <pre class="rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-950/70 p-4 text-[11px] text-slate-700 dark:text-slate-200 overflow-x-auto whitespace-pre-wrap">{{ selectedLogSummaryPretty }}</pre>
-                                    </div>
+                                        <div v-if="selectedLogSummaryEntries.length" class="space-y-2">
+                                            <div class="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Ringkasan</div>
+                                            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                                <div
+                                                    v-for="item in selectedLogSummaryEntries"
+                                                    :key="`log-summary-${item.key}`"
+                                                    class="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-white/10 dark:bg-slate-900/80"
+                                                >
+                                                    <div class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                                                        {{ item.label }}
+                                                    </div>
+                                                    <div class="mt-1 break-words text-[12px] font-semibold text-slate-700 dark:text-slate-200">
+                                                        {{ item.value }}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
 
-                                    <div class="space-y-2">
-                                        <div class="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Transcript Command</div>
-                                        <pre class="rounded-2xl bg-slate-950 p-4 text-[11px] text-slate-100 overflow-x-auto max-h-[28rem] whitespace-pre-wrap">{{ selectedLogTranscript }}</pre>
+                                        <div v-else-if="selectedLogSummaryPretty" class="space-y-2">
+                                            <div class="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Summary JSON</div>
+                                            <pre class="overflow-x-auto whitespace-pre-wrap rounded-2xl border border-slate-200 bg-white p-4 text-[11px] text-slate-700 dark:border-white/10 dark:bg-slate-950/40 dark:text-slate-200">{{ selectedLogSummaryPretty }}</pre>
+                                        </div>
+
+                                        <div class="space-y-2">
+                                            <div class="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Transcript Command</div>
+                                            <pre class="max-h-[26rem] overflow-x-auto whitespace-pre-wrap rounded-2xl bg-slate-950 p-4 text-[11px] text-slate-100 sm:max-h-[30rem]">{{ selectedLogTranscript }}</pre>
+                                        </div>
                                     </div>
                                 </template>
                                 <template v-else>
