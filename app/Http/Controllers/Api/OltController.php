@@ -171,6 +171,70 @@ class OltController extends Controller
         ];
     }
 
+    private function normalizeOnuRxValue(mixed $raw): ?float
+    {
+        if (is_int($raw) || is_float($raw)) {
+            return is_finite((float) $raw) ? round((float) $raw, 2) : null;
+        }
+
+        if (!is_string($raw)) {
+            return null;
+        }
+
+        if (!preg_match('/-?\d+(?:\.\d+)?/', trim($raw), $match)) {
+            return null;
+        }
+
+        return round((float) $match[0], 2);
+    }
+
+    /**
+     * @param array{fsp?:mixed,onu_id?:mixed,interface?:mixed,sn?:mixed} $found
+     * @param array<string,mixed> $detail
+     * @return array<string,mixed>
+     */
+    private function buildFoundOnuSearchRow(int $tenantId, int $oltId, array $found, array $detail = []): array
+    {
+        $fsp = trim((string) ($found['fsp'] ?? ''));
+        $onuId = (int) ($found['onu_id'] ?? 0);
+        $sn = trim((string) ($detail['sn'] ?? $found['sn'] ?? ''));
+
+        $item = [
+            'fsp' => $fsp,
+            'onu_id' => $onuId,
+            'interface' => ($fsp !== '' && $onuId > 0) ? "gpon-onu_{$fsp}:{$onuId}" : trim((string) ($found['interface'] ?? '')),
+            'fsp_onu' => ($fsp !== '' && $onuId > 0) ? "{$fsp}:{$onuId}" : '',
+            'sn' => $sn,
+            'state' => '',
+            'status' => trim((string) ($detail['status'] ?? '')),
+            'rx' => $this->normalizeOnuRxValue($detail['rx'] ?? ($detail['rx_power'] ?? null)),
+            'name' => trim((string) ($detail['name'] ?? '')),
+            'online_duration' => trim((string) ($detail['online_duration'] ?? '')),
+            'vlan' => 0,
+        ];
+
+        $merged = $this->mergeOnuDbCacheFields($tenantId, $oltId, [$item]);
+        $row = is_array($merged[0] ?? null) ? $merged[0] : $item;
+
+        if (((string) ($row['sn'] ?? '')) === '' && $sn !== '') {
+            $row['sn'] = $sn;
+        }
+        if (((string) ($row['status'] ?? '')) === '' && $item['status'] !== '') {
+            $row['status'] = $item['status'];
+        }
+        if (($row['rx'] ?? null) === null && $item['rx'] !== null) {
+            $row['rx'] = $item['rx'];
+        }
+        if (((string) ($row['name'] ?? '')) === '' && $item['name'] !== '') {
+            $row['name'] = $item['name'];
+        }
+        if (((string) ($row['online_duration'] ?? '')) === '' && $item['online_duration'] !== '') {
+            $row['online_duration'] = $item['online_duration'];
+        }
+
+        return $row;
+    }
+
     private function actorName(Request $request): ?string
     {
         try {
@@ -733,89 +797,36 @@ class OltController extends Controller
         
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
-        $fsp = $request->fsp;
+        $fsp = (string) $request->fsp;
+        $items = $this->loadRegisteredCacheRowsForFsp($tenantId, $id, $fsp);
         
         try {
             $service = new OltService($tenantId);
             $service->connect($olt);
-            $items = $service->loadRegisteredFsp($fsp);
-            $service->saveManualRegisteredSnapshot($fsp, $items, true);
-            $service->disconnect();
-
-            // Merge cache data (native parity): fill name/online_duration/vlan from DB cache.
-            if (Schema::hasTable('noci_olt_onu')) {
-                $snCol = $this->onuCacheSnColumn();
-                $snList = [];
-                foreach ($items as $it) {
-                    $sn = (string) ($it['sn'] ?? '');
-                    if ($sn !== '') {
-                        $snList[$sn] = true;
-                    }
-                }
-
-                $sns = array_keys($snList);
-                if (!empty($sns)) {
-                    $rows = OltOnu::forTenant($tenantId)
-                        ->where('olt_id', $id)
-                        ->whereIn($snCol, $sns)
-                        ->get();
-
-                    $map = [];
-                    foreach ($rows as $row) {
-                        $sn = (string) ($row->sn ?? $row->getAttribute('serial_number') ?? '');
-                        if ($sn === '') continue;
-                        $map[$sn] = [
-                            'onu_name' => (string) ($row->onu_name ?? ''),
-                            'online_duration' => (string) ($row->online_duration ?? ''),
-                            'vlan' => (int) ($row->vlan ?? 0),
-                        ];
-                    }
-
-                    if (!empty($map)) {
-                        foreach ($items as &$it) {
-                            $sn = (string) ($it['sn'] ?? '');
-                            if ($sn === '' || !isset($map[$sn])) continue;
-                            $cached = $map[$sn];
-                            if (((string) ($it['name'] ?? '')) === '' && $cached['onu_name'] !== '') {
-                                $it['name'] = $cached['onu_name'];
-                            }
-                            if (((string) ($it['online_duration'] ?? '')) === '' && $cached['online_duration'] !== '') {
-                                $it['online_duration'] = $cached['online_duration'];
-                            }
-                            if (empty($it['vlan']) && !empty($cached['vlan'])) {
-                                $it['vlan'] = (int) $cached['vlan'];
-                            }
-                        }
-                        unset($it);
-                    }
-                }
+            if (!empty($items)) {
+                $items = $this->mergeRegisteredRxMapIntoItems($items, $service->getFspRxMapFromPonPower($fsp));
+                $service->saveManualRegisteredSnapshot($fsp, $items, true);
+            } else {
+                $items = $service->loadRegisteredFsp($fsp);
+                $items = $this->mergeOnuDbCacheFields($tenantId, $id, $items);
+                $service->saveManualRegisteredSnapshot($fsp, $items, true);
             }
+            $service->disconnect();
             
             return response()->json([
                 'status' => 'ok',
                 'data' => $items,
+                'cached' => !empty($items),
             ]);
         } catch (RuntimeException $e) {
             // Telnet may be blocked on hosting; fall back to DB cache (offline-only).
-            if (Schema::hasTable('noci_olt_onu')) {
-                $items = OltOnu::forTenant($tenantId)
-                    ->where('olt_id', $id)
-                    ->where('fsp', $fsp)
-                    ->whereNotNull('onu_id')
-                    ->orderBy('onu_id')
-                    ->get()
-                    ->map(fn (OltOnu $onu) => $this->formatOnuCacheRow($onu))
-                    ->values()
-                    ->all();
-
-                if (!empty($items)) {
-                    return response()->json([
-                        'status' => 'ok',
-                        'data' => $items,
-                        'cached' => true,
-                        'message' => 'Telnet gagal, menggunakan cache ONU.',
-                    ]);
-                }
+            if (!empty($items)) {
+                return response()->json([
+                    'status' => 'ok',
+                    'data' => $items,
+                    'cached' => true,
+                    'message' => 'Telnet gagal, menggunakan cache ONU.',
+                ]);
             }
 
             return response()->json([
@@ -888,6 +899,92 @@ class OltController extends Controller
     }
 
     /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function loadRegisteredCacheRowsForFsp(int $tenantId, int $oltId, string $fsp): array
+    {
+        if (!Schema::hasTable('noci_olt_onu')) {
+            return [];
+        }
+
+        return OltOnu::forTenant($tenantId)
+            ->where('olt_id', $oltId)
+            ->where('fsp', $fsp)
+            ->whereNotNull('onu_id')
+            ->orderBy('onu_id')
+            ->get()
+            ->map(fn (OltOnu $onu) => $this->formatOnuCacheRow($onu))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<int, string> $fspList
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    private function loadRegisteredCacheRowsByFsp(int $tenantId, int $oltId, array $fspList): array
+    {
+        $targets = array_values(array_filter(array_map(
+            static fn ($fsp) => trim((string) $fsp),
+            $fspList
+        )));
+
+        if (empty($targets) || !Schema::hasTable('noci_olt_onu')) {
+            return [];
+        }
+
+        $rows = OltOnu::forTenant($tenantId)
+            ->where('olt_id', $oltId)
+            ->whereIn('fsp', $targets)
+            ->whereNotNull('onu_id')
+            ->orderBy('fsp')
+            ->orderBy('onu_id')
+            ->get();
+
+        $grouped = [];
+        foreach ($rows as $onu) {
+            $fsp = trim((string) ($onu->fsp ?? ''));
+            if ($fsp === '') {
+                continue;
+            }
+            if (!isset($grouped[$fsp])) {
+                $grouped[$fsp] = [];
+            }
+            $grouped[$fsp][] = $this->formatOnuCacheRow($onu);
+        }
+
+        return $grouped;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $items
+     * @param array<string, float> $rxMap
+     * @return array<int, array<string, mixed>>
+     */
+    private function mergeRegisteredRxMapIntoItems(array $items, array $rxMap): array
+    {
+        if (empty($items) || empty($rxMap)) {
+            return $items;
+        }
+
+        foreach ($items as &$item) {
+            $fsp = trim((string) ($item['fsp'] ?? ''));
+            $onuId = (int) ($item['onu_id'] ?? 0);
+            if ($fsp === '' || $onuId <= 0) {
+                continue;
+            }
+
+            $key = "{$fsp}:{$onuId}";
+            if (array_key_exists($key, $rxMap)) {
+                $item['rx'] = $rxMap[$key];
+            }
+        }
+        unset($item);
+
+        return $items;
+    }
+
+    /**
      * Load registered ONUs (baseinfo) for multiple FSPs in one telnet session (native parity).
      */
     public function loadRegisteredAllBaseinfo(Request $request, int $id): JsonResponse
@@ -903,6 +1000,7 @@ class OltController extends Controller
         $fspList = array_values(array_unique(array_map('strval', $request->input('fsp_list', []))));
         $items = [];
         $failed = [];
+        $cacheByFsp = $this->loadRegisteredCacheRowsByFsp($tenantId, $id, $fspList);
 
         $service = null;
         try {
@@ -912,7 +1010,14 @@ class OltController extends Controller
 
             foreach ($fspList as $fsp) {
                 try {
-                    $list = $service->loadRegisteredFsp($fsp);
+                    $list = $cacheByFsp[$fsp] ?? [];
+                    if (!empty($list)) {
+                        $list = $this->mergeRegisteredRxMapIntoItems($list, $service->getFspRxMapFromPonPower($fsp));
+                    } else {
+                        $list = $service->loadRegisteredFsp($fsp);
+                        $list = $this->mergeOnuDbCacheFields($tenantId, $id, $list);
+                    }
+
                     if (!empty($list)) {
                         $service->saveManualRegisteredSnapshot($fsp, $list, true, $sampledAt);
                         foreach ($list as $row) {
@@ -932,29 +1037,23 @@ class OltController extends Controller
             }
 
             // Hosting-safe fallback: return DB cache when telnet fails.
-            if (Schema::hasTable('noci_olt_onu')) {
-                $cached = OltOnu::forTenant($tenantId)
-                    ->where('olt_id', $id)
-                    ->whereIn('fsp', $fspList)
-                    ->whereNotNull('onu_id')
-                    ->orderBy('fsp')
-                    ->orderBy('onu_id')
-                    ->get()
-                    ->map(fn (OltOnu $onu) => $this->formatOnuCacheRow($onu))
-                    ->values()
-                    ->all();
-
-                if (!empty($cached)) {
-                    return response()->json([
-                        'status' => 'ok',
-                        'data' => $cached,
-                        'count' => count($cached),
-                        'fsp_count' => count($fspList),
-                        'failed' => $failed,
-                        'cached' => true,
-                        'message' => 'Telnet gagal, menggunakan cache ONU.',
-                    ]);
+            $cached = [];
+            foreach ($fspList as $fsp) {
+                foreach (($cacheByFsp[$fsp] ?? []) as $row) {
+                    $cached[] = $row;
                 }
+            }
+
+            if (!empty($cached)) {
+                return response()->json([
+                    'status' => 'ok',
+                    'data' => $cached,
+                    'count' => count($cached),
+                    'fsp_count' => count($fspList),
+                    'failed' => $failed,
+                    'cached' => true,
+                    'message' => 'Telnet gagal, menggunakan cache ONU.',
+                ]);
             }
 
             return response()->json([
@@ -962,8 +1061,6 @@ class OltController extends Controller
                 'message' => $e->getMessage(),
             ], 422);
         }
-
-        $items = $this->mergeOnuDbCacheFields($tenantId, $id, $items);
 
         return response()->json([
             'status' => 'ok',
@@ -994,13 +1091,104 @@ class OltController extends Controller
             $service = new OltService($tenantId);
             $service->connect($olt);
             $found = $service->findOnuBySn($sn);
+            $detail = [];
+            if ($found) {
+                try {
+                    $detail = $service->getOnuQuickDetail((string) ($found['fsp'] ?? ''), (int) ($found['onu_id'] ?? 0));
+                } catch (Throwable $e) {
+                    $detail = [];
+                }
+            }
             $service->disconnect();
 
             return response()->json([
                 'status' => 'ok',
-                'data' => $found ?: [],
+                'data' => $found
+                    ? $this->buildFoundOnuSearchRow(
+                        $tenantId,
+                        $id,
+                        array_merge($found, ['sn' => $sn]),
+                        $detail
+                    )
+                    : [],
             ]);
         } catch (RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    public function refreshSearchOnuRx(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'items' => 'required|array|min:1|max:50',
+            'items.*.fsp' => 'required|string|regex:/^\d+\/\d+\/\d+$/',
+            'items.*.onu_id' => 'required|integer|min:1|max:128',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+
+        $rawItems = $request->input('items', []);
+        $items = [];
+        $seen = [];
+        foreach ($rawItems as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $fsp = trim((string) ($item['fsp'] ?? ''));
+            $onuId = (int) ($item['onu_id'] ?? 0);
+            if ($fsp === '' || $onuId <= 0) {
+                continue;
+            }
+            $key = "{$fsp}:{$onuId}";
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $items[] = ['fsp' => $fsp, 'onu_id' => $onuId];
+        }
+
+        if (empty($items)) {
+            return response()->json(['status' => 'ok', 'data' => []]);
+        }
+
+        $service = null;
+        try {
+            $service = new OltService($tenantId);
+            $service->connect($olt);
+
+            $results = [];
+            foreach ($items as $item) {
+                $fsp = $item['fsp'];
+                $onuId = $item['onu_id'];
+                $rx = $service->getOnuRxFromPonPower($fsp, $onuId);
+                $results[] = [
+                    'fsp' => $fsp,
+                    'onu_id' => $onuId,
+                    'interface' => "gpon-onu_{$fsp}:{$onuId}",
+                    'rx' => $rx,
+                    'status' => $rx !== null ? 'online' : 'offline',
+                ];
+            }
+
+            $service->disconnect();
+
+            return response()->json([
+                'status' => 'ok',
+                'data' => $results,
+            ]);
+        } catch (RuntimeException $e) {
+            try {
+                if ($service) {
+                    $service->disconnect();
+                }
+            } catch (Throwable $e2) {
+                // ignore
+            }
+
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),

@@ -1435,6 +1435,7 @@ const regLoadedFsp = ref({});
 const regLiveLoadingFsp = ref({});
 let regAllRequestToken = 0;
 let regSearchLiveRefreshToken = 0;
+const REG_SEARCH_LIVE_REFRESH_DELAY_MS = 2200;
 const regStatus = ref({ tone: 'info', message: '' });
 const regSearch = ref('');
 const regSearchMode = ref(false);
@@ -2169,6 +2170,10 @@ async function loadRegisteredAll({ force = false, silent = false } = {}) {
 
 function cancelRegisteredSearchLiveRefresh() {
     regSearchLiveRefreshToken += 1;
+    if (regSearchLiveTimer) {
+        clearTimeout(regSearchLiveTimer);
+        regSearchLiveTimer = null;
+    }
     regLiveLoadingFsp.value = {};
 }
 
@@ -2178,42 +2183,36 @@ async function refreshRegisteredSearchLive(query) {
         return;
     }
 
-    const fspTargets = sortFspList(Array.from(collectRegisteredFspSet(registered.value)));
-    if (!fspTargets.length) return;
+    const searchItems = Array.isArray(registered.value)
+        ? registered.value
+            .map((item) => ({
+                fsp: String(item?.fsp || '').trim(),
+                onu_id: Number(item?.onu_id || 0),
+            }))
+            .filter((item) => item.fsp && item.onu_id > 0)
+        : [];
+    if (!searchItems.length) return;
+
+    const fspTargets = sortFspList(Array.from(new Set(searchItems.map((item) => item.fsp))));
 
     const requestToken = ++regSearchLiveRefreshToken;
     fspTargets.forEach((fsp) => setRegLiveLoadingState(fsp, true));
-    setRegStatus(`Hasil cache ditemukan, memuat Rx/status dari OLT (${fspTargets.length} FSP)...`, 'loading');
+    setRegStatus(`Hasil cache ditemukan, memuat Rx/status per ONU (${searchItems.length} hasil)...`, 'loading');
 
     try {
-        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/registered-all`, {
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/search-rx-refresh`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fsp_list: fspTargets }),
+            body: JSON.stringify({ items: searchItems }),
         });
 
         if (requestToken !== regSearchLiveRefreshToken) return;
         if (String(regSearch.value || '').trim() !== q) return;
         if (!regSearchMode.value || String(regFilterFsp.value || '').trim() !== '') return;
-        if (data.status !== 'ok') throw new Error(data.message || 'Gagal memuat data FSP');
+        if (data.status !== 'ok') throw new Error(data.message || 'Gagal memuat Rx ONU');
 
         mergeRegisteredSearchResultsFromLive(Array.isArray(data.data) ? data.data : []);
-
-        const loaded = { ...(regLoadedFsp.value || {}) };
-        fspTargets.forEach((fsp) => {
-            loaded[fsp] = true;
-        });
-        regLoadedFsp.value = loaded;
-
-        const failed = Array.isArray(data.failed) ? data.failed : [];
-        if (failed.length > 0) {
-            setRegStatus(
-                `Hasil pencarian tampil. Rx/status diperbarui, ${failed.length} FSP gagal direfresh.`,
-                'info'
-            );
-        } else {
-            setRegStatus('Hasil pencarian tampil dengan Rx/status terbaru.', 'success');
-        }
+        setRegStatus('Hasil pencarian tampil dengan Rx/status terbaru.', 'success');
     } catch (e) {
         if (requestToken !== regSearchLiveRefreshToken) return;
         if (String(regSearch.value || '').trim() !== q) return;
@@ -2223,6 +2222,28 @@ async function refreshRegisteredSearchLive(query) {
         if (requestToken !== regSearchLiveRefreshToken) return;
         fspTargets.forEach((fsp) => setRegLiveLoadingState(fsp, false));
     }
+}
+
+function scheduleRegisteredSearchLiveRefresh(query) {
+    const q = String(query || '').trim();
+    if (!q || !regSearchMode.value || String(regFilterFsp.value || '').trim() !== '') {
+        return;
+    }
+    if (!Array.isArray(registered.value) || !registered.value.length) {
+        return;
+    }
+
+    if (regSearchLiveTimer) {
+        clearTimeout(regSearchLiveTimer);
+        regSearchLiveTimer = null;
+    }
+
+    regSearchLiveTimer = setTimeout(() => {
+        regSearchLiveTimer = null;
+        if (String(regSearch.value || '').trim() !== q) return;
+        if (!regSearchMode.value || String(regFilterFsp.value || '').trim() !== '') return;
+        refreshRegisteredSearchLive(q).catch(() => {});
+    }, REG_SEARCH_LIVE_REFRESH_DELAY_MS);
 }
 
 async function changeRegFsp() {
@@ -2260,6 +2281,7 @@ async function changeRegFsp() {
 const regSearchBackup = ref(null);
 let regDbSearchTimer = null;
 let regSnSearchTimer = null;
+let regSearchLiveTimer = null;
 let regLastDbQuery = '';
 let regLastSnQuery = '';
 let suppressRegSearchWatcher = false;
@@ -2327,7 +2349,7 @@ async function searchRegisteredCache(query) {
     registered.value = Array.isArray(data.data) ? data.data : [];
 
     if (registered.value.length) {
-        refreshRegisteredSearchLive(q).catch(() => {});
+        scheduleRegisteredSearchLiveRefresh(q);
         return;
     }
 
@@ -2340,8 +2362,6 @@ async function searchRegisteredBySn(sn) {
     if (!selectedOltId.value) return;
     const q = String(sn || '').trim();
     if (!q) return;
-
-    if (regSearchMode.value) exitRegSearchMode();
 
     setRegStatus(`Mencari SN ${q}...`, 'info');
     try {
@@ -2357,17 +2377,23 @@ async function searchRegisteredBySn(sn) {
             return;
         }
 
+        enterRegSearchMode();
+
+        const row = {
+            ...found,
+            interface: found.interface || (found.fsp && found.onu_id ? `gpon-onu_${found.fsp}:${found.onu_id}` : ''),
+            fsp_onu: found.fsp_onu || (found.fsp && found.onu_id ? `${found.fsp}:${found.onu_id}` : ''),
+        };
+        registered.value = [row];
+        regLoadedFsp.value = found.fsp ? { [String(found.fsp)]: true } : {};
+
         if (found.fsp && !fspList.value.includes(found.fsp)) {
             fspList.value = sortFspList(fspList.value.concat(found.fsp));
         }
 
-        regFilterFsp.value = String(found.fsp);
-        await changeRegFsp();
-        const key = String(
-            found.interface || (found.fsp && found.onu_id ? `gpon-onu_${found.fsp}:${found.onu_id}` : '')
-        ).trim();
+        const key = String(row.interface || '').trim();
         if (key) setRegHighlight(key);
-        setRegStatus(`SN ditemukan di FSP ${found.fsp}.`, 'success');
+        setRegStatus(`SN ditemukan cepat di FSP ${found.fsp}.`, 'success');
     } catch (e) {
         setRegStatus(e.message || 'SN tidak ditemukan.', 'error');
     }
@@ -2400,6 +2426,18 @@ watch(
 
         // When filter is blank (Pilih FSP), use DB cache search mode (native behavior).
         if (!String(regFilterFsp.value || '').trim()) {
+            if (isLikelySn(query)) {
+                enterRegSearchMode();
+                setRegStatus(`Mencari SN ${query} langsung ke OLT...`, 'info');
+                regSnSearchTimer = setTimeout(() => {
+                    if (String(regSearch.value || '').trim() !== query) return;
+                    if (regLastSnQuery === query) return;
+                    regLastSnQuery = query;
+                    searchRegisteredBySn(query);
+                }, 250);
+                return;
+            }
+
             if (query.length < 2) {
                 setRegStatus('Minimal 2 karakter untuk pencarian.', 'error');
                 return;
@@ -2417,7 +2455,7 @@ watch(
                     if (String(regSearch.value || '').trim() !== query) return;
                     setRegStatus(e.message || 'Gagal mencari data', 'error');
                 });
-            }, 450);
+            }, 600);
             return;
         }
 

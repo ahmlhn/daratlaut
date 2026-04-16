@@ -279,24 +279,17 @@ class OltService
         // Baseinfo (status + SN) - output format is firmware-sensitive; parser must handle native C320 shapes.
         $out = $this->sendCommand("show gpon onu baseinfo gpon-olt_{$fsp}");
         $items = $this->parseBaseinfoOutput($out, $fsp);
-
-        // RX power (native parity): try "show pon power onu-rx" first, then fallback to optical-info.
-        $rxMap = [];
-        try {
-            $rxOut = $this->sendCommand("show pon power onu-rx gpon-olt_{$fsp}");
-            $rxMap = $this->parseRxOutput($rxOut, $fsp);
-        } catch (Throwable $e) {
-            // ignore
-        }
-
-        if (empty($rxMap)) {
-            $rxOut = $this->sendCommand("show gpon onu optical-info gpon-olt_{$fsp}");
-            $rxMap = $this->parseRxOutput($rxOut, $fsp);
-        }
+        $rxMap = $this->readFspRxMapFromPonPower($fsp);
 
         foreach ($items as &$item) {
-            $key = (string)($item['fsp'] ?? '') . ':' . (string)($item['onu_id'] ?? '');
-            if (isset($rxMap[$key])) {
+            $onuFsp = trim((string) ($item['fsp'] ?? $fsp));
+            $onuId = (int) ($item['onu_id'] ?? 0);
+            if ($onuFsp === '' || $onuId <= 0) {
+                continue;
+            }
+
+            $key = "{$onuFsp}:{$onuId}";
+            if (array_key_exists($key, $rxMap)) {
                 $item['rx'] = $rxMap[$key];
             }
         }
@@ -384,29 +377,7 @@ class OltService
         $detail = $this->parseOnuDetail($out);
 
         // Refresh single ONU attenuation (Rx) directly from OLT.
-        $rx = null;
-        $rxKey = $fsp . ':' . $onuId;
-        try {
-            $rxOut = $this->sendCommand("show pon power onu-rx gpon-olt_{$fsp}");
-            $rxMap = $this->parseRxOutput($rxOut, $fsp);
-            if (isset($rxMap[$rxKey])) {
-                $rx = (float) $rxMap[$rxKey];
-            }
-        } catch (Throwable $e) {
-            // ignore and try fallback command below
-        }
-
-        if ($rx === null) {
-            try {
-                $rxOut = $this->sendCommand("show gpon onu optical-info gpon-olt_{$fsp}");
-                $rxMap = $this->parseRxOutput($rxOut, $fsp);
-                if (isset($rxMap[$rxKey])) {
-                    $rx = (float) $rxMap[$rxKey];
-                }
-            } catch (Throwable $e) {
-                // ignore and try fallback parse from detail-info text
-            }
-        }
+        $rx = $this->readOnuRxFromPonPower($fsp, $onuId);
 
         if ($rx === null) {
             $rxPower = (string) ($detail['rx_power'] ?? '');
@@ -421,6 +392,34 @@ class OltService
 
         // Native parity: save detail (name + online_duration) into DB cache when possible.
         $sn = trim((string)($detail['sn'] ?? $detail['serial'] ?? ''));
+        if ($sn !== '') {
+            $this->saveOnuDetailToDb($sn, $fsp, $onuId, $detail);
+        }
+        if ($rx !== null) {
+            $this->storeSingleRxHistorySample($fsp, $onuId, $sn, $rx);
+        }
+
+        return $detail;
+    }
+
+    /**
+     * Lightweight single-ONU lookup for exact SN search.
+     * Uses only detail-info output so we avoid loading the whole FSP Rx table.
+     */
+    public function getOnuQuickDetail(string $fsp, int $onuId): array
+    {
+        $out = $this->sendCommand("show gpon onu detail-info gpon-onu_{$fsp}:{$onuId}");
+        $detail = $this->parseOnuDetail($out);
+
+        $rx = $this->readOnuRxFromPonPower($fsp, $onuId);
+        if ($rx === null) {
+            $rx = $this->normalizeRxValue($detail['rx_power'] ?? null);
+        }
+        if ($rx !== null) {
+            $detail['rx'] = $rx;
+        }
+
+        $sn = trim((string) ($detail['sn'] ?? $detail['serial'] ?? ''));
         if ($sn !== '') {
             $this->saveOnuDetailToDb($sn, $fsp, $onuId, $detail);
         }
@@ -559,18 +558,7 @@ class OltService
     private function readOnuRxFromPonPower(string $fsp, int $onuId): ?float
     {
         try {
-            $rxOut = $this->sendCommand("show pon power onu-rx gpon-olt_{$fsp}");
-            $rxMap = $this->parseRxOutput($rxOut, $fsp);
-            $key = "{$fsp}:{$onuId}";
-            if (array_key_exists($key, $rxMap)) {
-                return $this->normalizeRxValue($rxMap[$key]);
-            }
-        } catch (Throwable) {
-            // ignore and fallback
-        }
-
-        try {
-            $rxOut = $this->sendCommand("show gpon onu optical-info gpon-olt_{$fsp}");
+            $rxOut = $this->sendCommand("show pon power onu-rx gpon-onu_{$fsp}:{$onuId}");
             $rxMap = $this->parseRxOutput($rxOut, $fsp);
             $key = "{$fsp}:{$onuId}";
             if (array_key_exists($key, $rxMap)) {
@@ -581,6 +569,40 @@ class OltService
         }
 
         return null;
+    }
+
+    /**
+     * @return array<string, float>
+     */
+    private function readFspRxMapFromPonPower(string $fsp): array
+    {
+        try {
+            $rxOut = $this->sendCommand("show pon power onu-rx gpon-olt_{$fsp}");
+            $rawMap = $this->parseRxOutput($rxOut, $fsp);
+            $rxMap = [];
+            foreach ($rawMap as $key => $value) {
+                $normalized = $this->normalizeRxValue($value);
+                if ($normalized !== null) {
+                    $rxMap[$key] = $normalized;
+                }
+            }
+            return $rxMap;
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * @return array<string, float>
+     */
+    public function getFspRxMapFromPonPower(string $fsp): array
+    {
+        return $this->readFspRxMapFromPonPower($fsp);
+    }
+
+    public function getOnuRxFromPonPower(string $fsp, int $onuId): ?float
+    {
+        return $this->readOnuRxFromPonPower($fsp, $onuId);
     }
 
     /**
