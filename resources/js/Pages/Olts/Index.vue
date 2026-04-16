@@ -2875,48 +2875,217 @@ async function deleteRegisteredOnu(onu) {
 // ========== Logs ==========
 const logs = ref([]);
 const logsLoading = ref(false);
-const logView = ref('latest'); // latest | history
 const lastLogExcerpt = ref('');
+const logMeta = ref({
+    total: 0,
+    filtered_total: 0,
+    actors: [],
+    actions: [],
+    statuses: [],
+});
+const logFilters = ref({
+    actor: '',
+    action: '',
+    status: '',
+    hideConnectFailed: true,
+    limit: 100,
+});
+const selectedLogId = ref(null);
 
-function formatLogsText(list) {
-    const items = Array.isArray(list) ? list : [];
-    if (!items.length) return 'Log akan tampil di sini.';
-    return items
-        .map((it) => {
-            const at = it?.created_at ? String(it.created_at).replace('T', ' ').slice(0, 19) : '';
-            const action = it?.action ? String(it.action) : '';
-            const status = it?.status ? String(it.status) : '';
-            const actor = it?.actor ? String(it.actor) : '';
-            const text = it?.log_text ? String(it.log_text) : '';
-            return `[${at}] ${action} ${status}${actor ? ` (${actor})` : ''}\n${text}`.trim();
-        })
-        .join('\n\n');
+const selectedLogEntry = computed(() => {
+    const items = Array.isArray(logs.value) ? logs.value : [];
+    const key = String(selectedLogId.value || '').trim();
+    if (key) {
+        const match = items.find((item) => String(item?.id || '') === key);
+        if (match) return match;
+    }
+    return items[0] || null;
+});
+
+const selectedLogSummaryPretty = computed(() => {
+    const summary = parseSummaryJson(selectedLogEntry.value?.summary_json);
+    const keys = Object.keys(summary || {});
+    if (!keys.length) return '';
+    try {
+        return JSON.stringify(summary, null, 2);
+    } catch {
+        return '';
+    }
+});
+
+const selectedLogTranscript = computed(() => {
+    const selectedText = String(selectedLogEntry.value?.log_text || '').trim();
+    if (selectedText) return selectedText;
+    const fallbackText = String(lastLogExcerpt.value || '').trim();
+    if (fallbackText) return fallbackText;
+    return 'Belum ada transcript command.';
+});
+
+const logFilterQueryKey = computed(() => JSON.stringify({
+    actor: logFilters.value.actor || '',
+    action: logFilters.value.action || '',
+    status: logFilters.value.status || '',
+    hideConnectFailed: !!logFilters.value.hideConnectFailed,
+    limit: Number(logFilters.value.limit || 100),
+}));
+
+function formatLogCreatedAt(value) {
+    const text = String(value || '').trim();
+    if (!text) return '-';
+    return text.replace('T', ' ').slice(0, 19);
 }
 
-const logPanelText = computed(() => {
-    if (logView.value === 'history') {
-        return formatLogsText(logs.value);
+function logStatusTone(status) {
+    const value = String(status || '').trim().toLowerCase();
+    if (['done', 'success'].includes(value)) {
+        return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300';
     }
-    if (lastLogExcerpt.value) {
-        return String(lastLogExcerpt.value);
+    if (['error', 'failed', 'fail'].includes(value)) {
+        return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300';
     }
-    if (Array.isArray(logs.value) && logs.value.length) {
-        const t = logs.value[0]?.log_text ? String(logs.value[0].log_text) : '';
-        return t || 'Log akan tampil di sini.';
+    return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300';
+}
+
+function formatLogStatus(status) {
+    const value = String(status || '').trim();
+    return value ? value.replace(/_/g, ' ') : '-';
+}
+
+function formatLogAction(action) {
+    const key = String(action || '').trim().toLowerCase();
+    const labels = {
+        register: 'Register ONU',
+        register_auto: 'Auto Register',
+        update_onu_detail: 'Edit Detail ONU',
+        delete_onu: 'Hapus ONU',
+        restart_onu: 'Restart ONU',
+        write: 'Write Config',
+        sync_daily: 'Sync Harian',
+        sync_registered_all: 'Sync Registered',
+        connect: 'Koneksi OLT',
+        delete_profile: 'Hapus Profil',
+    };
+    return labels[key] || (key ? key.replace(/_/g, ' ') : '-');
+}
+
+function extractLogHeadline(text) {
+    const lines = String(text || '')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+    const preferred = lines.find(line => !line.startsWith('>>>'));
+    return preferred || lines[0] || '';
+}
+
+function summarizeLogEntry(entry) {
+    const action = String(entry?.action || '').trim().toLowerCase();
+    const summary = parseSummaryJson(entry?.summary_json);
+
+    if (action === 'register') {
+        const parts = [];
+        const fsp = String(summary.fsp || '').trim();
+        const onuId = summary.onu_id !== undefined && summary.onu_id !== null ? String(summary.onu_id) : '';
+        const sn = String(summary.sn || '').trim();
+        const onuName = String(summary.onu_name || '').trim();
+        const onuRx = summary.onu_rx;
+        if (fsp && onuId) parts.push(`${fsp}:${onuId}`);
+        if (onuName) parts.push(onuName);
+        if (sn) parts.push(sn);
+        if (onuRx !== undefined && onuRx !== null && onuRx !== '') parts.push(`Rx ${formatRx(onuRx)}`);
+        if (parts.length) return parts.join(' • ');
     }
-    return 'Log akan tampil di sini.';
-});
+
+    if (action === 'register_auto') {
+        const success = Number(summary.success || 0);
+        const error = Number(summary.error || 0);
+        const total = Number(summary.total_count || summary.count || success + error || 0);
+        const batch = Number(summary.current_batch || 0);
+        const batches = Number(summary.total_batches || 0);
+        const parts = [];
+        if (total > 0) parts.push(`${total} ONU`);
+        parts.push(`success ${success}`);
+        if (error > 0) parts.push(`error ${error}`);
+        if (batch > 0 && batches > 0) parts.push(`batch ${batch}/${batches}`);
+        return parts.join(' • ');
+    }
+
+    if (action === 'write') {
+        const success = Number(summary.success || 0);
+        return success > 0 ? 'Konfigurasi berhasil disimpan ke flash.' : 'Write-config dijalankan.';
+    }
+
+    if (action === 'delete_onu' || action === 'restart_onu') {
+        const fsp = String(summary.fsp || '').trim();
+        const onuId = summary.onu_id !== undefined && summary.onu_id !== null ? String(summary.onu_id) : '';
+        if (fsp && onuId) return `${fsp}:${onuId}`;
+    }
+
+    if (action === 'update_onu_detail') {
+        const fsp = String(summary.fsp || '').trim();
+        const onuId = summary.onu_id !== undefined && summary.onu_id !== null ? String(summary.onu_id) : '';
+        const onuName = String(summary.onu_name || '').trim();
+        const parts = [];
+        if (fsp && onuId) parts.push(`${fsp}:${onuId}`);
+        if (onuName) parts.push(onuName);
+        if (parts.length) return parts.join(' • ');
+    }
+
+    if (action === 'sync_daily' || action === 'sync_registered_all') {
+        const count = Number(summary.count || 0);
+        const success = Number(summary.success || 0);
+        const error = Number(summary.error || 0);
+        const parts = [];
+        if (count > 0) parts.push(`${count} ONU`);
+        if (success > 0) parts.push(`success ${success}`);
+        if (error > 0) parts.push(`error ${error}`);
+        const stateText = String(summary.state_text || '').trim();
+        if (stateText) parts.push(stateText);
+        if (parts.length) return parts.join(' • ');
+    }
+
+    return extractLogHeadline(entry?.log_text);
+}
+
+function resetLogFilters() {
+    logFilters.value = {
+        actor: '',
+        action: '',
+        status: '',
+        hideConnectFailed: true,
+        limit: 100,
+    };
+}
 
 async function loadLogs() {
     if (!selectedOltId.value || isTeknisi.value) return;
     logsLoading.value = true;
     try {
-        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/logs`);
+        const params = new URLSearchParams();
+        if (logFilters.value.actor) params.set('actor', String(logFilters.value.actor));
+        if (logFilters.value.action) params.set('action', String(logFilters.value.action));
+        if (logFilters.value.status) params.set('status', String(logFilters.value.status));
+        if (logFilters.value.hideConnectFailed) params.set('hide_connect_failed', '1');
+        params.set('limit', String(Number(logFilters.value.limit || 100)));
+
+        const query = params.toString();
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/logs${query ? `?${query}` : ''}`);
         logs.value = data.status === 'ok' ? (Array.isArray(data.data) ? data.data : []) : [];
+        const meta = data?.meta && typeof data.meta === 'object' ? data.meta : {};
+        logMeta.value = {
+            total: Number(meta.total || 0),
+            filtered_total: Number(meta.filtered_total || 0),
+            actors: Array.isArray(meta.actors) ? meta.actors : [],
+            actions: Array.isArray(meta.actions) ? meta.actions : [],
+            statuses: Array.isArray(meta.statuses) ? meta.statuses : [],
+        };
+
         if (Array.isArray(logs.value) && logs.value.length) {
             const t = logs.value[0]?.log_text ? String(logs.value[0].log_text) : '';
             if (t) lastLogExcerpt.value = t;
         }
+        const selectedKey = String(selectedLogId.value || '').trim();
+        const selectedStillExists = selectedKey && logs.value.some(item => String(item?.id || '') === selectedKey);
+        selectedLogId.value = selectedStillExists ? selectedKey : (logs.value[0]?.id ?? null);
 
         if (!autoRegisterRunId.value) {
             const activeRun = (Array.isArray(logs.value) ? logs.value : []).find(item => {
@@ -2935,6 +3104,14 @@ async function loadLogs() {
         }
     } catch {
         logs.value = [];
+        logMeta.value = {
+            total: 0,
+            filtered_total: 0,
+            actors: [],
+            actions: [],
+            statuses: [],
+        };
+        selectedLogId.value = null;
     } finally {
         logsLoading.value = false;
     }
@@ -2942,12 +3119,42 @@ async function loadLogs() {
 
 function clearLogs() {
     logs.value = [];
-    lastLogExcerpt.value = '';
-    logView.value = 'latest';
+    logMeta.value = {
+        total: 0,
+        filtered_total: 0,
+        actors: [],
+        actions: [],
+        statuses: [],
+    };
+    selectedLogId.value = null;
 }
 
 async function copyCurrentLog() {
-    const text = String(logPanelText.value || '').trim();
+    const entry = selectedLogEntry.value;
+    const summaryText = selectedLogSummaryPretty.value;
+    const parts = [];
+    if (entry) {
+        parts.push(`Waktu: ${formatLogCreatedAt(entry.created_at)}`);
+        parts.push(`Actor: ${String(entry.actor || '-')}`);
+        parts.push(`Action: ${formatLogAction(entry.action)}`);
+        parts.push(`Status: ${formatLogStatus(entry.status)}`);
+        const summaryLine = summarizeLogEntry(entry);
+        if (summaryLine) parts.push(`Ringkasan: ${summaryLine}`);
+        if (summaryText) {
+            parts.push('');
+            parts.push('Summary JSON:');
+            parts.push(summaryText);
+        }
+        const transcript = String(entry.log_text || '').trim();
+        if (transcript) {
+            parts.push('');
+            parts.push('Transcript:');
+            parts.push(transcript);
+        }
+    } else if (lastLogExcerpt.value) {
+        parts.push(String(lastLogExcerpt.value).trim());
+    }
+    const text = parts.join('\n').trim();
     if (!text) return;
     try {
         await navigator.clipboard.writeText(text);
@@ -3053,8 +3260,15 @@ async function onOltChanged(newId, prevId) {
     setRegStatus(newId ? 'Pilih F/S/P dulu.' : '', 'info');
 
     logs.value = [];
+    logMeta.value = {
+        total: 0,
+        filtered_total: 0,
+        actors: [],
+        actions: [],
+        statuses: [],
+    };
+    selectedLogId.value = null;
     lastLogExcerpt.value = '';
-    logView.value = 'latest';
 
     if (!newId) return;
 
@@ -3076,6 +3290,11 @@ watch(selectedOltId, (val, oldVal) => {
     stopOltMetaPolling();
     onOltChanged(val, oldVal).catch(() => {});
     startOltMetaPolling();
+});
+
+watch(logFilterQueryKey, () => {
+    if (!selectedOltId.value || isTeknisi.value) return;
+    loadLogs().catch(() => {});
 });
 
 onMounted(async () => {
@@ -3906,53 +4125,177 @@ onBeforeUnmount(() => {
                     v-if="selectedOlt && !isTeknisi"
                     class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-white/10 overflow-hidden"
                 >
-                    <div class="p-4 border-b border-slate-100 dark:border-white/5 flex items-center justify-between gap-3">
-                        <div class="flex items-center gap-2">
-                            <div class="text-xs font-black text-slate-700 dark:text-slate-200 uppercase">Log Command</div>
-                            <span v-if="logsLoading" class="inline-flex items-center gap-2 text-[11px] text-slate-400">
-                                <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                </svg>
-                                Loading
-                            </span>
-                        </div>
-                        <div class="flex items-center gap-2 shrink-0">
-                            <div class="inline-flex rounded-lg border border-slate-200 dark:border-white/10 overflow-hidden">
+                    <div class="p-4 border-b border-slate-100 dark:border-white/5 space-y-3">
+                        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div class="flex items-center gap-2">
+                                <div class="text-xs font-black text-slate-700 dark:text-slate-200 uppercase">Log Command</div>
+                                <span v-if="logsLoading" class="inline-flex items-center gap-2 text-[11px] text-slate-400">
+                                    <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                    </svg>
+                                    Loading
+                                </span>
+                                <span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:border-white/10 dark:bg-slate-900/60 dark:text-slate-300">
+                                    {{ logMeta.filtered_total || 0 }} / {{ logMeta.total || 0 }} log
+                                </span>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
                                 <button
                                     type="button"
-                                    class="h-8 px-3 text-[11px] font-bold transition"
-                                    :class="logView === 'latest' ? 'bg-slate-900 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/40'"
-                                    @click="logView = 'latest'"
+                                    class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
+                                    @click="copyCurrentLog()"
                                 >
-                                    Terakhir
+                                    Copy Detail
                                 </button>
                                 <button
                                     type="button"
-                                    class="h-8 px-3 text-[11px] font-bold transition border-l border-slate-200 dark:border-white/10"
-                                    :class="logView === 'history' ? 'bg-slate-900 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/40'"
-                                    @click="logView = 'history'"
+                                    class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
+                                    @click="resetLogFilters()"
                                 >
-                                    History
+                                    Reset Filter
                                 </button>
                             </div>
-                            <button
-                                type="button"
-                                class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
-                                @click="copyCurrentLog()"
+                        </div>
+                        <div class="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
+                            <select
+                                v-model="logFilters.actor"
+                                class="h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                             >
-                                Copy
-                            </button>
-                            <button
-                                type="button"
-                                class="h-8 px-3 rounded-lg border border-slate-200 dark:border-white/10 text-[11px] font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/40 transition"
-                                @click="clearLogs()"
+                                <option value="">Semua actor</option>
+                                <option v-for="actor in logMeta.actors" :key="`log-actor-${actor}`" :value="actor">
+                                    {{ actor }}
+                                </option>
+                            </select>
+                            <select
+                                v-model="logFilters.action"
+                                class="h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                             >
-                                Clear
-                            </button>
+                                <option value="">Semua aksi</option>
+                                <option v-for="action in logMeta.actions" :key="`log-action-${action}`" :value="action">
+                                    {{ formatLogAction(action) }}
+                                </option>
+                            </select>
+                            <select
+                                v-model="logFilters.status"
+                                class="h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                            >
+                                <option value="">Semua status</option>
+                                <option v-for="status in logMeta.statuses" :key="`log-status-${status}`" :value="status">
+                                    {{ formatLogStatus(status) }}
+                                </option>
+                            </select>
+                            <select
+                                v-model.number="logFilters.limit"
+                                class="h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 px-3 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                            >
+                                <option :value="50">50 log</option>
+                                <option :value="100">100 log</option>
+                                <option :value="200">200 log</option>
+                            </select>
+                            <label class="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50/80 dark:bg-slate-900/60 px-3 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
+                                <input
+                                    v-model="logFilters.hideConnectFailed"
+                                    type="checkbox"
+                                    class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                                >
+                                <span>Sembunyikan connect failed</span>
+                            </label>
                         </div>
                     </div>
-                    <pre class="p-4 text-[11px] bg-slate-900 text-slate-100 overflow-x-auto max-h-80 whitespace-pre-wrap">{{ logPanelText }}</pre>
+                    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+                        <div class="border-b xl:border-b-0 xl:border-r border-slate-100 dark:border-white/5">
+                            <div v-if="!logs.length" class="p-5 text-sm text-slate-500 dark:text-slate-400">
+                                Tidak ada log yang cocok dengan filter saat ini.
+                            </div>
+                            <div v-else class="max-h-[34rem] overflow-y-auto divide-y divide-slate-100 dark:divide-white/5">
+                                <button
+                                    v-for="entry in logs"
+                                    :key="`log-row-${entry.id}`"
+                                    type="button"
+                                    class="w-full p-4 text-left transition"
+                                    :class="selectedLogEntry && String(selectedLogEntry.id) === String(entry.id)
+                                        ? 'bg-slate-50 dark:bg-slate-900/70'
+                                        : 'hover:bg-slate-50/80 dark:hover:bg-slate-900/40'"
+                                    @click="selectedLogId = entry.id"
+                                >
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div class="min-w-0 space-y-2">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide" :class="logStatusTone(entry.status)">
+                                                    {{ formatLogStatus(entry.status) }}
+                                                </span>
+                                                <span class="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                                                    {{ formatLogAction(entry.action) }}
+                                                </span>
+                                            </div>
+                                            <div class="text-xs font-semibold text-slate-600 dark:text-slate-300 break-words">
+                                                {{ summarizeLogEntry(entry) || 'Tanpa ringkasan tambahan.' }}
+                                            </div>
+                                            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 dark:text-slate-500">
+                                                <span>{{ formatLogCreatedAt(entry.created_at) }}</span>
+                                                <span>{{ entry.actor || '-' }}</span>
+                                                <span v-if="entry.olt_name">{{ entry.olt_name }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="bg-slate-50/60 dark:bg-slate-900/40">
+                            <div class="p-4 sm:p-5 space-y-4">
+                                <template v-if="selectedLogEntry">
+                                    <div class="space-y-2">
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide" :class="logStatusTone(selectedLogEntry.status)">
+                                                {{ formatLogStatus(selectedLogEntry.status) }}
+                                            </span>
+                                            <div class="text-sm font-black text-slate-800 dark:text-white">
+                                                {{ formatLogAction(selectedLogEntry.action) }}
+                                            </div>
+                                        </div>
+                                        <div class="text-xs text-slate-500 dark:text-slate-400">
+                                            {{ summarizeLogEntry(selectedLogEntry) || 'Tanpa ringkasan tambahan.' }}
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px]">
+                                        <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 px-3 py-2">
+                                            <div class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">Waktu</div>
+                                            <div class="mt-1 font-semibold text-slate-700 dark:text-slate-200">{{ formatLogCreatedAt(selectedLogEntry.created_at) }}</div>
+                                        </div>
+                                        <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 px-3 py-2">
+                                            <div class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">Actor</div>
+                                            <div class="mt-1 font-semibold text-slate-700 dark:text-slate-200">{{ selectedLogEntry.actor || '-' }}</div>
+                                        </div>
+                                        <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 px-3 py-2">
+                                            <div class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">OLT</div>
+                                            <div class="mt-1 font-semibold text-slate-700 dark:text-slate-200">{{ selectedLogEntry.olt_name || '-' }}</div>
+                                        </div>
+                                        <div class="rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/80 px-3 py-2">
+                                            <div class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">Log ID</div>
+                                            <div class="mt-1 font-semibold text-slate-700 dark:text-slate-200">#{{ selectedLogEntry.id }}</div>
+                                        </div>
+                                    </div>
+
+                                    <div v-if="selectedLogSummaryPretty" class="space-y-2">
+                                        <div class="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Summary JSON</div>
+                                        <pre class="rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-950/70 p-4 text-[11px] text-slate-700 dark:text-slate-200 overflow-x-auto whitespace-pre-wrap">{{ selectedLogSummaryPretty }}</pre>
+                                    </div>
+
+                                    <div class="space-y-2">
+                                        <div class="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Transcript Command</div>
+                                        <pre class="rounded-2xl bg-slate-950 p-4 text-[11px] text-slate-100 overflow-x-auto max-h-[28rem] whitespace-pre-wrap">{{ selectedLogTranscript }}</pre>
+                                    </div>
+                                </template>
+                                <template v-else>
+                                    <div class="rounded-2xl border border-dashed border-slate-200 dark:border-white/10 bg-white/70 dark:bg-slate-900/50 p-5 text-sm text-slate-500 dark:text-slate-400">
+                                        Pilih salah satu log untuk melihat detail command.
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <Teleport to="body">
                     <div v-if="showOltModal" class="fixed inset-0 z-[90]">

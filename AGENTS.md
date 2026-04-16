@@ -52,7 +52,14 @@ Last verified: 2026-04-16
 - Run `node --check` for changed legacy JS files.
 - Run `php artisan test` when touching business logic where feasible.
 
+## Pending plan
+### OLT log UI refresh
+- V1 sudah selesai: panel `Log Command` OLT kini memakai list terstruktur + panel detail, filter `actor/action/status`, toggle default `hide_connect_failed`, dan backend `GET /api/v1/olts/{id}/logs` sudah mendukung filter + metadata opsi.
+- Future v2: jika perlu log per user yang kuat, tambah schema `actor_user_id`, `actor_role`, `actor_type`, dan opsional `request_id/run_id`; baru setelah itu implement tab/grouping log per user yang strict.
+
 ## Change log
+- 2026-04-16: Panel `Log Command` OLT kini direfaktor menjadi list log terstruktur + panel detail; `app/Http/Controllers/Api/OltController.php` menambah filter server-side (`actor/action/status/hide_connect_failed/limit`) beserta metadata opsi, dan `resources/js/Pages/Olts/Index.vue` mengganti tampilan `pre` mentah menjadi daftar log, filter dropdown, ringkasan dari `summary_json`, dan detail transcript command dengan default menyembunyikan noise `connect failed`. Docs: N/A.
+- 2026-04-16: Rencana implementasi refresh UI `Log Command` OLT disimpan ke `AGENTS.md` pada section `Pending plan`, mencakup scope v1 (list log terstruktur + panel detail + filter actor/action/status + default hide `connect failed`) dan opsi v2 untuk schema log per user yang lebih kuat. Docs: N/A.
 - 2026-04-16: Tombol `Auto Register` di halaman OLT kini disembunyikan bila tidak ada ONU unregistered hasil scan yang siap diproses; `resources/js/Pages/Olts/Index.vue` menambah computed `hasAutoRegisterItems`, menyembunyikan tombol saat daftar kosong, dan menyesuaikan grid aksi admin agar layout tetap rapi tanpa kolom kosong. Docs: N/A.
 - 2026-04-16: Endpoint `POST /api/v1/olts/{id}/write-config` kini memakai lock backend atomik per `tenant_id + olt_id`, sehingga jika dua user menekan `Simpan/Write Config` bersamaan hanya satu request yang boleh jalan dan request lain mendapat respons `409` bahwa write sedang diproses user lain; `app/Http/Controllers/Api/OltController.php` menambah lock `Cache::lock(...)` khusus write-config. Docs: N/A.
 - 2026-04-16: Tombol `Simpan/Write Config` di halaman OLT kini memakai flag shared `write_config_pending` per OLT sehingga terlihat ke semua role hanya saat ada perubahan running config yang belum di-`write`; ditambah migration kolom pending pada `noci_olts`, helper marker di `app/Models/Olt.php`, backend `app/Http/Controllers/Api/OltController.php` dan `app/Jobs/AutoRegisterOnuBatchJob.php` kini menandai/clear pending setelah register/rename/delete/auto-register/write, serta `resources/js/Pages/Olts/Index.vue` menyembunyikan tombol saat tidak perlu, menampilkan ulang lintas user lewat polling metadata OLT berkala, dan memakai state shared ini untuk semua role. Docs: N/A.

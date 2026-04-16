@@ -2750,10 +2750,32 @@ class OltController extends Controller
     public function logs(Request $request, int $id): JsonResponse
     {
         $tenantId = $request->user()->tenant_id ?? 1;
+        $actorFilter = trim((string) $request->query('actor', ''));
+        $actionFilter = trim((string) $request->query('action', ''));
+        $statusFilter = trim((string) $request->query('status', ''));
+        $hideConnectFailed = $request->boolean('hide_connect_failed', false);
+        $limit = max(20, min(500, (int) $request->query('limit', 100)));
 
         $table = (new OltLog())->getTable();
         if (!Schema::hasTable($table)) {
-            return response()->json(['status' => 'ok', 'data' => []]);
+            return response()->json([
+                'status' => 'ok',
+                'data' => [],
+                'meta' => [
+                    'filters' => [
+                        'actor' => $actorFilter,
+                        'action' => $actionFilter,
+                        'status' => $statusFilter,
+                        'hide_connect_failed' => $hideConnectFailed,
+                        'limit' => $limit,
+                    ],
+                    'total' => 0,
+                    'filtered_total' => 0,
+                    'actors' => [],
+                    'actions' => [],
+                    'statuses' => [],
+                ],
+            ]);
         }
 
         $cols = [];
@@ -2764,16 +2786,89 @@ class OltController extends Controller
         }
         $colSet = array_fill_keys($cols, true);
 
-        $orderCol = isset($colSet['created_at']) ? 'created_at' : (isset($colSet['id']) ? 'id' : null);
-        $query = DB::table($table)
+        $baseQuery = DB::table($table)
             ->where('tenant_id', $tenantId)
             ->where('olt_id', $id);
+
+        if ($actorFilter !== '' && isset($colSet['actor'])) {
+            $baseQuery->where('actor', $actorFilter);
+        }
+
+        if ($actionFilter !== '' && isset($colSet['action'])) {
+            $baseQuery->where('action', $actionFilter);
+        }
+
+        if ($statusFilter !== '') {
+            if (isset($colSet['status'])) {
+                $baseQuery->where('status', $statusFilter);
+            } elseif (isset($colSet['success'])) {
+                $success = !in_array(strtolower($statusFilter), ['error', 'failed', 'fail'], true);
+                $baseQuery->where('success', $success ? 1 : 0);
+            }
+        }
+
+        if ($hideConnectFailed && isset($colSet['action'])) {
+            $baseQuery->where(function ($query) use ($colSet) {
+                $query->where('action', '!=', 'connect');
+                if (isset($colSet['status'])) {
+                    $query->orWhere('status', '!=', 'failed');
+                }
+            });
+        }
+
+        $orderCol = isset($colSet['created_at']) ? 'created_at' : (isset($colSet['id']) ? 'id' : null);
+        $query = clone $baseQuery;
 
         if ($orderCol) {
             $query->orderBy($orderCol, 'desc');
         }
 
-        $rows = $query->limit(100)->get();
+        $rows = $query->limit($limit)->get();
+
+        $optionsBaseQuery = DB::table($table)
+            ->where('tenant_id', $tenantId)
+            ->where('olt_id', $id);
+
+        $actors = [];
+        if (isset($colSet['actor'])) {
+            $actors = (clone $optionsBaseQuery)
+                ->whereNotNull('actor')
+                ->where('actor', '!=', '')
+                ->distinct()
+                ->orderBy('actor')
+                ->pluck('actor')
+                ->map(fn ($value) => (string) $value)
+                ->values()
+                ->all();
+        }
+
+        $actions = [];
+        if (isset($colSet['action'])) {
+            $actions = (clone $optionsBaseQuery)
+                ->whereNotNull('action')
+                ->where('action', '!=', '')
+                ->distinct()
+                ->orderBy('action')
+                ->pluck('action')
+                ->map(fn ($value) => (string) $value)
+                ->values()
+                ->all();
+        }
+
+        $statuses = [];
+        if (isset($colSet['status'])) {
+            $statuses = (clone $optionsBaseQuery)
+                ->whereNotNull('status')
+                ->where('status', '!=', '')
+                ->distinct()
+                ->orderBy('status')
+                ->pluck('status')
+                ->map(fn ($value) => (string) $value)
+                ->values()
+                ->all();
+        } elseif (isset($colSet['success'])) {
+            $statuses = ['done', 'error'];
+        }
 
         $logs = [];
         foreach ($rows as $row) {
@@ -2815,6 +2910,20 @@ class OltController extends Controller
         return response()->json([
             'status' => 'ok',
             'data' => $logs,
+            'meta' => [
+                'filters' => [
+                    'actor' => $actorFilter,
+                    'action' => $actionFilter,
+                    'status' => $statusFilter,
+                    'hide_connect_failed' => $hideConnectFailed,
+                    'limit' => $limit,
+                ],
+                'total' => (clone $optionsBaseQuery)->count(),
+                'filtered_total' => (clone $baseQuery)->count(),
+                'actors' => $actors,
+                'actions' => $actions,
+                'statuses' => $statuses,
+            ],
         ]);
     }
 
