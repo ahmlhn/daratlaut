@@ -1305,12 +1305,8 @@ class OltController extends Controller
             if (($responseData['rx'] ?? null) === null && ($base['rx'] ?? null) !== null) {
                 $responseData['rx'] = $this->normalizeOnuRxValue($base['rx']);
             }
-            if (((string) ($responseData['status'] ?? '')) === '' && ((string) ($base['status'] ?? '')) !== '') {
-                $responseData['status'] = (string) $base['status'];
-            }
-            if (((string) ($responseData['state'] ?? '')) === '' && ((string) ($base['state'] ?? '')) !== '') {
-                $responseData['state'] = (string) $base['state'];
-            }
+            $responseData['status'] = (string) ($base['status'] ?? 'offline');
+            $responseData['state'] = (string) ($base['state'] ?? $responseData['status'] ?? 'offline');
 
             return response()->json([
                 'status' => 'ok',

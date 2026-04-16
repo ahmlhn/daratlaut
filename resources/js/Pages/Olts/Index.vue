@@ -2643,12 +2643,8 @@ async function loadOnuDetail(onu, { force = false, silent = false, throwOnError 
             if (detailPatch.rx === undefined || detailPatch.rx === null || detailPatch.rx === '') {
                 detailPatch.rx = currentDetail.rx ?? null;
             }
-            if (!detailPatch.status && currentDetail.status) {
-                detailPatch.status = currentDetail.status;
-            }
-            if (!detailPatch.state && currentDetail.state) {
-                detailPatch.state = currentDetail.state;
-            }
+            detailPatch.status = currentDetail.status || '';
+            detailPatch.state = currentDetail.state || detailPatch.status || '';
             mergeRegisteredOnuPatch(onu, detailPatch);
         }
         if (!silent) setRegStatus('Detail ONU dimuat.', 'success');
