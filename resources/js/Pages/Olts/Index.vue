@@ -1917,19 +1917,6 @@ function isRegDetailSyncing(onu) {
     return regDetailLoadingKey.value === key || regDetailRxLoadingKey.value === key || regDetailInfoLoadingKey.value === key;
 }
 
-function getRegDetailSyncText(onu) {
-    if (isRegDetailRxLoading(onu)) {
-        return 'Memuat Rx live dari OLT...';
-    }
-    if (isRegDetailInfoLoading(onu)) {
-        return 'Menyinkronkan detail ONU...';
-    }
-    if (regDetailLoadingKey.value === onuKey(onu)) {
-        return 'Memperbarui detail ONU...';
-    }
-    return '';
-}
-
 function hasRegisteredFspData(fsp) {
     const safeFsp = String(fsp || '').trim();
     if (!safeFsp) return false;
@@ -3499,11 +3486,33 @@ onBeforeUnmount(() => {
                         <div class="absolute top-1/2 left-1/2 w-[96%] sm:w-[94%] max-w-5xl -translate-x-1/2 -translate-y-1/2">
                             <div class="max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 shadow-xl overflow-hidden flex flex-col">
                                 <template v-for="item in [regModalOnu]" :key="onuKey(item)">
-                                <div class="px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-white/10 flex items-center justify-between gap-3">
-                                    <div class="min-w-0">
+                                <div class="px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-white/10 flex items-start justify-between gap-3">
+                                    <div class="min-w-0 space-y-2">
                                         <div class="text-xs uppercase tracking-wide text-slate-400">Detail ONU</div>
                                         <div class="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
                                             {{ item.fsp_onu || `${item.fsp}:${item.onu_id}` }} - {{ item.name || item.sn || 'ONU' }}
+                                        </div>
+                                        <div v-if="isRegDetailSyncing(item)" class="flex flex-wrap items-center gap-2">
+                                            <span
+                                                v-if="isRegDetailRxLoading(item)"
+                                                class="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+                                            >
+                                                <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                </svg>
+                                                Memuat Rx live
+                                            </span>
+                                            <span
+                                                v-if="isRegDetailInfoLoading(item)"
+                                                class="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300"
+                                            >
+                                                <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                    <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                </svg>
+                                                Sinkron detail
+                                            </span>
                                         </div>
                                     </div>
                                     <button
@@ -3516,16 +3525,6 @@ onBeforeUnmount(() => {
                                 </div>
 
                                 <div class="flex-1 min-h-0 px-4 sm:px-5 py-4 sm:py-5 overflow-y-auto space-y-4">
-                                    <div v-if="isRegDetailSyncing(item)" class="flex items-center gap-3 text-sm text-slate-500">
-                                        <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-500">
-                                            <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                            </svg>
-                                        </span>
-                                        {{ getRegDetailSyncText(item) }}
-                                    </div>
-
                                     <div class="space-y-4">
                                         <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-600 dark:text-slate-300">
                                             <div class="min-w-0 space-y-1">
@@ -3552,8 +3551,17 @@ onBeforeUnmount(() => {
                                             </div>
                                             <div class="min-w-0 space-y-1">
                                                 <div class="text-[10px] uppercase tracking-wide text-slate-400">Power Rx</div>
-                                                <div class="font-semibold" :class="getRxTextClass(item)">
-                                                    {{ extractRxValue(item.rx) !== null ? formatRx(item.rx) : '-' }}
+                                                <div class="inline-flex min-h-[1.25rem] items-center gap-2 font-semibold" :class="getRxTextClass(item)">
+                                                    <span
+                                                        v-if="isRegDetailRxLoading(item)"
+                                                        class="inline-flex h-4 w-4 items-center justify-center text-emerald-500"
+                                                    >
+                                                        <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                            <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                        </svg>
+                                                    </span>
+                                                    <span>{{ extractRxValue(item.rx) !== null ? formatRx(item.rx) : '-' }}</span>
                                                 </div>
                                             </div>
                                         </div>
