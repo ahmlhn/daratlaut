@@ -264,6 +264,7 @@ const loadingOlts = ref(false);
 const selectedOltId = ref('');
 const selectedOlt = computed(() => olts.value.find(o => String(o.id) === String(selectedOltId.value)) || null);
 const selectedOltWriteConfigPending = computed(() => !!selectedOlt.value?.write_config_pending);
+const hasAutoRegisterItems = computed(() => Array.isArray(uncfg.value) && uncfg.value.length > 0);
 const OLT_META_POLL_MS = 10000;
 let oltMetaPollTimer = null;
 
@@ -3198,7 +3199,9 @@ onBeforeUnmount(() => {
                             <template v-else>
                                 <div
                                     class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:ml-auto xl:w-auto"
-                                    :class="selectedOltWriteConfigPending ? 'xl:grid-cols-4' : 'xl:grid-cols-3'"
+                                    :class="hasAutoRegisterItems
+                                        ? (selectedOltWriteConfigPending ? 'xl:grid-cols-4' : 'xl:grid-cols-3')
+                                        : (selectedOltWriteConfigPending ? 'xl:grid-cols-3' : 'xl:grid-cols-2')"
                                 >
                                     <button
                                         type="button"
@@ -3212,6 +3215,7 @@ onBeforeUnmount(() => {
                                         {{ uncfgLoading ? 'Scanning...' : 'Scan ONU Baru' }}
                                     </button>
                                     <button
+                                        v-if="hasAutoRegisterItems"
                                         type="button"
                                         class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-slate-900 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-70 xl:min-w-[148px]"
                                         :disabled="registerBusy"
