@@ -2634,10 +2634,20 @@ async function loadOnuDetail(onu, { force = false, silent = false, throwOnError 
 
         if (token !== regDetailRefreshToken || regExpandedKey.value !== key) return;
         if (detailData.changed) {
+            const currentDetail = regDetails.value[key] || registered.value.find((it) => onuKey(it) === key) || onu || {};
             const detailPatch = { ...(detailData.data || {}) };
             if ((detailPatch.rx === undefined || detailPatch.rx === null || detailPatch.rx === '') && detailPatch.rx_power) {
                 const parsedRx = extractRxValue(detailPatch.rx_power);
                 if (parsedRx !== null) detailPatch.rx = parsedRx;
+            }
+            if (detailPatch.rx === undefined || detailPatch.rx === null || detailPatch.rx === '') {
+                detailPatch.rx = currentDetail.rx ?? null;
+            }
+            if (!detailPatch.status && currentDetail.status) {
+                detailPatch.status = currentDetail.status;
+            }
+            if (!detailPatch.state && currentDetail.state) {
+                detailPatch.state = currentDetail.state;
             }
             mergeRegisteredOnuPatch(onu, detailPatch);
         }

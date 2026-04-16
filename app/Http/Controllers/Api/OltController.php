@@ -1301,10 +1301,21 @@ class OltController extends Controller
                 }
             }
 
+            $responseData = $this->mergeOnuRowPatch($base, $patch);
+            if (($responseData['rx'] ?? null) === null && ($base['rx'] ?? null) !== null) {
+                $responseData['rx'] = $this->normalizeOnuRxValue($base['rx']);
+            }
+            if (((string) ($responseData['status'] ?? '')) === '' && ((string) ($base['status'] ?? '')) !== '') {
+                $responseData['status'] = (string) $base['status'];
+            }
+            if (((string) ($responseData['state'] ?? '')) === '' && ((string) ($base['state'] ?? '')) !== '') {
+                $responseData['state'] = (string) $base['state'];
+            }
+
             return response()->json([
                 'status' => 'ok',
                 'changed' => $changed,
-                'data' => $this->mergeOnuRowPatch($base, $patch),
+                'data' => $responseData,
             ]);
         } catch (RuntimeException $e) {
             return response()->json([
