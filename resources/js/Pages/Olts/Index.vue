@@ -1453,6 +1453,8 @@ const regDetailInfoLoadingKey = ref('');
 const regDetails = ref({});
 const regEditingKey = ref('');
 const regEditingName = ref('');
+const regEditingError = ref('');
+const regNameSavedKey = ref('');
 const rowActionKey = ref('');
 const rowActionType = ref('');
 const regRxHistoryRanges = [
@@ -1469,6 +1471,7 @@ const regRxHistoryPage = ref(1);
 const regRxHistoryPageSize = ref(10);
 const regRxHistoryPageSizeOptions = [10, 20, 50, 100];
 let regDetailRefreshToken = 0;
+let regNameSavedTimer = null;
 
 function sanitizeRxHistoryRange(value) {
     const raw = String(value || '').trim().toLowerCase();
@@ -1671,6 +1674,17 @@ function setRegStatus(message, tone = 'info') {
 function cancelEditOnuName() {
     regEditingKey.value = '';
     regEditingName.value = '';
+    regEditingError.value = '';
+}
+
+function markOnuNameSaved(key) {
+    regNameSavedKey.value = String(key || '');
+    if (regNameSavedTimer) clearTimeout(regNameSavedTimer);
+    regNameSavedTimer = setTimeout(() => {
+        if (regNameSavedKey.value === String(key || '')) {
+            regNameSavedKey.value = '';
+        }
+    }, 1800);
 }
 
 function setRegSort(key) {
@@ -2554,6 +2568,7 @@ function closeRegDetailModal() {
     regDetailInfoLoadingKey.value = '';
     regRxHistoryOpen.value = false;
     regRxHistoryPage.value = 1;
+    regNameSavedKey.value = '';
     cancelEditOnuName();
 }
 
@@ -2634,7 +2649,6 @@ async function loadOnuDetail(onu, { force = false, silent = false, throwOnError 
             detailPatch.state = currentDetail.state || detailPatch.status || '';
             mergeRegisteredOnuPatch(onu, detailPatch);
         }
-        if (!silent) setRegStatus('Detail ONU dimuat.', 'success');
     } catch (e) {
         if (!silent) setRegStatus(e.message || 'Gagal sinkron detail ONU', 'error');
         if (throwOnError) throw e;
@@ -2664,6 +2678,10 @@ function startEditOnuName(onu) {
     const key = onuKey(onu);
     regEditingKey.value = key;
     regEditingName.value = String(onu.name || '').trim();
+    regEditingError.value = '';
+    if (regNameSavedKey.value === key) {
+        regNameSavedKey.value = '';
+    }
 }
 
 async function saveEditOnuName(onu) {
@@ -2671,10 +2689,11 @@ async function saveEditOnuName(onu) {
     const key = onuKey(onu);
     const name = String(regEditingName.value || '').trim();
     if (!name) {
-        setRegStatus('Nama ONU wajib diisi.', 'error');
+        regEditingError.value = 'Nama ONU wajib diisi.';
         return;
     }
 
+    regEditingError.value = '';
     setRowActionLoading(key, 'rename', true);
     try {
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/update-onu-name`, {
@@ -2702,11 +2721,11 @@ async function saveEditOnuName(onu) {
         }
 
         cancelEditOnuName();
-        setRegStatus('Nama ONU berhasil diupdate.', 'success');
+        markOnuNameSaved(key);
         if (isTeknisi.value) teknisiWriteReady.value = true;
     } catch (e) {
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
-        setRegStatus(e.message || 'Gagal update nama', 'error');
+        regEditingError.value = e.message || 'Gagal update nama';
     } finally {
         setRowActionLoading(key, 'rename', false);
         loadLogs().catch(() => {});
@@ -2717,12 +2736,10 @@ async function refreshRegisteredOnu(onu) {
     const key = onuKey(onu);
     setRowActionLoading(key, 'refresh', true);
     try {
-        setRegStatus('Merefresh detail ONU...', 'loading');
         await loadOnuDetail(onu, { force: true, silent: true, throwOnError: true });
         if (regRxHistoryOpen.value && regExpandedKey.value === key) {
             await loadOnuRxHistory(onu, { range: regRxHistoryRange.value, force: true, silent: true });
         }
-        setRegStatus('Detail ONU di-refresh.', 'success');
     } catch (e) {
         setRegStatus(e.message || 'Gagal refresh', 'error');
     } finally {
@@ -2999,6 +3016,7 @@ onBeforeUnmount(() => {
     stopAutoRegisterPolling();
     hideAutoRegisterSetupModal();
     hideAutoRegisterModal();
+    if (regNameSavedTimer) clearTimeout(regNameSavedTimer);
 });
 </script>
 
@@ -3532,14 +3550,64 @@ onBeforeUnmount(() => {
                                                 <div class="font-semibold text-slate-700 dark:text-slate-200 break-all">{{ item.interface || onuKey(item) }}</div>
                                             </div>
                                             <div class="min-w-0 space-y-1">
-                                                <div class="text-[10px] uppercase tracking-wide text-slate-400">Nama</div>
-                                                <div v-if="regEditingKey === onuKey(item)">
-                                                    <input
-                                                        v-model="regEditingName"
-                                                        class="block w-full max-w-full rounded-lg border border-slate-200 dark:border-white/10 bg-white/70 dark:bg-slate-900/60 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
-                                                    />
+                                                <div class="flex items-center justify-between gap-2">
+                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400">Nama</div>
+                                                    <button
+                                                        v-if="regEditingKey !== onuKey(item)"
+                                                        type="button"
+                                                        class="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 dark:border-white/10 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-200"
+                                                        @click.stop="startEditOnuName(item)"
+                                                    >
+                                                        <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                            <path d="M13.586 2.586a2 2 0 112.828 2.828l-8.9 8.9a2 2 0 01-.878.497l-2.54.726a.75.75 0 01-.928-.928l.726-2.54a2 2 0 01.497-.878l8.9-8.9zM12.525 4.707L5.655 11.577a.5.5 0 00-.124.22l-.364 1.273 1.273-.364a.5.5 0 00.22-.124l6.87-6.87-1.005-1.005z" />
+                                                        </svg>
+                                                    </button>
                                                 </div>
-                                                <div v-else class="font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</div>
+                                                <div v-if="regEditingKey === onuKey(item)">
+                                                    <div class="space-y-2 rounded-xl border border-emerald-200/80 bg-emerald-50/60 p-2.5 dark:border-emerald-500/20 dark:bg-emerald-500/5">
+                                                        <input
+                                                            v-model="regEditingName"
+                                                            class="block w-full max-w-full rounded-lg border border-emerald-200 bg-white/90 px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400/40 dark:border-emerald-500/20 dark:bg-slate-900/60 dark:text-slate-200"
+                                                            @keydown.enter.prevent="saveEditOnuName(item)"
+                                                            @keydown.esc.prevent="cancelEditOnuName()"
+                                                        />
+                                                        <div class="flex flex-wrap items-center gap-2">
+                                                            <button
+                                                                type="button"
+                                                                class="inline-flex items-center gap-2 rounded-lg border border-emerald-300 px-3 py-1.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100/70 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-500/30 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+                                                                :disabled="isRowActionLoading(onuKey(item), 'rename')"
+                                                                @click.stop="saveEditOnuName(item)"
+                                                            >
+                                                                <span v-if="isRowActionLoading(onuKey(item), 'rename')" class="inline-flex h-4 w-4 items-center justify-center">
+                                                                    <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                                                    </svg>
+                                                                </span>
+                                                                Simpan
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                class="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/60"
+                                                                @click.stop="cancelEditOnuName()"
+                                                            >
+                                                                Batal
+                                                            </button>
+                                                        </div>
+                                                        <div v-if="regEditingError" class="text-[11px] font-medium text-rose-600 dark:text-rose-300">
+                                                            {{ regEditingError }}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div v-else class="space-y-1">
+                                                    <div class="font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</div>
+                                                    <div
+                                                        v-if="regNameSavedKey === onuKey(item)"
+                                                        class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+                                                    >
+                                                        Nama tersimpan
+                                                    </div>
+                                                </div>
                                             </div>
                                             <div class="min-w-0 space-y-1">
                                                 <div class="text-[10px] uppercase tracking-wide text-slate-400">SN</div>
@@ -3703,38 +3771,6 @@ onBeforeUnmount(() => {
                                 </div>
                                 <div class="shrink-0 px-4 sm:px-5 py-3 border-t border-slate-100 dark:border-white/10 bg-white/95 dark:bg-slate-900/95">
                                     <div class="flex flex-wrap gap-2">
-                                        <template v-if="regEditingKey === onuKey(item)">
-                                            <button
-                                                type="button"
-                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                                                :disabled="isRowActionLoading(onuKey(item), 'rename')"
-                                                @click.stop="saveEditOnuName(item)"
-                                            >
-                                                <span v-if="isRowActionLoading(onuKey(item), 'rename')" class="inline-flex h-4 w-4 items-center justify-center">
-                                                    <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                                                        <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
-                                                    </svg>
-                                                </span>
-                                                Simpan
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
-                                                @click.stop="cancelEditOnuName()"
-                                            >
-                                                Batal
-                                            </button>
-                                        </template>
-                                        <button
-                                            v-else
-                                            type="button"
-                                            class="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition"
-                                            @click.stop="startEditOnuName(item)"
-                                        >
-                                            Edit Nama
-                                        </button>
-
                                         <button
                                             type="button"
                                             class="px-3 py-1.5 text-xs font-bold rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
