@@ -189,6 +189,92 @@ class OltController extends Controller
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    private function buildDefaultOnuRow(string $fsp, int $onuId): array
+    {
+        return [
+            'fsp' => $fsp,
+            'onu_id' => $onuId,
+            'interface' => ($fsp !== '' && $onuId > 0) ? "gpon-onu_{$fsp}:{$onuId}" : '',
+            'fsp_onu' => ($fsp !== '' && $onuId > 0) ? "{$fsp}:{$onuId}" : '',
+            'sn' => '',
+            'state' => 'offline',
+            'status' => 'offline',
+            'rx' => null,
+            'name' => '',
+            'online_duration' => '',
+            'vlan' => 0,
+        ];
+    }
+
+    private function findCachedOnu(int $tenantId, int $oltId, string $fsp, int $onuId): ?OltOnu
+    {
+        if (!Schema::hasTable('noci_olt_onu')) {
+            return null;
+        }
+
+        return OltOnu::forTenant($tenantId)
+            ->where('olt_id', $oltId)
+            ->where('fsp', $fsp)
+            ->where('onu_id', $onuId)
+            ->first();
+    }
+
+    /**
+     * @param array<string, mixed> $base
+     * @param array<string, mixed> $patch
+     * @return array<string, mixed>
+     */
+    private function mergeOnuRowPatch(array $base, array $patch): array
+    {
+        $merged = array_merge($base, $patch);
+
+        $merged['fsp'] = (string) ($merged['fsp'] ?? $base['fsp'] ?? '');
+        $merged['onu_id'] = (int) ($merged['onu_id'] ?? $base['onu_id'] ?? 0);
+        $merged['interface'] = (string) ($merged['interface'] ?? $base['interface'] ?? '');
+        $merged['fsp_onu'] = (string) ($merged['fsp_onu'] ?? $base['fsp_onu'] ?? '');
+        $merged['sn'] = (string) ($merged['sn'] ?? '');
+        $merged['name'] = (string) ($merged['name'] ?? '');
+        $merged['online_duration'] = (string) ($merged['online_duration'] ?? '');
+        $merged['status'] = strtolower(trim((string) ($merged['status'] ?? $base['status'] ?? 'offline'))) ?: 'offline';
+        $merged['state'] = strtolower(trim((string) ($merged['state'] ?? $merged['status'] ?? 'offline'))) ?: 'offline';
+        $merged['rx'] = $this->normalizeOnuRxValue($merged['rx'] ?? null);
+        $merged['vlan'] = (int) ($merged['vlan'] ?? 0);
+
+        return $merged;
+    }
+
+    /**
+     * @param array<string, mixed> $cachedRow
+     * @param array<string, mixed> $detail
+     * @return array<string, mixed>
+     */
+    private function buildOnuDetailPatch(array $cachedRow, array $detail): array
+    {
+        $sn = trim((string) ($detail['sn'] ?? ''));
+        $name = trim((string) ($detail['name'] ?? ''));
+        $onlineDuration = trim((string) ($detail['online_duration'] ?? ''));
+
+        return [
+            'sn' => $sn !== '' ? $sn : (string) ($cachedRow['sn'] ?? ''),
+            'name' => $name !== '' ? $name : (string) ($cachedRow['name'] ?? ''),
+            'online_duration' => $onlineDuration !== '' ? $onlineDuration : (string) ($cachedRow['online_duration'] ?? ''),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $cachedRow
+     * @param array<string, mixed> $detailPatch
+     */
+    private function onuDetailHasMeaningfulChange(array $cachedRow, array $detailPatch): bool
+    {
+        return trim((string) ($cachedRow['sn'] ?? '')) !== trim((string) ($detailPatch['sn'] ?? ''))
+            || trim((string) ($cachedRow['name'] ?? '')) !== trim((string) ($detailPatch['name'] ?? ''))
+            || trim((string) ($cachedRow['online_duration'] ?? '')) !== trim((string) ($detailPatch['online_duration'] ?? ''));
+    }
+
+    /**
      * @param array{fsp?:mixed,onu_id?:mixed,interface?:mixed,sn?:mixed} $found
      * @param array<string,mixed> $detail
      * @return array<string,mixed>
@@ -963,7 +1049,7 @@ class OltController extends Controller
      */
     private function mergeRegisteredRxMapIntoItems(array $items, array $rxMap): array
     {
-        if (empty($items) || empty($rxMap)) {
+        if (empty($items)) {
             return $items;
         }
 
@@ -977,6 +1063,12 @@ class OltController extends Controller
             $key = "{$fsp}:{$onuId}";
             if (array_key_exists($key, $rxMap)) {
                 $item['rx'] = $rxMap[$key];
+                $item['status'] = 'online';
+                $item['state'] = 'online';
+            } else {
+                $item['rx'] = null;
+                $item['status'] = 'offline';
+                $item['state'] = 'offline';
             }
         }
         unset($item);
@@ -1117,6 +1209,114 @@ class OltController extends Controller
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ], 422);
+        }
+    }
+
+    /**
+     * Fetch live Rx only for the ONU detail modal.
+     */
+    public function getOnuLiveRx(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'fsp' => 'required|string|regex:/^\d+\/\d+\/\d+$/',
+            'onu_id' => 'required|integer|min:1|max:128',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $fsp = (string) $request->input('fsp');
+        $onuId = (int) $request->input('onu_id');
+
+        $dbOnu = $this->findCachedOnu($tenantId, $id, $fsp, $onuId);
+        $base = $dbOnu ? $this->formatOnuCacheRow($dbOnu) : $this->buildDefaultOnuRow($fsp, $onuId);
+        $sn = trim((string) ($base['sn'] ?? ''));
+
+        $service = null;
+        try {
+            $service = new OltService($tenantId);
+            $service->connect($olt);
+            $rx = $service->getOnuRxFromPonPower($fsp, $onuId);
+            $service->persistOnuLiveRx($fsp, $onuId, $sn !== '' ? $sn : null, $rx);
+
+            return response()->json([
+                'status' => 'ok',
+                'data' => $this->mergeOnuRowPatch($base, [
+                    'rx' => $rx,
+                    'status' => $rx !== null ? 'online' : 'offline',
+                    'state' => $rx !== null ? 'online' : 'offline',
+                ]),
+            ]);
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 422);
+        } finally {
+            try {
+                $service?->disconnect();
+            } catch (Throwable) {
+                // ignore
+            }
+        }
+    }
+
+    /**
+     * Fetch detail-info and persist only if cache fields changed.
+     */
+    public function refreshOnuDetailInfo(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'fsp' => 'required|string|regex:/^\d+\/\d+\/\d+$/',
+            'onu_id' => 'required|integer|min:1|max:128',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $fsp = (string) $request->input('fsp');
+        $onuId = (int) $request->input('onu_id');
+
+        $dbOnu = $this->findCachedOnu($tenantId, $id, $fsp, $onuId);
+        $base = $dbOnu ? $this->formatOnuCacheRow($dbOnu) : $this->buildDefaultOnuRow($fsp, $onuId);
+
+        $service = null;
+        try {
+            $service = new OltService($tenantId);
+            $service->connect($olt);
+            $detail = $service->getOnuDetailInfoOnly($fsp, $onuId);
+
+            $patch = $this->buildOnuDetailPatch($base, $detail);
+            $changed = $this->onuDetailHasMeaningfulChange($base, $patch);
+
+            if ($changed) {
+                $sn = trim((string) ($patch['sn'] ?? ''));
+                if ($sn !== '') {
+                    $service->persistOnuDetailCache($sn, $fsp, $onuId, array_merge($detail, $patch, [
+                        'status' => (string) ($base['status'] ?? 'offline'),
+                    ]));
+                }
+
+                $dbOnu = $this->findCachedOnu($tenantId, $id, $fsp, $onuId);
+                if ($dbOnu) {
+                    $base = $this->formatOnuCacheRow($dbOnu);
+                }
+            }
+
+            return response()->json([
+                'status' => 'ok',
+                'changed' => $changed,
+                'data' => $this->mergeOnuRowPatch($base, $patch),
+            ]);
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 422);
+        } finally {
+            try {
+                $service?->disconnect();
+            } catch (Throwable) {
+                // ignore
+            }
         }
     }
 

@@ -199,6 +199,8 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->prefix('v1')->n
     Route::get('/olts/{id}/search', [OltController::class, 'searchCache']);
     Route::post('/olts/{id}/search-rx-refresh', [OltController::class, 'refreshSearchOnuRx']);
     Route::post('/olts/{id}/find-onu-by-sn', [OltController::class, 'findOnuBySn']);
+    Route::get('/olts/{id}/onu-rx-live', [OltController::class, 'getOnuLiveRx']);
+    Route::get('/olts/{id}/onu-detail-refresh', [OltController::class, 'refreshOnuDetailInfo']);
     Route::get('/olts/{id}/onu-detail', [OltController::class, 'getOnuDetail']);
     Route::get('/olts/{id}/onu-rx-history', [OltController::class, 'getOnuRxHistory']);
     Route::get('/olts/{id}/port-slot-summary', [OltController::class, 'getPortSlotSummary']);

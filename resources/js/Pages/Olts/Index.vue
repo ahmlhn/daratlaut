@@ -1448,6 +1448,8 @@ const regHighlightKey = ref('');
 const regExpandedKey = ref('');
 const regDetailModalOpen = ref(false);
 const regDetailLoadingKey = ref('');
+const regDetailRxLoadingKey = ref('');
+const regDetailInfoLoadingKey = ref('');
 const regDetails = ref({});
 const regEditingKey = ref('');
 const regEditingName = ref('');
@@ -1466,6 +1468,7 @@ const regRxHistoryErrorByKey = ref({});
 const regRxHistoryPage = ref(1);
 const regRxHistoryPageSize = ref(10);
 const regRxHistoryPageSizeOptions = [10, 20, 50, 100];
+let regDetailRefreshToken = 0;
 
 function sanitizeRxHistoryRange(value) {
     const raw = String(value || '').trim().toLowerCase();
@@ -1861,6 +1864,71 @@ watch(regModalOnu, (onu) => {
         cancelEditOnuName();
     }
 });
+
+function mergeRegisteredOnuPatch(onu, patch = {}) {
+    const key = onuKey(onu);
+    if (!key) return;
+
+    const idx = registered.value.findIndex((it) => onuKey(it) === key);
+    const baseRow = idx >= 0 ? (registered.value[idx] || {}) : (onu || {});
+    const mergedRow = {
+        ...baseRow,
+        ...patch,
+        name: patch.name ?? baseRow.name ?? '',
+        sn: patch.sn ?? baseRow.sn ?? '',
+        online_duration: patch.online_duration ?? baseRow.online_duration ?? '',
+        status: patch.status ?? baseRow.status ?? '',
+        state: patch.state ?? baseRow.state ?? '',
+        rx:
+            patch.rx !== undefined
+                ? patch.rx
+                : baseRow.rx,
+    };
+
+    if (idx >= 0) {
+        const copy = registered.value.slice();
+        copy[idx] = mergedRow;
+        registered.value = copy;
+    }
+
+    regDetails.value = {
+        ...regDetails.value,
+        [key]: {
+            ...(regDetails.value[key] || baseRow || {}),
+            ...mergedRow,
+        },
+    };
+}
+
+function seedRegDetailFromCache(onu) {
+    mergeRegisteredOnuPatch(onu, { ...onu });
+}
+
+function isRegDetailRxLoading(onu) {
+    return regDetailRxLoadingKey.value === onuKey(onu);
+}
+
+function isRegDetailInfoLoading(onu) {
+    return regDetailInfoLoadingKey.value === onuKey(onu);
+}
+
+function isRegDetailSyncing(onu) {
+    const key = onuKey(onu);
+    return regDetailLoadingKey.value === key || regDetailRxLoadingKey.value === key || regDetailInfoLoadingKey.value === key;
+}
+
+function getRegDetailSyncText(onu) {
+    if (isRegDetailRxLoading(onu)) {
+        return 'Memuat Rx live dari OLT...';
+    }
+    if (isRegDetailInfoLoading(onu)) {
+        return 'Menyinkronkan detail ONU...';
+    }
+    if (regDetailLoadingKey.value === onuKey(onu)) {
+        return 'Memperbarui detail ONU...';
+    }
+    return '';
+}
 
 function hasRegisteredFspData(fsp) {
     const safeFsp = String(fsp || '').trim();
@@ -2491,8 +2559,12 @@ function setRowActionLoading(key, type, active) {
 }
 
 function closeRegDetailModal() {
+    regDetailRefreshToken += 1;
     regDetailModalOpen.value = false;
     regExpandedKey.value = '';
+    regDetailLoadingKey.value = '';
+    regDetailRxLoadingKey.value = '';
+    regDetailInfoLoadingKey.value = '';
     regRxHistoryOpen.value = false;
     regRxHistoryPage.value = 1;
     cancelEditOnuName();
@@ -2509,46 +2581,77 @@ async function toggleRegDetail(onu, { skipLoad = false } = {}) {
     regRxHistoryOpen.value = false;
     regRxHistoryRange.value = '24h';
     regRxHistoryPage.value = 1;
+    seedRegDetailFromCache(onu);
     if (!skipLoad) {
-        await loadOnuDetail(onu, { force: true, silent: true });
+        loadOnuDetail(onu, { force: true, silent: true }).catch(() => {});
     }
 }
 
 async function loadOnuDetail(onu, { force = false, silent = false, throwOnError = false } = {}) {
     if (!selectedOltId.value) return;
     const key = onuKey(onu);
-    if (!force && regDetails.value[key]) return;
+    if (!key) return;
 
+    if (!force && regDetailLoadingKey.value === key) {
+        return;
+    }
+
+    seedRegDetailFromCache(onu);
+
+    const token = ++regDetailRefreshToken;
     regDetailLoadingKey.value = key;
     try {
-        const params = new URLSearchParams({ fsp: String(onu.fsp || ''), onu_id: String(onu.onu_id || '') });
-        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/onu-detail?${params}`);
-        if (data.status !== 'ok') throw new Error(data.message || 'Gagal load detail');
+        regDetailRxLoadingKey.value = key;
+        const rxParams = new URLSearchParams({ fsp: String(onu.fsp || ''), onu_id: String(onu.onu_id || '') });
+        const rxData = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/onu-rx-live?${rxParams}`);
+        if (rxData.status !== 'ok') throw new Error(rxData.message || 'Gagal memuat Rx live');
 
-        const detail = { ...(data.data || {}) };
-        if ((detail.rx === undefined || detail.rx === null || detail.rx === '') && detail.rx_power) {
-            const parsedRx = extractRxValue(detail.rx_power);
-            if (parsedRx !== null) detail.rx = parsedRx;
+        if (token !== regDetailRefreshToken || regExpandedKey.value !== key) return;
+        const rxPatch = { ...(rxData.data || {}) };
+        if ((rxPatch.rx === undefined || rxPatch.rx === null || rxPatch.rx === '') && rxPatch.rx_power) {
+            const parsedRx = extractRxValue(rxPatch.rx_power);
+            if (parsedRx !== null) rxPatch.rx = parsedRx;
         }
-
-        regDetails.value = { ...regDetails.value, [key]: detail };
-
-        // Keep row consistent with detail (best-effort).
-        const idx = registered.value.findIndex(it => onuKey(it) === key);
-        if (idx >= 0) {
-            const cur = registered.value[idx] || {};
-            const merged = { ...cur, ...detail };
-            const copy = registered.value.slice();
-            copy[idx] = merged;
-            registered.value = copy;
+        mergeRegisteredOnuPatch(onu, rxPatch);
+    } catch (e) {
+        if (!silent) setRegStatus(e.message || 'Gagal memuat Rx live', 'error');
+        if (throwOnError) throw e;
+        if (token === regDetailRefreshToken && regDetailLoadingKey.value === key) {
+            regDetailLoadingKey.value = '';
         }
+        return;
+    } finally {
+        if (token === regDetailRefreshToken && regDetailRxLoadingKey.value === key) {
+            regDetailRxLoadingKey.value = '';
+        }
+    }
 
+    try {
+        regDetailInfoLoadingKey.value = key;
+        const detailParams = new URLSearchParams({ fsp: String(onu.fsp || ''), onu_id: String(onu.onu_id || '') });
+        const detailData = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/onu-detail-refresh?${detailParams}`);
+        if (detailData.status !== 'ok') throw new Error(detailData.message || 'Gagal sinkron detail ONU');
+
+        if (token !== regDetailRefreshToken || regExpandedKey.value !== key) return;
+        if (detailData.changed) {
+            const detailPatch = { ...(detailData.data || {}) };
+            if ((detailPatch.rx === undefined || detailPatch.rx === null || detailPatch.rx === '') && detailPatch.rx_power) {
+                const parsedRx = extractRxValue(detailPatch.rx_power);
+                if (parsedRx !== null) detailPatch.rx = parsedRx;
+            }
+            mergeRegisteredOnuPatch(onu, detailPatch);
+        }
         if (!silent) setRegStatus('Detail ONU dimuat.', 'success');
     } catch (e) {
-        if (!silent) setRegStatus(e.message || 'Gagal load detail', 'error');
+        if (!silent) setRegStatus(e.message || 'Gagal sinkron detail ONU', 'error');
         if (throwOnError) throw e;
     } finally {
-        if (regDetailLoadingKey.value === key) regDetailLoadingKey.value = '';
+        if (token === regDetailRefreshToken && regDetailInfoLoadingKey.value === key) {
+            regDetailInfoLoadingKey.value = '';
+        }
+        if (token === regDetailRefreshToken && regDetailLoadingKey.value === key) {
+            regDetailLoadingKey.value = '';
+        }
     }
 }
 
@@ -3407,17 +3510,17 @@ onBeforeUnmount(() => {
                                 </div>
 
                                 <div class="flex-1 min-h-0 px-4 sm:px-5 py-4 sm:py-5 overflow-y-auto space-y-4">
-                                    <div v-if="regDetailLoadingKey === onuKey(item)" class="flex items-center gap-3 text-sm text-slate-500">
+                                    <div v-if="isRegDetailSyncing(item)" class="flex items-center gap-3 text-sm text-slate-500">
                                         <span class="inline-flex h-5 w-5 items-center justify-center text-emerald-500">
                                             <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
                                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                                                 <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
                                             </svg>
                                         </span>
-                                        Memuat detail ONU...
+                                        {{ getRegDetailSyncText(item) }}
                                     </div>
 
-                                    <div v-else class="space-y-4">
+                                    <div class="space-y-4">
                                         <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-600 dark:text-slate-300">
                                             <div class="min-w-0 space-y-1">
                                                 <div class="text-[10px] uppercase tracking-wide text-slate-400">Interface</div>
@@ -3584,10 +3687,7 @@ onBeforeUnmount(() => {
 
                                     </div>
                                 </div>
-                                <div
-                                    v-if="regDetailLoadingKey !== onuKey(item)"
-                                    class="shrink-0 px-4 sm:px-5 py-3 border-t border-slate-100 dark:border-white/10 bg-white/95 dark:bg-slate-900/95"
-                                >
+                                <div class="shrink-0 px-4 sm:px-5 py-3 border-t border-slate-100 dark:border-white/10 bg-white/95 dark:bg-slate-900/95">
                                     <div class="flex flex-wrap gap-2">
                                         <template v-if="regEditingKey === onuKey(item)">
                                             <button

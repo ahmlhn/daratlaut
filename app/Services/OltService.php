@@ -403,6 +403,16 @@ class OltService
     }
 
     /**
+     * Read only detail-info from OLT without extra Rx lookup or DB writes.
+     */
+    public function getOnuDetailInfoOnly(string $fsp, int $onuId): array
+    {
+        $out = $this->sendCommand("show gpon onu detail-info gpon-onu_{$fsp}:{$onuId}");
+
+        return $this->parseOnuDetail($out);
+    }
+
+    /**
      * Lightweight single-ONU lookup for exact SN search.
      * Uses only detail-info output so we avoid loading the whole FSP Rx table.
      */
@@ -593,16 +603,46 @@ class OltService
     }
 
     /**
+     * Strict FSP-wide Rx refresh for UI loads. Throws when the OLT command fails so
+     * callers can preserve cached status instead of marking everything offline.
+     *
      * @return array<string, float>
      */
     public function getFspRxMapFromPonPower(string $fsp): array
     {
-        return $this->readFspRxMapFromPonPower($fsp);
+        $rxOut = $this->sendCommand("show pon power onu-rx gpon-olt_{$fsp}");
+        $rawMap = $this->parseRxOutput($rxOut, $fsp);
+        $rxMap = [];
+        foreach ($rawMap as $key => $value) {
+            $normalized = $this->normalizeRxValue($value);
+            if ($normalized !== null) {
+                $rxMap[$key] = $normalized;
+            }
+        }
+
+        return $rxMap;
     }
 
     public function getOnuRxFromPonPower(string $fsp, int $onuId): ?float
     {
         return $this->readOnuRxFromPonPower($fsp, $onuId);
+    }
+
+    public function persistOnuLiveRx(string $fsp, int $onuId, ?string $sn, mixed $rxPower): ?float
+    {
+        $rx = $this->normalizeRxValue($rxPower);
+
+        $this->saveOnuLiveRxToDb($fsp, $onuId, $sn, $rx);
+        if ($rx !== null) {
+            $this->storeSingleRxHistorySample($fsp, $onuId, $sn, $rx);
+        }
+
+        return $rx;
+    }
+
+    public function persistOnuDetailCache(string $sn, string $fsp, int $onuId, array $detail): void
+    {
+        $this->saveOnuDetailToDb($sn, $fsp, $onuId, $detail);
     }
 
     /**
@@ -1112,6 +1152,11 @@ class OltService
             $hasLastSeenAt = Schema::hasColumn($table, 'last_seen_at');
         }
 
+        static $hasState = null;
+        if ($hasState === null) {
+            $hasState = Schema::hasColumn($table, 'state');
+        }
+
         static $hasRxPower = null;
         if ($hasRxPower === null) {
             $hasRxPower = Schema::hasColumn($table, 'rx_power');
@@ -1142,6 +1187,13 @@ class OltService
             }
         }
 
+        if ($hasState) {
+            $state = strtolower(trim((string) ($detail['status'] ?? '')));
+            if ($state !== '') {
+                $values['state'] = substr($state, 0, 30);
+            }
+        }
+
         $now = now();
         if ($hasLastDetailAt) $values['last_detail_at'] = $now;
         if ($hasLastSeenAt) $values['last_seen_at'] = $now;
@@ -1154,6 +1206,78 @@ class OltService
 
         try {
             DB::table($table)->updateOrInsert($key, $values);
+        } catch (Throwable $e) {
+            // ignore
+        }
+    }
+
+    private function saveOnuLiveRxToDb(string $fsp, int $onuId, ?string $sn, ?float $rx): void
+    {
+        if (!$this->olt) return;
+
+        $table = (new OltOnu())->getTable();
+        static $tableChecked = null;
+        if ($tableChecked === null) {
+            $tableChecked = Schema::hasTable($table);
+        }
+        if (!$tableChecked) return;
+
+        $query = DB::table($table)
+            ->where('tenant_id', $this->tenantId)
+            ->where('olt_id', $this->olt->id)
+            ->where('fsp', $fsp)
+            ->where('onu_id', $onuId);
+
+        static $snCol = null;
+        if ($snCol === null) {
+            if (Schema::hasColumn($table, 'sn')) $snCol = 'sn';
+            elseif (Schema::hasColumn($table, 'serial_number')) $snCol = 'serial_number';
+            else $snCol = null;
+        }
+
+        static $hasState = null;
+        if ($hasState === null) {
+            $hasState = Schema::hasColumn($table, 'state');
+        }
+
+        static $hasRxPower = null;
+        if ($hasRxPower === null) {
+            $hasRxPower = Schema::hasColumn($table, 'rx_power');
+        }
+
+        static $hasLastSeenAt = null;
+        if ($hasLastSeenAt === null) {
+            $hasLastSeenAt = Schema::hasColumn($table, 'last_seen_at');
+        }
+
+        static $hasUpdatedAt = null;
+        if ($hasUpdatedAt === null) {
+            $hasUpdatedAt = Schema::hasColumn($table, 'updated_at');
+        }
+
+        $values = [];
+        if ($snCol && trim((string) $sn) !== '') {
+            $values[$snCol] = trim((string) $sn);
+        }
+        if ($hasRxPower) {
+            $values['rx_power'] = $rx !== null ? round($rx, 2) : null;
+        }
+        if ($hasState) {
+            $values['state'] = $rx !== null ? 'online' : 'offline';
+        }
+        if ($hasLastSeenAt) {
+            $values['last_seen_at'] = now();
+        }
+        if ($hasUpdatedAt) {
+            $values['updated_at'] = now();
+        }
+
+        if (empty($values)) {
+            return;
+        }
+
+        try {
+            $query->limit(1)->update($values);
         } catch (Throwable $e) {
             // ignore
         }
