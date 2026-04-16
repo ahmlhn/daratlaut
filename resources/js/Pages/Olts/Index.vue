@@ -3398,7 +3398,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-white/10 p-4 md:p-5 space-y-4">
-                    <div class="flex items-end gap-2">
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
                         <div class="flex-1 space-y-2">
                             <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide">Pilih OLT</label>
                             <select
@@ -3412,17 +3412,30 @@ onBeforeUnmount(() => {
                                 </option>
                             </select>
                         </div>
-                        <button
-                            v-if="!isTeknisi"
-                            type="button"
-                            class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                            :disabled="!selectedOltId"
-                            @click="openOltModal('edit')"
-                        >
-                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536M9 11l6.768-6.768a2.5 2.5 0 113.536 3.536L12.536 14.536A4 4 0 019.708 15.7L7 16l.3-2.708A4 4 0 018.464 10.464L15.232 3.696" />
-                            </svg>
-                        </button>
+                        <div class="grid grid-cols-1 gap-2 sm:flex sm:items-end">
+                            <button
+                                v-if="selectedOltId"
+                                type="button"
+                                class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                @click="openPortSlotModal()"
+                            >
+                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
+                                </svg>
+                                Slot Port
+                            </button>
+                            <button
+                                v-if="!isTeknisi"
+                                type="button"
+                                class="inline-flex h-12 w-full shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-12"
+                                :disabled="!selectedOltId"
+                                @click="openOltModal('edit')"
+                            >
+                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536M9 11l6.768-6.768a2.5 2.5 0 113.536 3.536L12.536 14.536A4 4 0 019.708 15.7L7 16l.3-2.708A4 4 0 018.464 10.464L15.232 3.696" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
 
                     <div v-if="selectedOlt" class="space-y-4 border-t border-slate-200 pt-4 dark:border-white/10">
@@ -3430,7 +3443,7 @@ onBeforeUnmount(() => {
                             <template v-if="isTeknisi">
                                 <div
                                     class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:ml-auto xl:w-auto"
-                                    :class="selectedOltWriteConfigPending ? 'xl:grid-cols-3' : 'xl:grid-cols-2'"
+                                    :class="selectedOltWriteConfigPending ? 'xl:grid-cols-2' : 'xl:grid-cols-1'"
                                 >
                                     <button
                                         type="button"
@@ -3455,17 +3468,6 @@ onBeforeUnmount(() => {
                                         </svg>
                                         {{ writeConfigBusy ? 'Menyimpan...' : 'Simpan Config' }}
                                     </button>
-                                    <button
-                                        type="button"
-                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70 xl:min-w-[148px]"
-                                        :disabled="registerBusy"
-                                        @click="openPortSlotModal()"
-                                    >
-                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
-                                        </svg>
-                                        Slot Port
-                                    </button>
                                 </div>
                             </template>
 
@@ -3473,8 +3475,8 @@ onBeforeUnmount(() => {
                                 <div
                                     class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:ml-auto xl:w-auto"
                                     :class="hasAutoRegisterItems
-                                        ? (selectedOltWriteConfigPending ? 'xl:grid-cols-4' : 'xl:grid-cols-3')
-                                        : (selectedOltWriteConfigPending ? 'xl:grid-cols-3' : 'xl:grid-cols-2')"
+                                        ? (selectedOltWriteConfigPending ? 'xl:grid-cols-3' : 'xl:grid-cols-2')
+                                        : (selectedOltWriteConfigPending ? 'xl:grid-cols-2' : 'xl:grid-cols-1')"
                                 >
                                     <button
                                         type="button"
@@ -3510,17 +3512,6 @@ onBeforeUnmount(() => {
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5h14v14H5zM8 5v4h8V5" />
                                         </svg>
                                         {{ writeConfigBusy ? 'Writing...' : 'Write Config' }}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70 xl:min-w-[148px]"
-                                        :disabled="registerBusy"
-                                        @click="openPortSlotModal()"
-                                    >
-                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
-                                        </svg>
-                                        Slot Port
                                     </button>
                                 </div>
                             </template>

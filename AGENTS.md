@@ -58,6 +58,7 @@ Last verified: 2026-04-16
 - Future v2: jika perlu log per user yang kuat, tambah schema `actor_user_id`, `actor_role`, `actor_type`, dan opsional `request_id/run_id`; baru setelah itu implement tab/grouping log per user yang strict.
 
 ## Change log
+- 2026-04-16: Tombol `Slot Port` di halaman OLT dipindahkan dari grid aksi operasional ke area `Pilih OLT/OLT aktif`; `resources/js/Pages/Olts/Index.vue` menaruh tombol dekat dropdown OLT dan tombol edit agar lebih kontekstual sebagai aksi referensi, sekaligus menyesuaikan hitungan kolom grid aksi admin/teknisi setelah tombol tersebut keluar dari deretan `Scan/Register/Write`. Docs: N/A.
 - 2026-04-16: UI/UX `Histori Log Command` OLT disusun ulang menjadi layout yang jauh lebih sederhana dan mobile-first; `resources/js/Pages/Olts/Index.vue` mengganti pola daftar kiri/detail kanan menjadi accordion satu kolom, mempertahankan panel default tertutup, memadatkan filter ke baris sederhana, dan menampilkan detail/transcript langsung di bawah item log yang dibuka. Docs: N/A.
 - 2026-04-16: Panel `Log Command` OLT kini default tertutup; `resources/js/Pages/Olts/Index.vue` menambah toggle `Tampilkan/Sembunyikan Histori`, menyembunyikan filter serta list/detail log sampai user membukanya, dan me-reset kondisi panel ke tertutup saat ganti OLT. Docs: N/A.
 - 2026-04-16: Header panel `Log Command` OLT dibersihkan lagi dengan menghapus helper text penjelas di bawah judul agar area atas lebih ringkas, terutama pada mobile; perubahan ada di `resources/js/Pages/Olts/Index.vue`. Docs: N/A.
