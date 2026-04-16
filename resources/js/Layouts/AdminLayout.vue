@@ -651,72 +651,127 @@ const breadcrumbs = computed(() => {
 
     <div
       v-if="gpsRequiredForFeature && (gpsValidationPending || gpsFeatureLocked)"
-      class="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-md sm:p-6"
+      class="fixed inset-0 z-[80] overflow-y-auto bg-slate-950/55 px-4 py-6 backdrop-blur-md sm:px-6 sm:py-10"
     >
-      <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.14),transparent_45%),radial-gradient(circle_at_bottom,rgba(14,165,233,0.10),transparent_35%)]"></div>
+      <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.16),transparent_36%),radial-gradient(circle_at_bottom,rgba(14,165,233,0.10),transparent_28%),linear-gradient(180deg,rgba(15,23,42,0.18),rgba(15,23,42,0.5))]"></div>
       <div
-        class="relative w-full max-w-lg overflow-hidden rounded-[32px] border bg-white/96 p-6 shadow-[0_28px_90px_-36px_rgba(15,23,42,0.55)] dark:bg-slate-950/96 sm:p-8"
+        class="relative mx-auto my-auto w-full max-w-3xl overflow-hidden rounded-[30px] border bg-white/96 shadow-[0_32px_100px_-36px_rgba(15,23,42,0.62)] dark:bg-slate-950/96"
         :class="gpsValidationPending
-          ? 'border-slate-200 text-slate-700 dark:border-white/10 dark:text-slate-200'
-          : 'border-red-200 text-slate-700 dark:border-red-500/30 dark:text-slate-200'"
+          ? 'border-slate-200 dark:border-white/10'
+          : 'border-red-200 dark:border-red-500/30'"
       >
-        <div class="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.6),transparent_70%)] dark:bg-[radial-gradient(circle_at_top,rgba(248,250,252,0.08),transparent_70%)]"></div>
+        <div class="absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.62),transparent_72%)] dark:bg-[radial-gradient(circle_at_top,rgba(248,250,252,0.1),transparent_72%)]"></div>
+        <div class="relative flex flex-col lg:min-h-[420px] lg:flex-row">
+          <div
+            class="relative overflow-hidden px-6 py-7 sm:px-8 sm:py-8 lg:w-[42%] lg:px-9 lg:py-10"
+            :class="gpsValidationPending
+              ? 'bg-slate-50/90 dark:bg-slate-900/70'
+              : 'bg-red-50/85 dark:bg-red-500/8'"
+          >
+            <div class="absolute inset-0 opacity-70" :class="gpsValidationPending
+              ? 'bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.95),transparent_42%)] dark:bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.08),transparent_42%)]'
+              : 'bg-[radial-gradient(circle_at_top_left,rgba(254,226,226,0.95),transparent_40%)] dark:bg-[radial-gradient(circle_at_top_left,rgba(248,113,113,0.12),transparent_40%)]'"></div>
 
-        <template v-if="gpsValidationPending">
-          <div class="relative flex flex-col gap-5">
-            <div class="flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-100 text-slate-700 shadow-inner dark:bg-slate-900 dark:text-slate-200">
-              <svg class="h-8 w-8 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" class="opacity-20" stroke="currentColor" stroke-width="2.5" />
-                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
-              </svg>
-            </div>
-            <div>
-              <div class="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Validasi GPS</div>
-              <h2 class="mt-3 text-2xl font-black tracking-tight text-slate-900 dark:text-white">Memeriksa akses lokasi perangkat</h2>
-              <p class="mt-3 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-                Tunggu sebentar. Sistem sedang mengecek apakah GPS dan izin lokasi sudah siap untuk membuka halaman teknisi.
-              </p>
-            </div>
-            <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-200">
-              {{ gpsValidationStatusText }}
-            </div>
-          </div>
-        </template>
-
-        <template v-else>
-          <div class="relative flex flex-col gap-5">
-            <div class="flex h-16 w-16 items-center justify-center rounded-3xl bg-red-100 text-red-600 shadow-inner dark:bg-red-500/15 dark:text-red-300">
-              <svg class="h-8 w-8" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 9v4m0 4h.01M10.29 3.86l-7 12.12A2 2 0 0 0 5.02 19h13.96a2 2 0 0 0 1.73-3.02l-7-12.12a2 2 0 0 0-3.46 0Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </div>
-            <div>
-              <div class="text-[11px] font-black uppercase tracking-[0.24em] text-red-500 dark:text-red-300">Akses lokasi dibutuhkan</div>
-              <h2 class="mt-3 text-2xl font-black tracking-tight text-slate-900 dark:text-white">{{ gpsLockTitle }}</h2>
-              <p class="mt-3 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-                {{ gpsLockDescription }}
-              </p>
-            </div>
-            <div class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
-              {{ gpsLockMessage }}
-            </div>
-            <div v-if="gpsLockSteps.length" class="grid gap-3">
-              <div
-                v-for="(step, index) in gpsLockSteps"
-                :key="`${index}-${step}`"
-                class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-200"
-              >
-                <div class="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">Langkah {{ index + 1 }}</div>
-                <div class="mt-2 leading-relaxed">{{ step }}</div>
+            <template v-if="gpsValidationPending">
+              <div class="relative flex h-full flex-col justify-between gap-6">
+                <div>
+                  <div class="flex h-16 w-16 items-center justify-center rounded-3xl bg-white/90 text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] dark:bg-slate-950/80 dark:text-slate-200">
+                    <svg class="h-8 w-8 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" class="opacity-20" stroke="currentColor" stroke-width="2.5" />
+                      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                    </svg>
+                  </div>
+                  <div class="mt-6 text-[11px] font-black uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Validasi GPS</div>
+                  <h2 class="mt-3 text-2xl font-black tracking-tight text-slate-900 dark:text-white">Memeriksa akses lokasi perangkat</h2>
+                  <p class="mt-3 max-w-sm text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+                    Tunggu sebentar. Sistem sedang memastikan GPS dan izin lokasi sudah siap sebelum halaman teknisi dibuka.
+                  </p>
+                </div>
+                <div class="rounded-2xl border border-white/70 bg-white/70 px-4 py-3 text-sm font-semibold text-slate-700 backdrop-blur dark:border-white/10 dark:bg-slate-950/55 dark:text-slate-200">
+                  {{ gpsValidationStatusText }}
+                </div>
               </div>
-            </div>
-            <div class="flex flex-col gap-3 sm:flex-row">
-              <button @click="retryLocationTracking" class="inline-flex h-12 items-center justify-center rounded-2xl bg-red-600 px-5 text-sm font-bold text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700">
-                Coba Lagi
-              </button>
-            </div>
+            </template>
+
+            <template v-else>
+              <div class="relative flex h-full flex-col justify-between gap-6">
+                <div>
+                  <div class="flex h-16 w-16 items-center justify-center rounded-3xl bg-white/90 text-red-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] dark:bg-slate-950/80 dark:text-red-300">
+                    <svg class="h-8 w-8" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M12 9v4m0 4h.01M10.29 3.86l-7 12.12A2 2 0 0 0 5.02 19h13.96a2 2 0 0 0 1.73-3.02l-7-12.12a2 2 0 0 0-3.46 0Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </div>
+                  <div class="mt-6 text-[11px] font-black uppercase tracking-[0.24em] text-red-500 dark:text-red-300">Akses lokasi dibutuhkan</div>
+                  <h2 class="mt-3 text-2xl font-black tracking-tight text-slate-900 dark:text-white">{{ gpsLockTitle }}</h2>
+                  <p class="mt-3 max-w-sm text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+                    {{ gpsLockDescription }}
+                  </p>
+                </div>
+                <div class="rounded-2xl border border-red-200/80 bg-white/78 px-4 py-3 text-sm font-semibold text-red-700 backdrop-blur dark:border-red-500/20 dark:bg-slate-950/55 dark:text-red-200">
+                  {{ gpsLockMessage }}
+                </div>
+              </div>
+            </template>
           </div>
-        </template>
+
+          <div class="relative flex min-h-full flex-1 flex-col px-6 py-7 sm:px-8 sm:py-8 lg:px-9 lg:py-10">
+            <template v-if="gpsValidationPending">
+              <div class="flex h-full flex-col justify-between gap-6">
+                <div>
+                  <div class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-400">
+                    <span class="inline-flex h-2 w-2 rounded-full bg-slate-400"></span>
+                    Mohon tunggu
+                  </div>
+                  <div class="mt-5 rounded-3xl border border-slate-200 bg-slate-50/85 p-5 dark:border-white/10 dark:bg-slate-900/60">
+                    <div class="text-sm font-semibold text-slate-900 dark:text-white">Yang sedang dicek</div>
+                    <div class="mt-3 grid gap-3 text-sm text-slate-600 dark:text-slate-300">
+                      <div class="rounded-2xl bg-white px-4 py-3 dark:bg-slate-950/70">Status GPS perangkat</div>
+                      <div class="rounded-2xl bg-white px-4 py-3 dark:bg-slate-950/70">Izin lokasi dari browser</div>
+                      <div class="rounded-2xl bg-white px-4 py-3 dark:bg-slate-950/70">Kesiapan sinkron lokasi awal</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                  Setelah pemeriksaan selesai, halaman akan terbuka otomatis tanpa perlu refresh.
+                </div>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="flex h-full flex-col justify-between gap-6">
+                <div>
+                  <div class="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+                    <span class="inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+                    Halaman dikunci sementara
+                  </div>
+                  <div class="mt-5 rounded-3xl border border-slate-200 bg-slate-50/85 p-5 dark:border-white/10 dark:bg-slate-900/60">
+                    <div class="text-sm font-semibold text-slate-900 dark:text-white">Yang perlu dilakukan</div>
+                    <div class="mt-4 grid gap-3">
+                      <div
+                        v-for="(step, index) in gpsLockSteps"
+                        :key="`${index}-${step}`"
+                        class="flex items-start gap-3 rounded-2xl bg-white px-4 py-3 dark:bg-slate-950/70"
+                      >
+                        <div class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-black text-white dark:bg-white dark:text-slate-900">
+                          {{ index + 1 }}
+                        </div>
+                        <div class="text-sm leading-relaxed text-slate-700 dark:text-slate-200">{{ step }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <button @click="retryLocationTracking" class="inline-flex h-12 items-center justify-center rounded-2xl bg-red-600 px-5 text-sm font-bold text-white shadow-lg shadow-red-500/20 transition hover:bg-red-700">
+                    Coba Lagi
+                  </button>
+                  <div class="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                    Jika izin lokasi baru saja diaktifkan, tunggu beberapa detik lalu tekan tombol ini.
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
 

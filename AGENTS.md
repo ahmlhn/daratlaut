@@ -58,6 +58,7 @@ Last verified: 2026-04-16
 - Future v2: jika perlu log per user yang kuat, tambah schema `actor_user_id`, `actor_role`, `actor_type`, dan opsional `request_id/run_id`; baru setelah itu implement tab/grouping log per user yang strict.
 
 ## Change log
+- 2026-04-16: Overlay fullscreen gate GPS teknisi di `AdminLayout` dirapikan lagi; panel kini dibagi menjadi area konteks + area aksi yang lebih proporsional, status validasi memakai kartu progres yang lebih tenang, dan mode lock menampilkan langkah bernomor yang lebih jelas di mobile maupun desktop. Docs: N/A.
 - 2026-04-16: Gate GPS teknisi di `AdminLayout` diubah dari panel inline menjadi overlay lock fullscreen modern; konten halaman tetap dirender di belakang, lalu overlay validasi/lock muncul dengan backdrop blur, kartu pusat, dan CTA yang lebih fokus agar status akses lokasi terasa jelas di mobile maupun desktop. Docs: N/A.
 - 2026-04-16: Overlay lock GPS untuk teknisi di `AdminLayout` dirapikan agar tidak memuat informasi dobel; status validasi dan lock kini memakai kartu modern dengan pesan lebih singkat, alasan yang lebih mudah dipahami teknisi, langkah tindak lanjut yang ringkas, dan CTA `Coba Lagi` yang lebih fokus. Docs: N/A.
 - 2026-04-16: Banner status lokasi pasif (`Lokasi aktif` / jam sinkron terakhir) di `AdminLayout` tidak lagi ditampilkan untuk role `teknisi`; gate validasi dan blokir GPS tetap aktif, tetapi info status sukses harian disembunyikan agar halaman teknisi lebih ringkas. Docs: N/A.
