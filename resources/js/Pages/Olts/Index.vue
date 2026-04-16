@@ -3398,7 +3398,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-white/10 p-4 md:p-5 space-y-4">
-                    <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <div class="flex items-end gap-2">
                         <div class="flex-1 space-y-2">
                             <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide">Pilih OLT</label>
                             <select
@@ -3412,22 +3412,11 @@ onBeforeUnmount(() => {
                                 </option>
                             </select>
                         </div>
-                        <div class="grid grid-cols-1 gap-2 sm:flex sm:items-end">
-                            <button
-                                v-if="selectedOltId"
-                                type="button"
-                                class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                                @click="openPortSlotModal()"
-                            >
-                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
-                                </svg>
-                                Slot Port
-                            </button>
+                        <div class="flex shrink-0 items-end gap-2">
                             <button
                                 v-if="!isTeknisi"
                                 type="button"
-                                class="inline-flex h-12 w-full shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-12"
+                                class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                                 :disabled="!selectedOltId"
                                 @click="openOltModal('edit')"
                             >
@@ -3606,7 +3595,19 @@ onBeforeUnmount(() => {
                                 </svg>
                             </div>
                             <div>
-                                <div class="text-base font-black text-slate-700 dark:text-slate-200 uppercase">ONU Registered</div>
+                                <div class="flex items-center gap-2">
+                                    <div class="text-base font-black text-slate-700 dark:text-slate-200 uppercase">ONU Registered</div>
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                                        :disabled="registerBusy"
+                                        @click="openPortSlotModal()"
+                                    >
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
+                                        </svg>
+                                    </button>
+                                </div>
                                 <div class="text-sm text-slate-500 dark:text-slate-400">
                                     Total:
                                     <span class="font-bold text-slate-700 dark:text-slate-200">{{ registered.length }}</span>
