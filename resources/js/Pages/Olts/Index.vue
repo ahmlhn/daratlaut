@@ -263,6 +263,9 @@ const olts = ref([]);
 const loadingOlts = ref(false);
 const selectedOltId = ref('');
 const selectedOlt = computed(() => olts.value.find(o => String(o.id) === String(selectedOltId.value)) || null);
+const selectedOltWriteConfigPending = computed(() => !!selectedOlt.value?.write_config_pending);
+const OLT_META_POLL_MS = 10000;
+let oltMetaPollTimer = null;
 
 function readLastSelectedOltId() {
     try {
@@ -360,6 +363,65 @@ async function loadOlts() {
     } finally {
         loadingOlts.value = false;
     }
+}
+
+function setSelectedOltConfigPending(pending, pendingAt = '') {
+    const currentId = String(selectedOltId.value || '').trim();
+    if (!currentId || !Array.isArray(olts.value)) return;
+
+    const nextList = olts.value.map((item) => {
+        if (String(item?.id || '') !== currentId) {
+            return item;
+        }
+
+        return {
+            ...item,
+            write_config_pending: !!pending,
+            write_config_pending_at: pending ? String(pendingAt || new Date().toISOString()) : null,
+        };
+    });
+
+    olts.value = nextList;
+}
+
+async function refreshSelectedOltMeta() {
+    const currentId = String(selectedOltId.value || '').trim();
+    if (!currentId) return;
+
+    try {
+        const data = await fetchJson(`${API_BASE}/olts/${currentId}`);
+        const olt = data?.data;
+        if (!olt) return;
+
+        const nextList = Array.isArray(olts.value) ? olts.value.slice() : [];
+        const idx = nextList.findIndex((item) => String(item?.id || '') === currentId);
+        if (idx >= 0) {
+            nextList[idx] = {
+                ...nextList[idx],
+                write_config_pending: !!olt.write_config_pending,
+                write_config_pending_at: olt.write_config_pending_at || null,
+            };
+            olts.value = nextList;
+        }
+    } catch {
+        // keep current badge state on transient errors
+    }
+}
+
+function stopOltMetaPolling() {
+    if (oltMetaPollTimer) {
+        clearInterval(oltMetaPollTimer);
+        oltMetaPollTimer = null;
+    }
+}
+
+function startOltMetaPolling() {
+    stopOltMetaPolling();
+    if (!selectedOltId.value) return;
+
+    oltMetaPollTimer = setInterval(() => {
+        refreshSelectedOltMeta().catch(() => {});
+    }, OLT_META_POLL_MS);
 }
 
 // ========== OLT Modal ==========
@@ -695,7 +757,6 @@ const portSlotTotals = ref({
     total_empty_slots: 0,
 });
 const registerProgressText = ref('Registrasi berjalan...');
-const teknisiWriteReady = ref(false);
 const uncfgStatus = ref({ tone: 'info', message: '' });
 const autoRegisterRunId = ref(null);
 const autoRegisterSetupOpen = ref(false);
@@ -994,6 +1055,7 @@ async function finishAutoRegisterRun(status, summary = {}) {
     registerBusy.value = false;
 
     const errorCount = Number(summary.error || 0);
+    const successCount = Number(summary.success || 0);
     let message = String(summary.state_text || summary.message || '').trim();
     if (!message) {
         if (status === 'error') {
@@ -1011,13 +1073,17 @@ async function finishAutoRegisterRun(status, summary = {}) {
         // ignore refresh scan errors
     }
 
+    if (successCount > 0) {
+        setSelectedOltConfigPending(true);
+    }
+
     completeAutoRegisterModal(
         message,
         status === 'error'
             ? 'Proses auto register berhenti dengan error. Periksa log command untuk detail.'
             : errorCount > 0
                 ? `Proses selesai dengan ${errorCount} ONU gagal. Periksa log command untuk detail. Data ONU Registered tidak di-refresh otomatis.`
-                : `Semua batch selesai diproses. Success ${Number(summary.success || 0)}, error ${errorCount}. Data ONU Registered tidak di-refresh otomatis.`,
+                : `Semua batch selesai diproses. Success ${successCount}, error ${errorCount}. Data ONU Registered tidak di-refresh otomatis.`,
         100,
         'Selesai',
         status === 'error' ? 'error' : errorCount > 0 ? 'info' : 'success'
@@ -1160,11 +1226,14 @@ const writeConfigFromTeknisi = ref(false);
 const writeConfigBusy = ref(false);
 
 function requestWriteConfig(fromTeknisi = false) {
+    if (writeConfigBusy.value) {
+        return;
+    }
     if (!selectedOltId.value) {
         setUncfgStatus('Pilih OLT dulu.', 'error');
         return;
     }
-    if (fromTeknisi && !teknisiWriteReady.value) {
+    if (!selectedOltWriteConfigPending.value) {
         setUncfgStatus('Tidak ada data yang harus disimpan.', 'info');
         return;
     }
@@ -1184,8 +1253,8 @@ async function confirmWriteConfig() {
     writeConfigConfirmOpen.value = false;
 
     const ok = await writeConfigInternal();
-    if (ok && writeConfigFromTeknisi.value) {
-        teknisiWriteReady.value = false;
+    if (ok) {
+        setSelectedOltConfigPending(false, null);
     }
     writeConfigFromTeknisi.value = false;
     writeConfigBusy.value = false;
@@ -1377,7 +1446,7 @@ async function registerSelectedOnu() {
         storeUncfgCache(selectedOltId.value);
         const nameApplied = data?.data?.name_applied !== false;
         setUncfgStatus(String(data.message || 'ONU berhasil diregistrasi.'), nameApplied ? 'success' : 'info');
-        if (isTeknisi.value) teknisiWriteReady.value = true;
+        setSelectedOltConfigPending(true);
 
         const res = data?.data || {};
         const fsp = String(res.fsp || item.fsp || '');
@@ -2722,7 +2791,7 @@ async function saveEditOnuName(onu) {
 
         cancelEditOnuName();
         markOnuNameSaved(key);
-        if (isTeknisi.value) teknisiWriteReady.value = true;
+        setSelectedOltConfigPending(true);
     } catch (e) {
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         regEditingError.value = e.message || 'Gagal update nama';
@@ -2792,7 +2861,7 @@ async function deleteRegisteredOnu(onu) {
         if (regExpandedKey.value === key) closeRegDetailModal();
         clearRxHistoryCache(key);
         setRegStatus('ONU berhasil dihapus.', 'success');
-        if (isTeknisi.value) teknisiWriteReady.value = true;
+        setSelectedOltConfigPending(true);
     } catch (e) {
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
         setRegStatus(e.message || 'Hapus gagal', 'error');
@@ -2960,7 +3029,6 @@ async function onOltChanged(newId, prevId) {
     registerBusy.value = false;
     manualRegisterActive.value = false;
     registerProgressText.value = 'Registrasi berjalan...';
-    teknisiWriteReady.value = false;
     setUncfgStatus(newId ? 'Pilih OLT untuk mulai scan.' : '', 'info');
 
     registered.value = [];
@@ -3004,15 +3072,19 @@ async function onOltChanged(newId, prevId) {
 
 watch(selectedOltId, (val, oldVal) => {
     writeLastSelectedOltId(val);
+    stopOltMetaPolling();
     onOltChanged(val, oldVal).catch(() => {});
+    startOltMetaPolling();
 });
 
 onMounted(async () => {
     await loadOlts();
+    startOltMetaPolling();
 });
 
 onBeforeUnmount(() => {
     stopLiveStatus();
+    stopOltMetaPolling();
     stopAutoRegisterPolling();
     hideAutoRegisterSetupModal();
     hideAutoRegisterModal();
@@ -3084,7 +3156,7 @@ onBeforeUnmount(() => {
                             <template v-if="isTeknisi">
                                 <div
                                     class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:ml-auto xl:w-auto"
-                                    :class="teknisiWriteReady ? 'xl:grid-cols-3' : 'xl:grid-cols-2'"
+                                    :class="selectedOltWriteConfigPending ? 'xl:grid-cols-3' : 'xl:grid-cols-2'"
                                 >
                                     <button
                                         type="button"
@@ -3098,16 +3170,16 @@ onBeforeUnmount(() => {
                                         {{ uncfgLoading ? 'Scanning...' : 'Scan ONU Baru' }}
                                     </button>
                                     <button
-                                        v-if="teknisiWriteReady"
+                                        v-if="selectedOltWriteConfigPending"
                                         type="button"
                                         class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/70 xl:min-w-[148px]"
-                                        :disabled="registerBusy"
+                                        :disabled="registerBusy || writeConfigBusy"
                                         @click="writeConfigTeknisi()"
                                     >
                                         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                                         </svg>
-                                        Simpan Config
+                                        {{ writeConfigBusy ? 'Menyimpan...' : 'Simpan Config' }}
                                     </button>
                                     <button
                                         type="button"
@@ -3124,7 +3196,10 @@ onBeforeUnmount(() => {
                             </template>
 
                             <template v-else>
-                                <div class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:ml-auto xl:w-auto xl:grid-cols-4">
+                                <div
+                                    class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:ml-auto xl:w-auto"
+                                    :class="selectedOltWriteConfigPending ? 'xl:grid-cols-4' : 'xl:grid-cols-3'"
+                                >
                                     <button
                                         type="button"
                                         class="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70 xl:min-w-[148px]"
@@ -3148,15 +3223,16 @@ onBeforeUnmount(() => {
                                         Auto Register
                                     </button>
                                     <button
+                                        v-if="selectedOltWriteConfigPending"
                                         type="button"
                                         class="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-5 text-sm font-bold text-amber-800 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/15 xl:min-w-[148px]"
-                                        :disabled="registerBusy"
+                                        :disabled="registerBusy || writeConfigBusy"
                                         @click="requestWriteConfig(false)"
                                     >
                                         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5h14v14H5zM8 5v4h8V5" />
                                         </svg>
-                                        Write Config
+                                        {{ writeConfigBusy ? 'Writing...' : 'Write Config' }}
                                     </button>
                                     <button
                                         type="button"
@@ -4328,7 +4404,7 @@ onBeforeUnmount(() => {
                                         :disabled="writeConfigBusy"
                                         @click="confirmWriteConfig()"
                                     >
-                                        Simpan
+                                        {{ writeConfigBusy ? 'Menyimpan...' : 'Simpan' }}
                                     </button>
                                 </div>
                             </div>

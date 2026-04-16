@@ -119,6 +119,9 @@ class AutoRegisterOnuBatchJob implements ShouldQueue
 
             $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+            if ($batchSuccess > 0) {
+                $olt->markWriteConfigPending();
+            }
 
             $summary = $this->readRunSummary();
             $summary['mode'] = 'queued_batches';

@@ -24,6 +24,8 @@ class Olt extends Model
         'vlan_default',
         'onu_type_default',
         'service_port_id_default',
+        'write_config_pending',
+        'write_config_pending_at',
         'teknisi_onu_rx_max_dbm',
         'teknisi_onu_rx_min_dbm',
         'fsp_cache',
@@ -38,6 +40,8 @@ class Olt extends Model
         'fsp_cache' => 'array',
         'fsp_cache_at' => 'datetime',
         'is_active' => 'boolean',
+        'write_config_pending' => 'boolean',
+        'write_config_pending_at' => 'datetime',
         'teknisi_onu_rx_max_dbm' => 'float',
         'teknisi_onu_rx_min_dbm' => 'float',
     ];
@@ -128,5 +132,56 @@ class Olt extends Model
             ]);
         }
         $this->onus()->delete();
+    }
+
+    public function hasWriteConfigPendingColumns(): bool
+    {
+        static $hasColumns = null;
+        if ($hasColumns === null) {
+            $table = $this->getTable();
+            $hasColumns = Schema::hasColumn($table, 'write_config_pending')
+                && Schema::hasColumn($table, 'write_config_pending_at');
+        }
+
+        return $hasColumns;
+    }
+
+    public function markWriteConfigPending(): void
+    {
+        if (!$this->hasWriteConfigPendingColumns()) {
+            return;
+        }
+
+        $this->forceFill([
+            'write_config_pending' => true,
+            'write_config_pending_at' => now(),
+        ])->save();
+    }
+
+    public function clearWriteConfigPending(): void
+    {
+        if (!$this->hasWriteConfigPendingColumns()) {
+            return;
+        }
+
+        $this->forceFill([
+            'write_config_pending' => false,
+            'write_config_pending_at' => null,
+        ])->save();
+    }
+
+    public function getWriteConfigPendingState(): array
+    {
+        if (!$this->hasWriteConfigPendingColumns()) {
+            return [
+                'write_config_pending' => false,
+                'write_config_pending_at' => null,
+            ];
+        }
+
+        return [
+            'write_config_pending' => (bool) ($this->write_config_pending ?? false),
+            'write_config_pending_at' => $this->write_config_pending_at?->format('Y-m-d H:i:s'),
+        ];
     }
 }

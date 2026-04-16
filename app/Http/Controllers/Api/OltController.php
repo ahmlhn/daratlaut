@@ -11,6 +11,7 @@ use App\Services\OltService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
@@ -21,6 +22,12 @@ class OltController extends Controller
     private const ONU_SLOT_MAX = 128;
     private const DEFAULT_TEKNISI_ONU_RX_MAX_DBM = -11.0;
     private const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24.99;
+    private const WRITE_CONFIG_LOCK_TTL_SECONDS = 90;
+
+    private function writeConfigLockKey(int $tenantId, int $oltId): string
+    {
+        return "olt:write-config:tenant:{$tenantId}:olt:{$oltId}";
+    }
 
     private function hasTeknisiOnuRxThresholdColumns(): bool
     {
@@ -53,6 +60,39 @@ class OltController extends Controller
             'max' => round($max, 2),
             'min' => round($min, 2),
         ];
+    }
+
+    /**
+     * @return array{write_config_pending: bool, write_config_pending_at: ?string}
+     */
+    private function getOltWriteConfigPendingState(?Olt $olt = null): array
+    {
+        if (!$olt) {
+            return [
+                'write_config_pending' => false,
+                'write_config_pending_at' => null,
+            ];
+        }
+
+        return $olt->getWriteConfigPendingState();
+    }
+
+    private function markOltWriteConfigPending(?Olt $olt): void
+    {
+        if (!$olt) {
+            return;
+        }
+
+        $olt->markWriteConfigPending();
+    }
+
+    private function clearOltWriteConfigPending(?Olt $olt): void
+    {
+        if (!$olt) {
+            return;
+        }
+
+        $olt->clearWriteConfigPending();
     }
 
     /**
@@ -469,6 +509,7 @@ class OltController extends Controller
         $olts = $query->get()
             ->map(function ($olt) {
                 $fspCache = $olt->fsp_cache;
+                $writeConfigState = $this->getOltWriteConfigPendingState($olt);
                 return [
                     'id' => $olt->id,
                     'nama_olt' => $olt->nama_olt,
@@ -484,6 +525,8 @@ class OltController extends Controller
                     'fsp_count' => is_array($fspCache) ? count($fspCache) : 0,
                     'onu_count' => (int) ($olt->onus_count ?? 0),
                     'last_sync' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
+                    'write_config_pending' => $writeConfigState['write_config_pending'],
+                    'write_config_pending_at' => $writeConfigState['write_config_pending_at'],
                 ];
             });
         
@@ -548,6 +591,7 @@ class OltController extends Controller
 
         $olt = $query->findOrFail($id);
         $thresholds = $this->getOltTeknisiOnuRxThresholds($olt);
+        $writeConfigState = $this->getOltWriteConfigPendingState($olt);
         
         return response()->json([
             'status' => 'ok',
@@ -567,6 +611,8 @@ class OltController extends Controller
                 'fsp_cache' => $olt->fsp_cache ?? [],
                 'fsp_cache_at' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
                 'onu_count' => (int) ($olt->onus_count ?? 0),
+                'write_config_pending' => $writeConfigState['write_config_pending'],
+                'write_config_pending_at' => $writeConfigState['write_config_pending_at'],
             ],
         ]);
     }
@@ -1961,6 +2007,11 @@ class OltController extends Controller
 
             $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+            if ($saveConfig) {
+                $this->clearOltWriteConfigPending($olt);
+            } else {
+                $this->markOltWriteConfigPending($olt);
+            }
 
             $summary = [
                 'count' => 1,
@@ -2083,6 +2134,7 @@ class OltController extends Controller
             $service->updateOnuName($request->fsp, $request->onu_id, $request->name);
             $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+            $this->markOltWriteConfigPending($olt);
 
             $summary = [
                 'fsp' => (string) $request->fsp,
@@ -2169,6 +2221,7 @@ class OltController extends Controller
             $service->deleteOnu($request->fsp, $request->onu_id);
             $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+            $this->markOltWriteConfigPending($olt);
 
             $summary = [
                 'fsp' => (string) $request->fsp,
@@ -2320,6 +2373,14 @@ class OltController extends Controller
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         $actor = $this->actorName($request);
+        $lock = Cache::lock($this->writeConfigLockKey($tenantId, (int) $olt->id), self::WRITE_CONFIG_LOCK_TTL_SECONDS);
+
+        if (!$lock->get()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Write-config sedang diproses user lain. Coba lagi beberapa saat.',
+            ], 409);
+        }
 
         $service = null;
         $logExcerpt = '';
@@ -2329,35 +2390,26 @@ class OltController extends Controller
             $service->setSuppressActionLog(true);
             $service->connect($olt);
             $service->startTrace();
-            $out = $service->sendCommand('write', 60);
-            $hasErr = preg_match(OltService::ERROR_RE, $out) && !preg_match(OltService::OK_RE, $out);
+            $service->writeConfig();
             $logExcerpt = $service->getTraceText(20000);
             $service->disconnect();
+            $this->clearOltWriteConfigPending($olt);
 
             $summary = [
                 'count' => 1,
-                'success' => $hasErr ? 0 : 1,
-                'error' => $hasErr ? 1 : 0,
+                'success' => 1,
+                'error' => 0,
             ];
             $logId = OltLog::logAction(
                 $tenantId,
                 $olt->id,
                 $olt->nama_olt,
                 'write',
-                $hasErr ? 'error' : 'done',
+                'done',
                 $summary,
                 $logExcerpt,
                 $actor
             );
-
-            if ($hasErr) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Write gagal. Cek log.',
-                    'log_id' => $logId,
-                    'log_excerpt' => $logExcerpt,
-                ], 422);
-            }
 
             return response()->json([
                 'status' => 'ok',
@@ -2398,6 +2450,12 @@ class OltController extends Controller
                 'log_id' => $logId,
                 'log_excerpt' => $logExcerpt,
             ], 422);
+        } finally {
+            try {
+                $lock->release();
+            } catch (Throwable) {
+                // ignore lock release failures
+            }
         }
     }
 
@@ -2772,7 +2830,18 @@ class OltController extends Controller
             $query->where('is_active', true);
         }
 
-        $olts = $query->get(['id', 'nama_olt', 'host']);
+        $olts = $query->get()
+            ->map(function ($olt) {
+                $writeConfigState = $this->getOltWriteConfigPendingState($olt);
+
+                return [
+                    'id' => $olt->id,
+                    'nama_olt' => $olt->nama_olt,
+                    'host' => $olt->host,
+                    'write_config_pending' => $writeConfigState['write_config_pending'],
+                    'write_config_pending_at' => $writeConfigState['write_config_pending_at'],
+                ];
+            });
         
         return response()->json([
             'status' => 'ok',

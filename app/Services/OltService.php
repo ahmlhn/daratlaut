@@ -975,6 +975,9 @@ class OltService
     {
         // "write" may take a while on some OLTs; use a longer timeout (native uses ~60s).
         $out = $this->sendCommand('write', 60);
+        if ($this->outputHasError($out)) {
+            throw $this->commandException('write', $out);
+        }
         if (!$this->suppressActionLog) {
             $this->logAction('write', 'done', 'Configuration saved');
         }
