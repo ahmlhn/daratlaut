@@ -1434,6 +1434,7 @@ const regFilterFsp = ref('');
 const regLoadedFsp = ref({});
 const regLiveLoadingFsp = ref({});
 let regAllRequestToken = 0;
+let regSearchLiveRefreshToken = 0;
 const regStatus = ref({ tone: 'info', message: '' });
 const regSearch = ref('');
 const regSearchMode = ref(false);
@@ -1955,6 +1956,33 @@ function mergeRegisteredFspBatch(replaceByFsp) {
     registered.value = next;
 }
 
+function mergeRegisteredSearchResultsFromLive(items) {
+    const liveItems = Array.isArray(items) ? items : [];
+    if (!liveItems.length || !Array.isArray(registered.value) || !registered.value.length) return;
+
+    const liveByKey = {};
+    liveItems.forEach((item) => {
+        liveByKey[onuKey(item)] = item;
+    });
+
+    registered.value = registered.value.map((item) => {
+        const live = liveByKey[onuKey(item)];
+        if (!live) return item;
+
+        return {
+            ...item,
+            ...live,
+            name: live.name || item.name || '',
+            online_duration: live.online_duration || item.online_duration || '',
+            vlan: live.vlan || item.vlan || 0,
+            rx:
+                live.rx !== null && live.rx !== undefined && live.rx !== ''
+                    ? live.rx
+                    : item.rx,
+        };
+    });
+}
+
 const regFspInfoText = computed(() => {
     const total = Array.isArray(fspList.value) ? fspList.value.length : 0;
     const loaded = Object.keys(regLoadedFsp.value || {}).length;
@@ -2139,8 +2167,67 @@ async function loadRegisteredAll({ force = false, silent = false } = {}) {
     }
 }
 
+function cancelRegisteredSearchLiveRefresh() {
+    regSearchLiveRefreshToken += 1;
+    regLiveLoadingFsp.value = {};
+}
+
+async function refreshRegisteredSearchLive(query) {
+    const q = String(query || '').trim();
+    if (!selectedOltId.value || !q || !regSearchMode.value || String(regFilterFsp.value || '').trim() !== '') {
+        return;
+    }
+
+    const fspTargets = sortFspList(Array.from(collectRegisteredFspSet(registered.value)));
+    if (!fspTargets.length) return;
+
+    const requestToken = ++regSearchLiveRefreshToken;
+    fspTargets.forEach((fsp) => setRegLiveLoadingState(fsp, true));
+    setRegStatus(`Hasil cache ditemukan, memuat Rx/status dari OLT (${fspTargets.length} FSP)...`, 'loading');
+
+    try {
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/registered-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fsp_list: fspTargets }),
+        });
+
+        if (requestToken !== regSearchLiveRefreshToken) return;
+        if (String(regSearch.value || '').trim() !== q) return;
+        if (!regSearchMode.value || String(regFilterFsp.value || '').trim() !== '') return;
+        if (data.status !== 'ok') throw new Error(data.message || 'Gagal memuat data FSP');
+
+        mergeRegisteredSearchResultsFromLive(Array.isArray(data.data) ? data.data : []);
+
+        const loaded = { ...(regLoadedFsp.value || {}) };
+        fspTargets.forEach((fsp) => {
+            loaded[fsp] = true;
+        });
+        regLoadedFsp.value = loaded;
+
+        const failed = Array.isArray(data.failed) ? data.failed : [];
+        if (failed.length > 0) {
+            setRegStatus(
+                `Hasil pencarian tampil. Rx/status diperbarui, ${failed.length} FSP gagal direfresh.`,
+                'info'
+            );
+        } else {
+            setRegStatus('Hasil pencarian tampil dengan Rx/status terbaru.', 'success');
+        }
+    } catch (e) {
+        if (requestToken !== regSearchLiveRefreshToken) return;
+        if (String(regSearch.value || '').trim() !== q) return;
+        if (!regSearchMode.value || String(regFilterFsp.value || '').trim() !== '') return;
+        setRegStatus(`Hasil pencarian tampil dari cache. Refresh Rx/status gagal: ${e.message || 'error'}`, 'info');
+    } finally {
+        if (requestToken !== regSearchLiveRefreshToken) return;
+        fspTargets.forEach((fsp) => setRegLiveLoadingState(fsp, false));
+    }
+}
+
 async function changeRegFsp() {
     if (regSearchMode.value) exitRegSearchMode();
+    cancelRegisteredSearchLiveRefresh();
     regPage.value = 1;
     closeRegDetailModal();
 
@@ -2239,6 +2326,11 @@ async function searchRegisteredCache(query) {
 
     registered.value = Array.isArray(data.data) ? data.data : [];
 
+    if (registered.value.length) {
+        refreshRegisteredSearchLive(q).catch(() => {});
+        return;
+    }
+
     if (!registered.value.length && isLikelySn(q)) {
         searchRegisteredBySn(q).catch(() => {});
     }
@@ -2288,6 +2380,7 @@ watch(
         const query = String(val || '').trim();
         regPage.value = 1;
         closeRegDetailModal();
+        cancelRegisteredSearchLiveRefresh();
 
         if (regDbSearchTimer) {
             clearTimeout(regDbSearchTimer);
@@ -2728,7 +2821,7 @@ async function onOltChanged(newId, prevId) {
     }, 0);
     regSearchMode.value = false;
     regLoadedFsp.value = {};
-    regLiveLoadingFsp.value = {};
+    cancelRegisteredSearchLiveRefresh();
     regDetailModalOpen.value = false;
     regExpandedKey.value = '';
     regDetails.value = {};
