@@ -2054,6 +2054,8 @@ const registeredFiltered = computed(() => {
 });
 
 const regTotal = computed(() => registeredFiltered.value.length);
+const regOnlineTotal = computed(() => registeredFiltered.value.filter((item) => getRegStatusLabel(item) === 'online').length);
+const regOfflineTotal = computed(() => registeredFiltered.value.filter((item) => getRegStatusLabel(item) === 'offline').length);
 const regTotalPages = computed(() => Math.max(1, Math.ceil(regTotal.value / regPageSize.value)));
 const regPageStart = computed(() => (Math.max(1, regPage.value) - 1) * regPageSize.value);
 const regPageItems = computed(() => registeredFiltered.value.slice(regPageStart.value, regPageStart.value + regPageSize.value));
@@ -3877,10 +3879,6 @@ onBeforeUnmount(() => {
                                         </svg>
                                     </button>
                                 </div>
-                                <div class="text-sm text-slate-500 dark:text-slate-400">
-                                    Total:
-                                    <span class="font-bold text-slate-700 dark:text-slate-200">{{ registered.length }}</span>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -3956,9 +3954,22 @@ onBeforeUnmount(() => {
                             </div>
                         </div>
 
-                        <div class="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                            <span>{{ regTotal }} ONU</span>
-                            <span v-if="regSelectedCount">{{ regSelectedCount }} dipilih</span>
+                        <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                            <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold dark:border-white/10 dark:bg-slate-900/50">
+                                Total {{ regTotal }}
+                            </span>
+                            <span class="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                Online {{ regOnlineTotal }}
+                            </span>
+                            <span class="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold dark:border-white/10 dark:bg-slate-900/70">
+                                Offline {{ regOfflineTotal }}
+                            </span>
+                            <span
+                                v-if="regSelectedCount"
+                                class="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-semibold text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300"
+                            >
+                                Dipilih {{ regSelectedCount }}
+                            </span>
                         </div>
 
                         <div

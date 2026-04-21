@@ -58,6 +58,7 @@ Last verified: 2026-04-21
 - Future v2: jika perlu log per user yang kuat, tambah schema `actor_user_id`, `actor_role`, `actor_type`, dan opsional `request_id/run_id`; baru setelah itu implement tab/grouping log per user yang strict.
 
 ## Change log
+- 2026-04-21: Ringkasan `ONU Registered` dirapikan lagi di `resources/js/Pages/Olts/Index.vue`; info `Total` yang dobel di header dihapus, lalu area bawah filter diganti menjadi satu baris chip ringkas `Total / Online / Offline` dengan chip `Dipilih` yang hanya muncul saat bulk selection aktif. Docs: N/A.
 - 2026-04-21: Layout mobile filter `ONU Registered` dirapikan lagi di `resources/js/Pages/Olts/Index.vue`; `Cari ONU` kini jadi baris penuh di atas, kontrol `F/S/P` dan `Status` dipadatkan dalam grid dua kolom, tinggi field turun ke `h-10`, dan panel bulk action mobile diubah menjadi grid dua kolom agar tombol lebih stabil di layar kecil. Docs: N/A.
 - 2026-04-21: Toolbar filter `ONU Registered` diringkas lagi di `resources/js/Pages/Olts/Index.vue`; kontrol atas kini memakai tiga field sejajar `F/S/P`, `Cari ONU`, dan `Status`, ringkasan list dipadatkan menjadi teks kecil `x ONU`, dan panel bulk action hanya muncul saat ada item terpilih. Docs: N/A.
 - 2026-04-21: Opsi filter cepat `Belum Bernama` di panel `ONU Registered` dihapus dari `resources/js/Pages/Olts/Index.vue`, sehingga quick filter kini hanya menyisakan `Semua/Online/Offline/Rx Jelek`. Docs: N/A.
