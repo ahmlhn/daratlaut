@@ -847,7 +847,11 @@ const autoRegisterModalText = ref('Menyiapkan auto register...');
 const autoRegisterModalNote = ref('Mohon tunggu, proses berjalan di queue worker.');
 const autoRegisterModalEta = ref('Estimasi: menunggu queue worker...');
 const autoRegisterModalPercent = ref(0);
+const autoRegisterRealtimeEnabled = ref(false);
+const autoRegisterRealtimeSubscribed = ref(false);
 let autoRegisterPollTimer = null;
+let autoRegisterEchoInitPromise = null;
+let autoRegisterRealtimeChannelName = '';
 
 // Live status (native parity): rotate command lines while actions run.
 let statusTimer = null;
@@ -1167,6 +1171,83 @@ function completeAutoRegisterModal(text, note, percent = 100, eta = 'Selesai', t
     updateAutoRegisterModal(text, percent, note, eta, tone, true);
 }
 
+function buildAutoRegisterRealtimeChannelName(runId = autoRegisterRunId.value) {
+    const tenantId = Number(page.props.auth?.user?.tenant_id || 0);
+    const oltId = Number(selectedOltId.value || 0);
+    const safeRunId = Number(runId || 0);
+
+    if (tenantId <= 0 || oltId <= 0 || safeRunId <= 0) {
+        return '';
+    }
+
+    return `tenants.${tenantId}.olts.${oltId}.auto-register.${safeRunId}`;
+}
+
+async function ensureAutoRegisterEcho() {
+    if (window.Echo) {
+        autoRegisterRealtimeEnabled.value = true;
+        return window.Echo;
+    }
+
+    if (!autoRegisterEchoInitPromise) {
+        autoRegisterEchoInitPromise = import('@/echo.js')
+            .then(() => window.Echo || null)
+            .catch(() => null);
+    }
+
+    const echo = await autoRegisterEchoInitPromise;
+    autoRegisterRealtimeEnabled.value = !!echo;
+    return echo;
+}
+
+function stopAutoRegisterRealtime() {
+    if (autoRegisterRealtimeChannelName && window.Echo?.leave) {
+        try {
+            window.Echo.leave(autoRegisterRealtimeChannelName);
+        } catch {
+            // ignore websocket cleanup errors
+        }
+    }
+
+    autoRegisterRealtimeChannelName = '';
+    autoRegisterRealtimeSubscribed.value = false;
+}
+
+async function startAutoRegisterRealtime(runId) {
+    const channelName = buildAutoRegisterRealtimeChannelName(runId);
+    if (!channelName) {
+        stopAutoRegisterRealtime();
+        return false;
+    }
+
+    if (autoRegisterRealtimeChannelName === channelName && autoRegisterRealtimeSubscribed.value) {
+        return true;
+    }
+
+    stopAutoRegisterRealtime();
+
+    const echo = await ensureAutoRegisterEcho();
+    if (!echo?.private) {
+        autoRegisterRealtimeEnabled.value = false;
+        return false;
+    }
+
+    try {
+        echo.private(channelName).listen('.olt.auto-register.progress.updated', (payload) => {
+            autoRegisterRealtimeSubscribed.value = true;
+            handleAutoRegisterPayload(payload || {}).catch(() => {});
+        });
+
+        autoRegisterRealtimeChannelName = channelName;
+        autoRegisterRealtimeSubscribed.value = true;
+        autoRegisterRealtimeEnabled.value = true;
+        return true;
+    } catch {
+        autoRegisterRealtimeSubscribed.value = false;
+        return false;
+    }
+}
+
 function stopAutoRegisterPolling(resetRun = true) {
     if (autoRegisterPollTimer) {
         clearTimeout(autoRegisterPollTimer);
@@ -1186,6 +1267,7 @@ function scheduleAutoRegisterPoll(runId, delay = 3000) {
 
 async function finishAutoRegisterRun(status, summary = {}) {
     stopAutoRegisterPolling();
+    stopAutoRegisterRealtime();
     registerBusy.value = false;
 
     const errorCount = Number(summary.error || 0);
@@ -1268,7 +1350,7 @@ async function handleAutoRegisterPayload(payload) {
     );
     setUncfgStatus(`${progressText} Success ${successCount}, error ${errorCount}.`, 'loading');
 
-    scheduleAutoRegisterPoll(runId, 3000);
+    scheduleAutoRegisterPoll(runId, autoRegisterRealtimeSubscribed.value ? 10000 : 3000);
 }
 
 async function pollAutoRegisterStatus(runId) {
@@ -1284,6 +1366,7 @@ async function pollAutoRegisterStatus(runId) {
     } catch (e) {
         if ([403, 404, 422].includes(Number(e?.status || 0))) {
             stopAutoRegisterPolling();
+            stopAutoRegisterRealtime();
             registerBusy.value = false;
             completeAutoRegisterModal(
                 e.message || 'Auto register gagal dipantau.',
@@ -1304,7 +1387,7 @@ async function pollAutoRegisterStatus(runId) {
             false
         );
         setUncfgStatus(e.message || 'Gagal memantau auto register. Mencoba lagi...', 'loading');
-        scheduleAutoRegisterPoll(runId, 5000);
+        scheduleAutoRegisterPoll(runId, autoRegisterRealtimeSubscribed.value ? 10000 : 5000);
     }
 }
 
@@ -1451,6 +1534,7 @@ async function submitAutoRegister() {
     hideAutoRegisterSetupModal();
     registerBusy.value = true;
     stopAutoRegisterPolling();
+    stopAutoRegisterRealtime();
     try {
         showAutoRegisterModal(
             `Mengantrikan auto register per ${AUTO_REGISTER_BATCH_SIZE} ONU...`,
@@ -1491,6 +1575,7 @@ async function submitAutoRegister() {
         }
 
         autoRegisterRunId.value = runId;
+        await startAutoRegisterRealtime(runId);
         const totalCount = Number(summary.total_count || 0);
         const totalBatches = Number(summary.total_batches || Math.ceil(totalCount / AUTO_REGISTER_BATCH_SIZE));
         updateAutoRegisterModal(
@@ -1509,6 +1594,7 @@ async function submitAutoRegister() {
     } catch (e) {
         if (e?.status === 409 && Number(e?.data?.run_id || 0) > 0) {
             autoRegisterRunId.value = Number(e.data.run_id);
+            await startAutoRegisterRealtime(autoRegisterRunId.value);
             showAutoRegisterModal(
                 'Menyambungkan ke proses auto register yang sudah berjalan...',
                 'Halaman mendeteksi run aktif pada OLT ini.',
@@ -3568,6 +3654,7 @@ async function loadLogs() {
                 const summary = parseSummaryJson(activeRun.summary_json);
                 const progressText = String(summary.state_text || '').trim() || 'Auto register sedang berjalan.';
                 setUncfgStatus(progressText, 'loading');
+                startAutoRegisterRealtime(autoRegisterRunId.value).catch(() => {});
                 scheduleAutoRegisterPoll(autoRegisterRunId.value, 1500);
             }
         }
@@ -3690,6 +3777,7 @@ function loadRegisteredMemoryCache(oltId) {
 async function onOltChanged(newId, prevId) {
     stopLiveStatus();
     stopAutoRegisterPolling();
+    stopAutoRegisterRealtime();
     hideAutoRegisterSetupModal();
     hideAutoRegisterModal();
 
@@ -3781,6 +3869,7 @@ onBeforeUnmount(() => {
     stopLiveStatus();
     stopOltMetaPolling();
     stopAutoRegisterPolling();
+    stopAutoRegisterRealtime();
     hideAutoRegisterSetupModal();
     hideAutoRegisterModal();
     if (regNameSavedTimer) clearTimeout(regNameSavedTimer);
