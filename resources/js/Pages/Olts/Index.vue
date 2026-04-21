@@ -2774,6 +2774,30 @@ function exitRegSearchMode() {
     closeRegDetailModal();
 }
 
+function cancelRegSearch() {
+    cancelRegisteredSearchLiveRefresh();
+    if (regDbSearchTimer) {
+        clearTimeout(regDbSearchTimer);
+        regDbSearchTimer = null;
+    }
+    if (regSnSearchTimer) {
+        clearTimeout(regSnSearchTimer);
+        regSnSearchTimer = null;
+    }
+    regLastDbQuery = '';
+    regLastSnQuery = '';
+    suppressRegSearchWatcher = true;
+    regSearch.value = '';
+    setTimeout(() => {
+        suppressRegSearchWatcher = false;
+    }, 0);
+    if (regSearchMode.value) {
+        exitRegSearchMode();
+    }
+    closeRegDetailModal();
+    setRegStatus('', 'info');
+}
+
 function isLikelySn(query) {
     const text = String(query || '').trim();
     if (text === '' || /\s/.test(text)) return false;
@@ -4038,11 +4062,19 @@ onBeforeUnmount(() => {
                                         v-model="regSearch"
                                         type="text"
                                         placeholder="Cari SN atau nama..."
-                                        class="h-10 w-full rounded-lg border border-slate-200 bg-white px-10 text-sm font-medium dark:border-white/10 dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                        class="h-10 w-full rounded-lg border border-slate-200 bg-white px-10 pr-20 text-sm font-medium dark:border-white/10 dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                     />
                                     <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M10 18a8 8 0 100-16 8 8 0 000 16z" /></svg>
                                     </span>
+                                    <button
+                                        v-if="regSearch || regSearchMode"
+                                        type="button"
+                                        class="absolute right-2 top-1/2 inline-flex h-7 -translate-y-1/2 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/70 dark:hover:text-white"
+                                        @click="cancelRegSearch()"
+                                    >
+                                        Batal
+                                    </button>
                                 </div>
                             </div>
 

@@ -58,6 +58,7 @@ Last verified: 2026-04-21
 - Future v2: jika perlu log per user yang kuat, tambah schema `actor_user_id`, `actor_role`, `actor_type`, dan opsional `request_id/run_id`; baru setelah itu implement tab/grouping log per user yang strict.
 
 ## Change log
+- 2026-04-21: Form pencarian `ONU Registered` kini punya aksi cepat `Batal` di `resources/js/Pages/Olts/Index.vue`; tombol ini muncul saat query aktif, lalu mereset teks pencarian, timer search, mode search, dan status pencarian dalam satu tap agar UX pencarian lebih cepat. Docs: N/A.
 - 2026-04-21: Chip ringkasan `Total / Online / Offline` di panel `ONU Registered` kini hanya tampil setelah `F/S/P` dipilih pada `resources/js/Pages/Olts/Index.vue`; saat filter FSP masih kosong, area ringkasan tidak lagi menampilkan angka global yang belum kontekstual. Docs: N/A.
 - 2026-04-21: Notifikasi sukses ringan `FSP siap` dan `Load FSP selesai` di panel `ONU Registered` dikurangi dari `resources/js/Pages/Olts/Index.vue`; load FSP kini hanya menampilkan status bila ada fallback cache atau ada kegagalan parsial, sehingga area notifikasi tidak terlalu ramai. Docs: N/A.
 - 2026-04-21: Helper text `Ketuk baris untuk melihat detail ONU.` di panel `ONU Registered` dihapus dari `resources/js/Pages/Olts/Index.vue` agar area atas tabel lebih bersih. Docs: N/A.
