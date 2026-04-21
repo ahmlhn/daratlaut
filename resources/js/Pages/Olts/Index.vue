@@ -1676,7 +1676,6 @@ const regQuickFilterOptions = [
     { value: 'online', label: 'Online' },
     { value: 'offline', label: 'Offline' },
     { value: 'rx_bad', label: 'Rx Jelek' },
-    { value: 'unnamed', label: 'Belum Bernama' },
 ];
 
 function sanitizeRxHistoryRange(value) {
@@ -2029,7 +2028,6 @@ function matchesRegQuickFilter(item) {
     if (mode === 'online') return getRegStatusLabel(item) === 'online';
     if (mode === 'offline') return getRegStatusLabel(item) === 'offline';
     if (mode === 'rx_bad') return isRegPoorRx(item);
-    if (mode === 'unnamed') return !String(item?.name || '').trim();
     return true;
 }
 
@@ -2060,16 +2058,11 @@ const regTotalPages = computed(() => Math.max(1, Math.ceil(regTotal.value / regP
 const regPageStart = computed(() => (Math.max(1, regPage.value) - 1) * regPageSize.value);
 const regPageItems = computed(() => registeredFiltered.value.slice(regPageStart.value, regPageStart.value + regPageSize.value));
 const regSelectedKeySet = computed(() => new Set((Array.isArray(regSelectedKeys.value) ? regSelectedKeys.value : []).filter(Boolean)));
-const regFilteredKeys = computed(() => registeredFiltered.value.map((item) => onuKey(item)).filter(Boolean));
-const regPageKeys = computed(() => regPageItems.value.map((item) => onuKey(item)).filter(Boolean));
 const regSelectedItems = computed(() => {
     const selected = regSelectedKeySet.value;
     return (Array.isArray(registered.value) ? registered.value : []).filter((item) => selected.has(onuKey(item)));
 });
 const regSelectedCount = computed(() => regSelectedItems.value.length);
-const regSelectedVisibleCount = computed(() => regFilteredKeys.value.filter((key) => regSelectedKeySet.value.has(key)).length);
-const regAllPageSelected = computed(() => regPageKeys.value.length > 0 && regPageKeys.value.every((key) => regSelectedKeySet.value.has(key)));
-const regAllFilteredSelected = computed(() => regFilteredKeys.value.length > 0 && regFilteredKeys.value.every((key) => regSelectedKeySet.value.has(key)));
 const regModalOnu = computed(() => {
     const key = String(regExpandedKey.value || '').trim();
     if (!key) return null;
@@ -2131,26 +2124,6 @@ function toggleRegSelection(onu) {
     const next = new Set(regSelectedKeySet.value);
     if (next.has(key)) next.delete(key);
     else next.add(key);
-    regSelectedKeys.value = Array.from(next);
-}
-
-function toggleRegPageSelection() {
-    const next = new Set(regSelectedKeySet.value);
-    if (regAllPageSelected.value) {
-        regPageKeys.value.forEach((key) => next.delete(key));
-    } else {
-        regPageKeys.value.forEach((key) => next.add(key));
-    }
-    regSelectedKeys.value = Array.from(next);
-}
-
-function toggleRegFilteredSelection() {
-    const next = new Set(regSelectedKeySet.value);
-    if (regAllFilteredSelected.value) {
-        regFilteredKeys.value.forEach((key) => next.delete(key));
-    } else {
-        regFilteredKeys.value.forEach((key) => next.add(key));
-    }
     regSelectedKeys.value = Array.from(next);
 }
 
@@ -3931,7 +3904,7 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div class="px-4 md:px-5 pb-4 space-y-3">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_160px]">
                             <div>
                                 <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Filter F/S/P</label>
                                 <select
@@ -3949,97 +3922,70 @@ onBeforeUnmount(() => {
                                 </div>
                             </div>
                             <div>
-                                <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Pencarian</label>
+                                <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Cari ONU</label>
                                 <div class="relative">
                                     <input
                                         v-model="regSearch"
                                         type="text"
                                         placeholder="Cari SN atau nama..."
-                                        class="w-full h-12 border border-slate-200 dark:border-white/10 rounded-lg px-11 text-sm font-semibold bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                        class="w-full h-12 border border-slate-200 dark:border-white/10 rounded-lg px-11 text-sm font-medium bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                     />
                                     <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M10 18a8 8 0 100-16 8 8 0 000 16z" /></svg>
                                     </span>
                                 </div>
                             </div>
+                            <div>
+                                <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Status</label>
+                                <select
+                                    :value="regQuickFilter"
+                                    class="w-full h-12 border border-slate-200 dark:border-white/10 rounded-lg px-4 text-sm font-medium bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                    @change="setRegQuickFilterValue($event.target.value)"
+                                >
+                                    <option
+                                        v-for="opt in regQuickFilterOptions"
+                                        :key="`reg-qf-${opt.value}`"
+                                        :value="opt.value"
+                                    >
+                                        {{ opt.label }}
+                                    </option>
+                                </select>
+                            </div>
                         </div>
 
-                        <div class="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3 dark:border-white/10 dark:bg-slate-900/30">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="text-[10px] font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">Filter cepat</span>
-                                <button
-                                    v-for="opt in regQuickFilterOptions"
-                                    :key="`reg-qf-${opt.value}`"
-                                    type="button"
-                                    class="inline-flex items-center rounded-full border px-3 py-1.5 text-[11px] font-bold transition"
-                                    :class="
-                                        regQuickFilter === opt.value
-                                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300'
-                                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100 dark:border-white/10 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:bg-slate-800/70'
-                                    "
-                                    @click="setRegQuickFilterValue(opt.value)"
-                                >
-                                    {{ opt.label }}
-                                </button>
-                            </div>
+                        <div class="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                            <span>{{ regTotal }} ONU</span>
+                            <span v-if="regSelectedCount">{{ regSelectedCount }} dipilih</span>
+                        </div>
 
-                            <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                                <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                                    <span class="rounded-full bg-white px-2.5 py-1 font-semibold dark:bg-slate-900/70">
-                                        Terlihat: {{ regTotal }}
-                                    </span>
-                                    <span class="rounded-full bg-white px-2.5 py-1 font-semibold dark:bg-slate-900/70">
-                                        Terpilih: {{ regSelectedCount }}
-                                    </span>
-                                    <span class="rounded-full bg-white px-2.5 py-1 font-semibold dark:bg-slate-900/70">
-                                        Dipilih di hasil: {{ regSelectedVisibleCount }}
-                                    </span>
-                                </div>
-
-                                <div class="flex flex-wrap gap-2">
-                                    <button
-                                        type="button"
-                                        class="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 px-3 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/70"
-                                        :disabled="!regPageKeys.length || regBulkActionBusy"
-                                        @click="toggleRegPageSelection()"
-                                    >
-                                        {{ regAllPageSelected ? 'Batal Pilih Halaman' : 'Pilih Halaman' }}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 px-3 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/70"
-                                        :disabled="!regFilteredKeys.length || regBulkActionBusy"
-                                        @click="toggleRegFilteredSelection()"
-                                    >
-                                        {{ regAllFilteredSelected ? 'Batal Pilih Hasil' : 'Pilih Hasil' }}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="inline-flex h-9 items-center justify-center rounded-lg border border-amber-200 px-3 text-[11px] font-bold text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/30 dark:text-amber-300 dark:hover:bg-amber-500/10"
-                                        :disabled="!regSelectedCount || regBulkActionBusy"
-                                        @click="runRegisteredBulkAction('restart')"
-                                    >
-                                        {{ regBulkActionBusy ? 'Memproses...' : 'Restart Terpilih' }}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="inline-flex h-9 items-center justify-center rounded-lg border border-rose-200 px-3 text-[11px] font-bold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10"
-                                        :disabled="!regSelectedCount || regBulkActionBusy"
-                                        @click="runRegisteredBulkAction('delete')"
-                                    >
-                                        {{ regBulkActionBusy ? 'Memproses...' : 'Hapus Terpilih' }}
-                                    </button>
-                                    <button
-                                        v-if="regSelectedCount"
-                                        type="button"
-                                        class="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 px-3 text-[11px] font-bold text-slate-500 transition hover:bg-slate-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/70"
-                                        :disabled="regBulkActionBusy"
-                                        @click="clearRegSelection()"
-                                    >
-                                        Clear
-                                    </button>
-                                </div>
-                            </div>
+                        <div
+                            v-if="regSelectedCount"
+                            class="flex flex-wrap gap-2 rounded-xl border border-slate-200/80 bg-slate-50/80 p-2 dark:border-white/10 dark:bg-slate-900/30"
+                        >
+                            <button
+                                type="button"
+                                class="inline-flex h-9 items-center justify-center rounded-lg border border-amber-200 px-3 text-[11px] font-bold text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/30 dark:text-amber-300 dark:hover:bg-amber-500/10"
+                                :disabled="regBulkActionBusy"
+                                @click="runRegisteredBulkAction('restart')"
+                            >
+                                {{ regBulkActionBusy ? 'Memproses...' : 'Restart Terpilih' }}
+                            </button>
+                            <button
+                                type="button"
+                                class="inline-flex h-9 items-center justify-center rounded-lg border border-rose-200 px-3 text-[11px] font-bold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10"
+                                :disabled="regBulkActionBusy"
+                                @click="runRegisteredBulkAction('delete')"
+                            >
+                                {{ regBulkActionBusy ? 'Memproses...' : 'Hapus Terpilih' }}
+                            </button>
+                            <button
+                                type="button"
+                                class="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 px-3 text-[11px] font-bold text-slate-500 transition hover:bg-slate-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/70"
+                                :disabled="regBulkActionBusy"
+                                @click="clearRegSelection()"
+                            >
+                                Clear
+                            </button>
                         </div>
                     </div>
 
@@ -4051,16 +3997,7 @@ onBeforeUnmount(() => {
                         <table class="w-full text-left text-sm whitespace-nowrap">
                             <thead class="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-slate-500 dark:text-slate-400 font-bold border-b border-slate-100 dark:border-white/5">
                                 <tr>
-                                    <th class="px-3 sm:px-4 py-3 text-left">
-                                        <input
-                                            type="checkbox"
-                                            class="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                                            :checked="regAllPageSelected"
-                                            :disabled="!regPageKeys.length || regBulkActionBusy"
-                                            @click.stop
-                                            @change="toggleRegPageSelection()"
-                                        />
-                                    </th>
+                                    <th class="px-3 sm:px-4 py-3 text-left">Pilih</th>
                                     <th class="px-3 sm:px-6 py-3 text-left" :aria-sort="getRegAriaSort('interface')">
                                         <button
                                             type="button"
