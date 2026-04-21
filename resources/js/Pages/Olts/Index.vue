@@ -444,7 +444,7 @@ function formatFspOptionLabel(fsp) {
     const safeFsp = String(fsp || '').trim();
     if (!safeFsp) return '-';
     const meta = getFspMeta(safeFsp);
-    return meta?.name ? `${safeFsp} • ${meta.name}` : safeFsp;
+    return meta?.name ? `${safeFsp} - ${meta.name}` : safeFsp;
 }
 
 function formatFspMetaLine(fsp) {
