@@ -126,8 +126,17 @@ if ($oltDailySyncQueueConnection === '') {
     $oltDailySyncQueueConnection = 'database';
 }
 $tenantOltScheduled = 0;
+$tenantCronSettingsTableAvailable = false;
 
-if ($opsTenantScheduleEnabled && Schema::hasTable('noci_cron_settings')) {
+if ($opsTenantScheduleEnabled) {
+    try {
+        $tenantCronSettingsTableAvailable = Schema::hasTable('noci_cron_settings');
+    } catch (\Throwable $e) {
+        Log::warning('Failed checking tenant cron settings table', ['error' => $e->getMessage()]);
+    }
+}
+
+if ($tenantCronSettingsTableAvailable) {
     try {
         $hasOltEnabledColumn = Schema::hasColumn('noci_cron_settings', 'olt_enabled');
         $hasOltTimeColumn = Schema::hasColumn('noci_cron_settings', 'olt_time');
