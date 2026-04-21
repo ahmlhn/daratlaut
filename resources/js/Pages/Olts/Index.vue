@@ -2174,6 +2174,7 @@ const registeredFiltered = computed(() => {
 const regTotal = computed(() => registeredFiltered.value.length);
 const regOnlineTotal = computed(() => registeredFiltered.value.filter((item) => getRegStatusLabel(item) === 'online').length);
 const regOfflineTotal = computed(() => registeredFiltered.value.filter((item) => getRegStatusLabel(item) === 'offline').length);
+const regHasSelectedFsp = computed(() => String(regFilterFsp.value || '').trim() !== '');
 const regTotalPages = computed(() => Math.max(1, Math.ceil(regTotal.value / regPageSize.value)));
 const regPageStart = computed(() => (Math.max(1, regPage.value) - 1) * regPageSize.value);
 const regPageItems = computed(() => registeredFiltered.value.slice(regPageStart.value, regPageStart.value + regPageSize.value));
@@ -2494,9 +2495,7 @@ async function loadRegisteredLive(fsp, { silent = false } = {}) {
             }
             regLoadedFsp.value = { ...regLoadedFsp.value, [fsp]: true };
             if (!silent) {
-                if (shouldReplace) {
-                    setRegStatus(`FSP ${fsp} siap.`, 'success');
-                } else {
+                if (!shouldReplace) {
                     setRegStatus('Hasil telnet kosong, menampilkan cache ONU.', 'info');
                 }
             }
@@ -2600,8 +2599,6 @@ async function loadRegisteredAll({ force = false, silent = false } = {}) {
             const failedCount = failed.length;
             if (failedCount > 0) {
                 setRegStatus(`Load FSP selesai ${replacedCount}/${targets.length}, gagal ${failedCount}.`, 'info');
-            } else {
-                setRegStatus(`Load FSP selesai (${targets.length}).`, 'success');
             }
         }
     } catch (e) {
@@ -4086,13 +4083,22 @@ onBeforeUnmount(() => {
                         </div>
 
                         <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                            <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold dark:border-white/10 dark:bg-slate-900/50">
+                            <span
+                                v-if="regHasSelectedFsp"
+                                class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold dark:border-white/10 dark:bg-slate-900/50"
+                            >
                                 Total {{ regTotal }}
                             </span>
-                            <span class="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+                            <span
+                                v-if="regHasSelectedFsp"
+                                class="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
+                            >
                                 Online {{ regOnlineTotal }}
                             </span>
-                            <span class="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold dark:border-white/10 dark:bg-slate-900/70">
+                            <span
+                                v-if="regHasSelectedFsp"
+                                class="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-semibold dark:border-white/10 dark:bg-slate-900/70"
+                            >
                                 Offline {{ regOfflineTotal }}
                             </span>
                             <span
@@ -4174,10 +4180,6 @@ onBeforeUnmount(() => {
                                 Clear
                             </button>
                         </div>
-                    </div>
-
-                    <div class="px-4 md:px-5 pb-2 text-[11px] text-slate-500 dark:text-slate-400">
-                        Ketuk baris untuk melihat detail ONU.
                     </div>
 
                     <div class="overflow-x-auto">
