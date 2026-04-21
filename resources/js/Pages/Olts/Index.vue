@@ -1632,6 +1632,7 @@ let regAllRequestToken = 0;
 let regSearchLiveRefreshToken = 0;
 const REG_SEARCH_LIVE_REFRESH_DELAY_MS = 2200;
 const regStatus = ref({ tone: 'info', message: '' });
+const regToast = ref({ open: false, tone: 'info', message: '' });
 const regSearch = ref('');
 const regSearchMode = ref(false);
 const regQuickFilter = ref('all');
@@ -1641,6 +1642,18 @@ const regSortKey = ref('interface');
 const regSortDir = ref('asc');
 const regSelectedKeys = ref([]);
 const regBulkActionBusy = ref(false);
+const regBulkProgress = ref({
+    visible: false,
+    tone: 'loading',
+    action: '',
+    total: 0,
+    current: 0,
+    success: 0,
+    failed: 0,
+    currentLabel: '',
+    message: '',
+    done: false,
+});
 
 const regHighlightKey = ref('');
 const regExpandedKey = ref('');
@@ -1670,6 +1683,8 @@ const regRxHistoryPageSize = ref(10);
 const regRxHistoryPageSizeOptions = [10, 20, 50, 100];
 let regDetailRefreshToken = 0;
 let regNameSavedTimer = null;
+let regStatusTimer = null;
+let regToastTimer = null;
 
 const regQuickFilterOptions = [
     { value: 'all', label: 'Semua' },
@@ -1873,7 +1888,110 @@ function upsertRegisteredAfterRegister({ fsp, onu_id, sn, name }) {
 function setRegStatus(message, tone = 'info') {
     if (tone !== 'loading') stopLiveStatus();
     statusTarget = 'reg';
-    regStatus.value = { tone, message: String(message || '') };
+    if (regStatusTimer) {
+        clearTimeout(regStatusTimer);
+        regStatusTimer = null;
+    }
+    const text = String(message || '');
+    regStatus.value = { tone, message: text };
+    if (!text || tone === 'loading' || tone === 'error') return;
+    regStatusTimer = setTimeout(() => {
+        regStatus.value = { ...regStatus.value, message: '' };
+        regStatusTimer = null;
+    }, tone === 'success' ? 2600 : 3200);
+}
+
+function hideRegToast() {
+    if (regToastTimer) {
+        clearTimeout(regToastTimer);
+        regToastTimer = null;
+    }
+    regToast.value = { ...regToast.value, open: false, message: '' };
+}
+
+function showRegToast(message, tone = 'info', duration = 3200) {
+    const text = String(message || '').trim();
+    if (!text) {
+        hideRegToast();
+        return;
+    }
+    if (regBulkProgress.value.visible && !regBulkProgress.value.done) return;
+    if (regToastTimer) {
+        clearTimeout(regToastTimer);
+        regToastTimer = null;
+    }
+    regToast.value = { open: true, tone, message: text };
+    regToastTimer = setTimeout(() => {
+        regToast.value = { ...regToast.value, open: false, message: '' };
+        regToastTimer = null;
+    }, Math.max(1800, Number(duration || 0) || 3200));
+}
+
+function closeRegBulkProgress() {
+    regBulkProgress.value = {
+        visible: false,
+        tone: 'loading',
+        action: '',
+        total: 0,
+        current: 0,
+        success: 0,
+        failed: 0,
+        currentLabel: '',
+        message: '',
+        done: false,
+    };
+}
+
+function startRegBulkProgress(action, total) {
+    regBulkProgress.value = {
+        visible: true,
+        tone: 'loading',
+        action: String(action || ''),
+        total: Math.max(0, Number(total || 0)),
+        current: 0,
+        success: 0,
+        failed: 0,
+        currentLabel: '',
+        message: `Memproses ${Math.max(0, Number(total || 0))} ONU`,
+        done: false,
+    };
+}
+
+function updateRegBulkProgress({ current = 0, success = 0, failed = 0, currentLabel = '' } = {}) {
+    regBulkProgress.value = {
+        ...regBulkProgress.value,
+        current: Math.max(0, Number(current || 0)),
+        success: Math.max(0, Number(success || 0)),
+        failed: Math.max(0, Number(failed || 0)),
+        currentLabel: String(currentLabel || ''),
+        message: String(currentLabel || '')
+            ? `Sedang memproses ${String(currentLabel || '')}`
+            : regBulkProgress.value.message,
+    };
+}
+
+function finishRegBulkProgress({ success = 0, failed = 0 } = {}) {
+    const okCount = Math.max(0, Number(success || 0));
+    const failCount = Math.max(0, Number(failed || 0));
+    const total = Math.max(0, Number(regBulkProgress.value.total || okCount + failCount));
+    let tone = 'success';
+    if (failCount > 0 && okCount > 0) tone = 'info';
+    if (failCount > 0 && okCount === 0) tone = 'error';
+
+    regBulkProgress.value = {
+        ...regBulkProgress.value,
+        visible: true,
+        tone,
+        current: total,
+        success: okCount,
+        failed: failCount,
+        currentLabel: '',
+        message:
+            failCount > 0
+                ? `Selesai. Berhasil ${okCount}, gagal ${failCount}.`
+                : `${okCount} ONU berhasil diproses.`,
+        done: true,
+    };
 }
 
 function cancelEditOnuName() {
@@ -3015,7 +3133,6 @@ async function restartRegisteredOnuRequest(onu, { skipConfirm = false, silentSta
 
     setRowActionLoading(key, 'restart', true);
     try {
-        if (!silentStatus) setRegStatus('Mengirim perintah restart ONU...', 'loading');
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/restart-onu`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3023,11 +3140,11 @@ async function restartRegisteredOnuRequest(onu, { skipConfirm = false, silentSta
         });
         if (data.status !== 'ok') throw new Error(data.message || 'Restart gagal');
         if (data?.log_excerpt) lastLogExcerpt.value = String(data.log_excerpt);
-        if (!silentStatus) setRegStatus(data.message || 'ONU sedang di-restart.', 'success');
+        if (!silentStatus) showRegToast(data.message || 'ONU sedang di-restart.', 'success');
         return true;
     } catch (e) {
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
-        if (!silentStatus) setRegStatus(e.message || 'Restart gagal', 'error');
+        if (!silentStatus) showRegToast(e.message || 'Restart gagal', 'error', 4200);
         throw e;
     } finally {
         setRowActionLoading(key, 'restart', false);
@@ -3050,7 +3167,6 @@ async function deleteRegisteredOnuRequest(onu, { skipConfirm = false, silentStat
 
     setRowActionLoading(key, 'delete', true);
     try {
-        if (!silentStatus) setRegStatus('Menghapus ONU dari OLT...', 'loading');
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/delete-onu`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3062,12 +3178,13 @@ async function deleteRegisteredOnuRequest(onu, { skipConfirm = false, silentStat
         registered.value = registered.value.filter(it => onuKey(it) !== key);
         if (regExpandedKey.value === key) closeRegDetailModal();
         clearRxHistoryCache(key);
-        if (!silentStatus) setRegStatus('ONU berhasil dihapus.', 'success');
+        regSelectedKeys.value = regSelectedKeys.value.filter((it) => String(it) !== key);
+        if (!silentStatus) showRegToast('ONU berhasil dihapus.', 'success');
         setSelectedOltConfigPending(true);
         return true;
     } catch (e) {
         if (e?.data?.log_excerpt) lastLogExcerpt.value = String(e.data.log_excerpt);
-        if (!silentStatus) setRegStatus(e.message || 'Hapus gagal', 'error');
+        if (!silentStatus) showRegToast(e.message || 'Hapus gagal', 'error', 4200);
         throw e;
     } finally {
         setRowActionLoading(key, 'delete', false);
@@ -3100,6 +3217,9 @@ async function runRegisteredBulkAction(action) {
     if (!confirmed) return;
 
     regBulkActionBusy.value = true;
+    hideRegToast();
+    setRegStatus('', 'info');
+    startRegBulkProgress(actionLabel, selectedItems.length);
     let success = 0;
     let failed = 0;
 
@@ -3107,7 +3227,12 @@ async function runRegisteredBulkAction(action) {
         for (let i = 0; i < selectedItems.length; i += 1) {
             const item = selectedItems[i];
             const label = `${String(item?.fsp || '')}:${Number(item?.onu_id || 0)}`;
-            setRegStatus(`Bulk ${actionLabel}: ${i + 1}/${selectedItems.length} (${label})...`, 'loading');
+            updateRegBulkProgress({
+                current: i + 1,
+                success,
+                failed,
+                currentLabel: label,
+            });
             try {
                 if (isDelete) {
                     await deleteRegisteredOnuRequest(item, { skipConfirm: true, silentStatus: true, reloadLogs: false });
@@ -3118,14 +3243,16 @@ async function runRegisteredBulkAction(action) {
             } catch {
                 failed += 1;
             }
+            updateRegBulkProgress({
+                current: i + 1,
+                success,
+                failed,
+                currentLabel: label,
+            });
         }
 
         clearRegSelection();
-        if (failed > 0) {
-            setRegStatus(`Bulk ${actionLabel} selesai. Berhasil ${success}, gagal ${failed}.`, 'info');
-        } else {
-            setRegStatus(`Bulk ${actionLabel} selesai. ${success} ONU berhasil diproses.`, 'success');
-        }
+        finishRegBulkProgress({ success, failed });
     } finally {
         regBulkActionBusy.value = false;
         loadLogs().catch(() => {});
@@ -3565,6 +3692,8 @@ async function onOltChanged(newId, prevId) {
     regQuickFilter.value = 'all';
     regSelectedKeys.value = [];
     regBulkActionBusy.value = false;
+    closeRegBulkProgress();
+    hideRegToast();
     suppressRegSearchWatcher = true;
     regSearch.value = '';
     setTimeout(() => {
@@ -3634,6 +3763,8 @@ onBeforeUnmount(() => {
     hideAutoRegisterSetupModal();
     hideAutoRegisterModal();
     if (regNameSavedTimer) clearTimeout(regNameSavedTimer);
+    if (regStatusTimer) clearTimeout(regStatusTimer);
+    if (regToastTimer) clearTimeout(regToastTimer);
 });
 </script>
 
@@ -3973,6 +4104,48 @@ onBeforeUnmount(() => {
                         </div>
 
                         <div
+                            v-if="regBulkProgress.visible"
+                            class="rounded-2xl border px-3 py-3 text-[12px] md:px-4"
+                            :class="getStatusToneStyle(regBulkProgress.tone).container"
+                        >
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="h-2.5 w-2.5 rounded-full" :class="getStatusToneStyle(regBulkProgress.tone).dot"></span>
+                                        <span class="font-bold text-[12px] uppercase tracking-wide">
+                                            {{ regBulkProgress.done ? `Bulk ${regBulkProgress.action} selesai` : `Bulk ${regBulkProgress.action}` }}
+                                        </span>
+                                    </div>
+                                    <div class="mt-1 text-[12px] font-semibold">
+                                        {{ regBulkProgress.message }}
+                                    </div>
+                                    <div class="mt-2 h-2 overflow-hidden rounded-full bg-white/60 dark:bg-slate-950/40">
+                                        <div
+                                            class="h-full rounded-full bg-current transition-all duration-300"
+                                            :style="{ width: `${Math.min(100, Math.max(0, regBulkProgress.total ? (regBulkProgress.current / regBulkProgress.total) * 100 : 0))}%` }"
+                                        ></div>
+                                    </div>
+                                    <div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+                                        <span>{{ regBulkProgress.current }}/{{ regBulkProgress.total }}</span>
+                                        <span>Berhasil {{ regBulkProgress.success }}</span>
+                                        <span>Gagal {{ regBulkProgress.failed }}</span>
+                                        <span v-if="!regBulkProgress.done && regBulkProgress.currentLabel" class="truncate">
+                                            ONU {{ regBulkProgress.currentLabel }}
+                                        </span>
+                                    </div>
+                                </div>
+                                <button
+                                    v-if="regBulkProgress.done"
+                                    type="button"
+                                    class="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-current/20 px-2.5 text-[11px] font-bold hover:bg-white/40 dark:hover:bg-slate-950/20"
+                                    @click="closeRegBulkProgress()"
+                                >
+                                    Tutup
+                                </button>
+                            </div>
+                        </div>
+
+                        <div
                             v-if="regSelectedCount"
                             class="grid grid-cols-2 gap-2 rounded-xl border border-slate-200/80 bg-slate-50/80 p-2 dark:border-white/10 dark:bg-slate-900/30 sm:flex sm:flex-wrap"
                         >
@@ -4186,6 +4359,37 @@ onBeforeUnmount(() => {
                         </div>
                     </div>
                 </div>
+
+                <Teleport to="body">
+                    <div
+                        v-if="regToast.open && regToast.message"
+                        class="fixed bottom-4 right-4 z-[90] w-[calc(100vw-2rem)] max-w-sm"
+                    >
+                        <div
+                            class="rounded-2xl border px-4 py-3 shadow-lg backdrop-blur"
+                            :class="getStatusToneStyle(regToast.tone).container"
+                        >
+                            <div class="flex items-start gap-3">
+                                <span class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" :class="getStatusToneStyle(regToast.tone).dot"></span>
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-[11px] font-black uppercase tracking-wide">
+                                        {{ regToast.tone === 'error' ? 'Gagal' : 'Info ONU' }}
+                                    </div>
+                                    <div class="mt-1 text-sm font-semibold">
+                                        {{ regToast.message }}
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-current/15 text-[11px] font-bold hover:bg-white/40 dark:hover:bg-slate-950/20"
+                                    @click="hideRegToast()"
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </Teleport>
 
                 <Teleport to="body">
                     <div v-if="regDetailModalOpen && regModalOnu" class="fixed inset-0 z-[85]">
