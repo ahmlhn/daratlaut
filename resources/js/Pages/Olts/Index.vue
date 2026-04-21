@@ -3904,52 +3904,55 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div class="px-4 md:px-5 pb-4 space-y-3">
-                        <div class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_160px]">
+                        <div class="space-y-2.5">
                             <div>
-                                <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Filter F/S/P</label>
-                                <select
-                                    v-model="regFilterFsp"
-                                    @change="changeRegFsp()"
-                                    class="w-full h-12 border border-slate-200 dark:border-white/10 rounded-lg px-4 text-sm font-semibold bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                                >
-                                    <option value="">Pilih F/S/P</option>
-                                    <option value="all">Semua F/S/P</option>
-                                    <option v-for="fsp in fspList" :key="fsp" :value="fsp">{{ formatFspOptionLabel(fsp) }}</option>
-                                </select>
-                                <div class="text-[10px] text-slate-400 mt-1">{{ regFspInfoText }}</div>
-                                <div v-if="regRxLoadingInfoText" class="text-[10px] text-blue-500 mt-1">
-                                    {{ regRxLoadingInfoText }}
-                                </div>
-                            </div>
-                            <div>
-                                <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Cari ONU</label>
+                                <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Cari ONU</label>
                                 <div class="relative">
                                     <input
                                         v-model="regSearch"
                                         type="text"
                                         placeholder="Cari SN atau nama..."
-                                        class="w-full h-12 border border-slate-200 dark:border-white/10 rounded-lg px-11 text-sm font-medium bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                        class="h-10 w-full rounded-lg border border-slate-200 bg-white px-10 text-sm font-medium dark:border-white/10 dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                     />
-                                    <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M10 18a8 8 0 100-16 8 8 0 000 16z" /></svg>
                                     </span>
                                 </div>
                             </div>
-                            <div>
-                                <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Status</label>
-                                <select
-                                    :value="regQuickFilter"
-                                    class="w-full h-12 border border-slate-200 dark:border-white/10 rounded-lg px-4 text-sm font-medium bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                                    @change="setRegQuickFilterValue($event.target.value)"
-                                >
-                                    <option
-                                        v-for="opt in regQuickFilterOptions"
-                                        :key="`reg-qf-${opt.value}`"
-                                        :value="opt.value"
+
+                            <div class="grid grid-cols-[minmax(0,1fr)_132px] gap-2 sm:grid-cols-[minmax(0,1fr)_160px]">
+                                <div>
+                                    <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Filter F/S/P</label>
+                                    <select
+                                        v-model="regFilterFsp"
+                                        @change="changeRegFsp()"
+                                        class="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium dark:border-white/10 dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                     >
-                                        {{ opt.label }}
-                                    </option>
-                                </select>
+                                        <option value="">Pilih F/S/P</option>
+                                        <option value="all">Semua F/S/P</option>
+                                        <option v-for="fsp in fspList" :key="fsp" :value="fsp">{{ formatFspOptionLabel(fsp) }}</option>
+                                    </select>
+                                    <div class="mt-1 text-[10px] text-slate-400">{{ regFspInfoText }}</div>
+                                    <div v-if="regRxLoadingInfoText" class="mt-1 text-[10px] text-blue-500">
+                                        {{ regRxLoadingInfoText }}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Status</label>
+                                    <select
+                                        :value="regQuickFilter"
+                                        class="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium dark:border-white/10 dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                        @change="setRegQuickFilterValue($event.target.value)"
+                                    >
+                                        <option
+                                            v-for="opt in regQuickFilterOptions"
+                                            :key="`reg-qf-${opt.value}`"
+                                            :value="opt.value"
+                                        >
+                                            {{ opt.label }}
+                                        </option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
 
@@ -3960,11 +3963,11 @@ onBeforeUnmount(() => {
 
                         <div
                             v-if="regSelectedCount"
-                            class="flex flex-wrap gap-2 rounded-xl border border-slate-200/80 bg-slate-50/80 p-2 dark:border-white/10 dark:bg-slate-900/30"
+                            class="grid grid-cols-2 gap-2 rounded-xl border border-slate-200/80 bg-slate-50/80 p-2 dark:border-white/10 dark:bg-slate-900/30 sm:flex sm:flex-wrap"
                         >
                             <button
                                 type="button"
-                                class="inline-flex h-9 items-center justify-center rounded-lg border border-amber-200 px-3 text-[11px] font-bold text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/30 dark:text-amber-300 dark:hover:bg-amber-500/10"
+                                class="inline-flex h-9 w-full items-center justify-center rounded-lg border border-amber-200 px-3 text-[11px] font-bold text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/30 dark:text-amber-300 dark:hover:bg-amber-500/10 sm:w-auto"
                                 :disabled="regBulkActionBusy"
                                 @click="runRegisteredBulkAction('restart')"
                             >
@@ -3972,7 +3975,7 @@ onBeforeUnmount(() => {
                             </button>
                             <button
                                 type="button"
-                                class="inline-flex h-9 items-center justify-center rounded-lg border border-rose-200 px-3 text-[11px] font-bold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10"
+                                class="inline-flex h-9 w-full items-center justify-center rounded-lg border border-rose-200 px-3 text-[11px] font-bold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10 sm:w-auto"
                                 :disabled="regBulkActionBusy"
                                 @click="runRegisteredBulkAction('delete')"
                             >
@@ -3980,7 +3983,7 @@ onBeforeUnmount(() => {
                             </button>
                             <button
                                 type="button"
-                                class="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 px-3 text-[11px] font-bold text-slate-500 transition hover:bg-slate-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/70"
+                                class="col-span-2 inline-flex h-9 w-full items-center justify-center rounded-lg border border-slate-200 px-3 text-[11px] font-bold text-slate-500 transition hover:bg-slate-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-slate-800/70 sm:col-auto sm:w-auto"
                                 :disabled="regBulkActionBusy"
                                 @click="clearRegSelection()"
                             >
