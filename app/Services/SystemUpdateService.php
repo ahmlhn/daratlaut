@@ -12,6 +12,11 @@ use ZipArchive;
 
 final class SystemUpdateService
 {
+    private function reverbInstalled(): bool
+    {
+        return class_exists(\Laravel\Reverb\ReverbServiceProvider::class);
+    }
+
     private function prepareLongRunningTask(?string $logMessage = null): void
     {
         if ($logMessage !== null && $logMessage !== '') {
@@ -572,8 +577,40 @@ final class SystemUpdateService
             'allow_download' => (bool) $this->cfg('allow_download', false),
             'package_url_set' => (string) $this->cfg('package_url', '') !== '',
         ];
+        $state['reverb'] = [
+            'installed' => $this->reverbInstalled(),
+            'broadcast_default' => (string) config('broadcasting.default', ''),
+            'host' => (string) env('REVERB_HOST', ''),
+            'port' => (string) env('REVERB_PORT', ''),
+            'scheme' => (string) env('REVERB_SCHEME', ''),
+        ];
 
         return $state;
+    }
+
+    public function reverbRestart(): array
+    {
+        $this->prepareLongRunningTask();
+
+        if (!$this->reverbInstalled()) {
+            throw new RuntimeException('Laravel Reverb belum terpasang di aplikasi ini.');
+        }
+
+        $this->appendLog('Reverb: meminta restart server...');
+
+        $code = Artisan::call('reverb:restart');
+        $out = trim((string) Artisan::output());
+        if ($out !== '') {
+            $this->appendLog($out);
+        }
+
+        if ($code !== 0) {
+            throw new RuntimeException('Gagal menjalankan reverb:restart (exit ' . $code . ').');
+        }
+
+        $this->appendLog('Reverb restart signal terkirim.');
+
+        return $this->status();
     }
 
     public function githubSaveToken(string $token): array

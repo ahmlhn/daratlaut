@@ -191,6 +191,7 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->group(function 
     Route::post('/system-update/start', [SystemUpdateController::class, 'start'])->name('system_update.start');
     Route::post('/system-update/step', [SystemUpdateController::class, 'step'])->name('system_update.step');
     Route::post('/system-update/reset', [SystemUpdateController::class, 'reset'])->name('system_update.reset');
+    Route::post('/system-update/reverb/restart', [SystemUpdateController::class, 'reverbRestart'])->name('system_update.reverb_restart');
     Route::post('/system-update/github/check', [SystemUpdateController::class, 'githubCheck'])->name('system_update.github_check');
     Route::post('/system-update/github/download', [SystemUpdateController::class, 'githubDownload'])->name('system_update.github_download');
     Route::post('/system-update/github/token', [SystemUpdateController::class, 'githubSaveToken'])->name('system_update.github_token');

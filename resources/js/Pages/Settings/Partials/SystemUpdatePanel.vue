@@ -22,6 +22,7 @@ const state = ref(null)
 const fileRef = ref(null)
 const zipFile = ref(null)
 const ghBusy = ref(false)
+const reverbBusy = ref(false)
 const ghToken = ref('')
 const ghCheck = ref(null)
 
@@ -52,6 +53,7 @@ const stage = computed(() => state.value?.stage || 'idle')
 const err = computed(() => state.value?.error || '')
 const cfg = computed(() => state.value?.config || {})
 const github = computed(() => state.value?.github || {})
+const reverb = computed(() => state.value?.reverb || {})
 const installed = computed(() => state.value?.installed || null)
 const pkg = computed(() => state.value?.package || null)
 
@@ -114,7 +116,7 @@ const stagePill = computed(() => {
   return { text: 'IDLE', klass: 'bg-gray-100 text-gray-800 dark:bg-gray-600 dark:text-gray-200' }
 })
 
-const isBusy = computed(() => statusLoading.value || uploading.value || running.value || ghBusy.value)
+const isBusy = computed(() => statusLoading.value || uploading.value || running.value || ghBusy.value || reverbBusy.value)
 
 const sectionClass = computed(() => {
   if (props.embedded) {
@@ -463,6 +465,23 @@ async function githubDownloadAndUpdate(opts = {}) {
     notify('error', e?.response?.data?.message || e?.message || 'Update GitHub gagal')
   } finally {
     running.value = false
+    await refreshStatus()
+  }
+}
+
+async function restartReverb() {
+  if (!reverb.value?.installed) return notify('warning', 'Laravel Reverb belum terpasang di aplikasi ini.')
+  if (!confirm('Kirim sinyal restart ke server Reverb yang sedang berjalan?')) return
+
+  reverbBusy.value = true
+  try {
+    const res = await window.axios.post('/system-update/reverb/restart')
+    applyState(res?.data?.data?.data || res?.data?.data || null)
+    notify('success', res?.data?.message || 'Sinyal restart Reverb berhasil dikirim.')
+  } catch (e) {
+    notify('error', e?.response?.data?.message || e?.message || 'Gagal restart Reverb')
+  } finally {
+    reverbBusy.value = false
     await refreshStatus()
   }
 }
@@ -978,7 +997,24 @@ onMounted(() => {
         </div>
 
         <div v-if="detailsOpen" :class="sectionClass">
-          <h3 class="text-base font-semibold text-gray-900 dark:text-white">Konfigurasi Server</h3>
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 class="text-base font-semibold text-gray-900 dark:text-white">Konfigurasi Server</h3>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Aksi Reverb hanya mengirim sinyal restart. Proses server tetap harus dijalankan oleh supervisor/service manager.
+              </p>
+            </div>
+            <button
+              @click="restartReverb"
+              class="btn btn-secondary px-3 py-2 text-xs shrink-0"
+              :disabled="isBusy || !reverb.installed"
+              type="button"
+            >
+              <span v-if="reverbBusy" class="mr-2"><LoadingSpinner size="sm" /></span>
+              Restart Reverb
+            </button>
+          </div>
+
           <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
             <div :class="mutedBoxClass">
               <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Enabled</div>
@@ -995,6 +1031,17 @@ onMounted(() => {
             <div :class="mutedBoxClass">
               <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Download</div>
               <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ cfg.allow_download ? 'YES' : 'NO' }}</div>
+            </div>
+            <div :class="mutedBoxClass">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Reverb</div>
+              <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ reverb.installed ? 'INSTALLED' : 'NOT INSTALLED' }}</div>
+              <div v-if="reverb.installed" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ reverb.scheme || 'http' }}://{{ reverb.host || 'localhost' }}<span v-if="reverb.port">:{{ reverb.port }}</span>
+              </div>
+            </div>
+            <div :class="mutedBoxClass">
+              <div class="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Broadcast</div>
+              <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ reverb.broadcast_default || '-' }}</div>
             </div>
           </div>
         </div>

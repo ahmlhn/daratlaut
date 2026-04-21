@@ -216,4 +216,21 @@ class SystemUpdateController extends Controller
             return $this->jsonError($svc, 'github_token_clear', $e);
         }
     }
+
+    public function reverbRestart(Request $request, SystemUpdateService $svc): JsonResponse
+    {
+        $this->assertEnabled();
+        $this->assertAllowed($request);
+
+        try {
+            $state = $svc->reverbRestart();
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Sinyal restart Reverb berhasil dikirim.',
+                'data' => $state,
+            ]);
+        } catch (\Throwable $e) {
+            return $this->jsonError($svc, 'reverb_restart', $e);
+        }
+    }
 }
