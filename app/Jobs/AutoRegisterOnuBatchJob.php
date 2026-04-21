@@ -13,6 +13,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class AutoRegisterOnuBatchJob implements ShouldQueue
@@ -380,19 +381,29 @@ class AutoRegisterOnuBatchJob implements ShouldQueue
      */
     private function broadcastProgress(string $status, array $summary, string $logText = ''): void
     {
-        event(new OltAutoRegisterProgressUpdated(
-            $this->tenantId,
-            $this->oltId,
-            $this->runLogId,
-            [
+        try {
+            event(new OltAutoRegisterProgressUpdated(
+                $this->tenantId,
+                $this->oltId,
+                $this->runLogId,
+                [
+                    'run_id' => $this->runLogId,
+                    'action' => 'register_auto',
+                    'status' => $status,
+                    'is_finished' => in_array($status, ['done', 'error'], true),
+                    'created_at' => null,
+                    'summary' => $summary,
+                    'log_text' => $logText,
+                ]
+            ));
+        } catch (Throwable $e) {
+            Log::warning('Failed broadcasting OLT auto-register progress', [
+                'tenant_id' => $this->tenantId,
+                'olt_id' => $this->oltId,
                 'run_id' => $this->runLogId,
-                'action' => 'register_auto',
                 'status' => $status,
-                'is_finished' => in_array($status, ['done', 'error'], true),
-                'created_at' => null,
-                'summary' => $summary,
-                'log_text' => $logText,
-            ]
-        ));
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }
