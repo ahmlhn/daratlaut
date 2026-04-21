@@ -23,6 +23,7 @@ class OltController extends Controller
     private const DEFAULT_TEKNISI_ONU_RX_MAX_DBM = -11.0;
     private const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24.99;
     private const WRITE_CONFIG_LOCK_TTL_SECONDS = 90;
+    private const FSP_REGEX = '/^\d+\/\d+\/\d+$/';
 
     private function writeConfigLockKey(int $tenantId, int $oltId): string
     {
@@ -41,6 +42,129 @@ class OltController extends Controller
             && Schema::hasColumn($table, 'teknisi_onu_rx_min_dbm');
 
         return $hasColumns;
+    }
+
+    private function hasFspMetadataColumn(): bool
+    {
+        static $hasColumn = null;
+        if ($hasColumn !== null) {
+            return $hasColumn;
+        }
+
+        $hasColumn = Schema::hasColumn((new Olt())->getTable(), 'fsp_metadata');
+
+        return $hasColumn;
+    }
+
+    private function normalizeFspValue(mixed $value): string
+    {
+        $fsp = trim((string) $value);
+        if ($fsp === '' || !preg_match(self::FSP_REGEX, $fsp)) {
+            return '';
+        }
+
+        return $fsp;
+    }
+
+    /**
+     * @param array<int, string> $fspList
+     * @return array<int, string>
+     */
+    private function sortFspValues(array $fspList): array
+    {
+        $items = array_values(array_unique(array_filter(array_map(
+            fn ($fsp) => $this->normalizeFspValue($fsp),
+            $fspList
+        ))));
+
+        usort($items, function (string $a, string $b) {
+            $pa = array_map('intval', explode('/', $a));
+            $pb = array_map('intval', explode('/', $b));
+            if (($pa[0] ?? 0) !== ($pb[0] ?? 0)) return ($pa[0] ?? 0) <=> ($pb[0] ?? 0);
+            if (($pa[1] ?? 0) !== ($pb[1] ?? 0)) return ($pa[1] ?? 0) <=> ($pb[1] ?? 0);
+            return ($pa[2] ?? 0) <=> ($pb[2] ?? 0);
+        });
+
+        return $items;
+    }
+
+    /**
+     * @return array<string, array{fsp: string, name: string, description: string}>
+     */
+    private function normalizeFspMetadataInput(mixed $input): array
+    {
+        if (!is_array($input)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($input as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $fsp = $this->normalizeFspValue($item['fsp'] ?? '');
+            if ($fsp === '') {
+                continue;
+            }
+
+            $name = trim((string) ($item['name'] ?? ''));
+            $description = trim((string) ($item['description'] ?? ''));
+
+            if ($name === '' && $description === '') {
+                continue;
+            }
+
+            $normalized[$fsp] = [
+                'fsp' => $fsp,
+                'name' => mb_substr($name, 0, 100),
+                'description' => mb_substr($description, 0, 255),
+            ];
+        }
+
+        $sorted = [];
+        foreach ($this->sortFspValues(array_keys($normalized)) as $fsp) {
+            $sorted[$fsp] = $normalized[$fsp];
+        }
+
+        return $sorted;
+    }
+
+    /**
+     * @return array<string, array{fsp: string, name: string, description: string}>
+     */
+    private function getOltFspMetadataMap(?Olt $olt = null): array
+    {
+        if (!$olt || !$this->hasFspMetadataColumn()) {
+            return [];
+        }
+
+        return $this->normalizeFspMetadataInput($olt->getAttribute('fsp_metadata'));
+    }
+
+    /**
+     * @return array<int, array{fsp: string, name: string, description: string}>
+     */
+    private function serializeFspMetadataMap(array $metadataMap): array
+    {
+        return array_values($metadataMap);
+    }
+
+    /**
+     * @return array{fsp: string, name: string, description: string}
+     */
+    private function getFspMetadataItem(array $metadataMap, string $fsp): array
+    {
+        $safeFsp = $this->normalizeFspValue($fsp);
+        if ($safeFsp !== '' && isset($metadataMap[$safeFsp])) {
+            return $metadataMap[$safeFsp];
+        }
+
+        return [
+            'fsp' => $safeFsp,
+            'name' => '',
+            'description' => '',
+        ];
     }
 
     /**
@@ -522,6 +646,8 @@ class OltController extends Controller
                     'is_active' => $olt->is_active ?? true,
                     'teknisi_onu_rx_max_dbm' => $this->getOltTeknisiOnuRxThresholds($olt)['max'],
                     'teknisi_onu_rx_min_dbm' => $this->getOltTeknisiOnuRxThresholds($olt)['min'],
+                    'fsp_cache' => is_array($fspCache) ? $this->sortFspValues($fspCache) : [],
+                    'fsp_metadata' => $this->serializeFspMetadataMap($this->getOltFspMetadataMap($olt)),
                     'fsp_count' => is_array($fspCache) ? count($fspCache) : 0,
                     'onu_count' => (int) ($olt->onus_count ?? 0),
                     'last_sync' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
@@ -608,7 +734,8 @@ class OltController extends Controller
                 'teknisi_onu_rx_max_dbm' => $thresholds['max'],
                 'teknisi_onu_rx_min_dbm' => $thresholds['min'],
                 'is_active' => $olt->is_active ?? true,
-                'fsp_cache' => $olt->fsp_cache ?? [],
+                'fsp_cache' => $this->sortFspValues(is_array($olt->fsp_cache) ? $olt->fsp_cache : []),
+                'fsp_metadata' => $this->serializeFspMetadataMap($this->getOltFspMetadataMap($olt)),
                 'fsp_cache_at' => $olt->fsp_cache_at?->format('Y-m-d H:i'),
                 'onu_count' => (int) ($olt->onus_count ?? 0),
                 'write_config_pending' => $writeConfigState['write_config_pending'],
@@ -636,6 +763,10 @@ class OltController extends Controller
             'service_port_id_default' => 'nullable|integer',
             'teknisi_onu_rx_max_dbm' => 'nullable|numeric|between:-100,0',
             'teknisi_onu_rx_min_dbm' => 'nullable|numeric|between:-100,0',
+            'fsp_metadata' => 'nullable|array',
+            'fsp_metadata.*.fsp' => 'required_with:fsp_metadata|string|regex:/^\d+\/\d+\/\d+$/',
+            'fsp_metadata.*.name' => 'nullable|string|max:100',
+            'fsp_metadata.*.description' => 'nullable|string|max:255',
         ]);
 
         $tenantId = $request->user()->tenant_id ?? 1;
@@ -669,6 +800,11 @@ class OltController extends Controller
             $payload['teknisi_onu_rx_max_dbm'] = $thresholds['max'];
             $payload['teknisi_onu_rx_min_dbm'] = $thresholds['min'];
         }
+        if ($this->hasFspMetadataColumn()) {
+            $payload['fsp_metadata'] = $this->serializeFspMetadataMap(
+                $this->normalizeFspMetadataInput($request->input('fsp_metadata', []))
+            );
+        }
 
         $olt = Olt::create($payload);
 
@@ -698,6 +834,10 @@ class OltController extends Controller
             'service_port_id_default' => 'nullable|integer',
             'teknisi_onu_rx_max_dbm' => 'nullable|numeric|between:-100,0',
             'teknisi_onu_rx_min_dbm' => 'nullable|numeric|between:-100,0',
+            'fsp_metadata' => 'nullable|array',
+            'fsp_metadata.*.fsp' => 'required_with:fsp_metadata|string|regex:/^\d+\/\d+\/\d+$/',
+            'fsp_metadata.*.name' => 'nullable|string|max:100',
+            'fsp_metadata.*.description' => 'nullable|string|max:255',
             'is_active' => 'boolean',
         ]);
 
@@ -737,6 +877,12 @@ class OltController extends Controller
             $thresholds = $this->getRequestTeknisiOnuRxThresholds($request);
             $data['teknisi_onu_rx_max_dbm'] = $thresholds['max'];
             $data['teknisi_onu_rx_min_dbm'] = $thresholds['min'];
+        }
+
+        if ($this->hasFspMetadataColumn() && $request->has('fsp_metadata')) {
+            $data['fsp_metadata'] = $this->serializeFspMetadataMap(
+                $this->normalizeFspMetadataInput($request->input('fsp_metadata', []))
+            );
         }
 
         if (Schema::hasColumn('noci_olts', 'is_active') && $request->has('is_active')) {
@@ -817,15 +963,17 @@ class OltController extends Controller
     {
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $fspMetadata = $this->serializeFspMetadataMap($this->getOltFspMetadataMap($olt));
         
         // Check cache first (fresh)
-        $cacheList = is_array($olt->fsp_cache) ? $olt->fsp_cache : [];
+        $cacheList = $this->sortFspValues(is_array($olt->fsp_cache) ? $olt->fsp_cache : []);
         if ($olt->isFspCacheValid() && !empty($cacheList)) {
             return response()->json([
                 'status' => 'ok',
                 'data' => $cacheList,
                 'cached' => true,
                 'stale' => false,
+                'fsp_metadata' => $fspMetadata,
             ]);
         }
         
@@ -840,8 +988,9 @@ class OltController extends Controller
             
             return response()->json([
                 'status' => 'ok',
-                'data' => $fspList,
+                'data' => $this->sortFspValues($fspList),
                 'cached' => false,
+                'fsp_metadata' => $fspMetadata,
             ]);
         } catch (RuntimeException $e) {
             // Fallback 1: stale cache (if any)
@@ -852,6 +1001,7 @@ class OltController extends Controller
                     'cached' => true,
                     'stale' => true,
                     'message' => 'Telnet gagal, menggunakan cache FSP lama.',
+                    'fsp_metadata' => $fspMetadata,
                 ]);
             }
 
@@ -867,13 +1017,7 @@ class OltController extends Controller
                     ->all();
 
                 if (!empty($derived)) {
-                    usort($derived, function (string $a, string $b) {
-                        $pa = array_map('intval', explode('/', $a));
-                        $pb = array_map('intval', explode('/', $b));
-                        if (($pa[0] ?? 0) !== ($pb[0] ?? 0)) return ($pa[0] ?? 0) <=> ($pb[0] ?? 0);
-                        if (($pa[1] ?? 0) !== ($pb[1] ?? 0)) return ($pa[1] ?? 0) <=> ($pb[1] ?? 0);
-                        return ($pa[2] ?? 0) <=> ($pb[2] ?? 0);
-                    });
+                    $derived = $this->sortFspValues($derived);
 
                     return response()->json([
                         'status' => 'ok',
@@ -881,6 +1025,7 @@ class OltController extends Controller
                         'cached' => true,
                         'stale' => true,
                         'message' => 'Telnet gagal, menggunakan FSP dari cache ONU.',
+                        'fsp_metadata' => $fspMetadata,
                     ]);
                 }
             }
@@ -1773,6 +1918,7 @@ class OltController extends Controller
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
         $fsp = (string) $request->input('fsp');
         $table = (new OltOnu())->getTable();
+        $meta = $this->getFspMetadataItem($this->getOltFspMetadataMap($olt), $fsp);
 
         $query = OltOnu::query()
             ->where('olt_id', $olt->id)
@@ -1790,6 +1936,8 @@ class OltController extends Controller
             'status' => 'ok',
             'data' => [
                 'fsp' => $fsp,
+                'name' => $meta['name'],
+                'description' => $meta['description'],
                 'used_slots' => $usedCount,
                 'empty_slots' => $emptyCount,
                 'total_slots' => self::ONU_SLOT_MAX,
@@ -1804,6 +1952,7 @@ class OltController extends Controller
     {
         $tenantId = $request->user()->tenant_id ?? 1;
         $olt = Olt::forTenant($tenantId)->findOrFail($id);
+        $fspMetadataMap = $this->getOltFspMetadataMap($olt);
         $table = (new OltOnu())->getTable();
         $hasTenantId = Schema::hasColumn($table, 'tenant_id');
         $query = OltOnu::query()
@@ -1821,18 +1970,15 @@ class OltController extends Controller
             $fspList = $rows->pluck('fsp')->filter(fn ($fsp) => is_string($fsp) && $fsp !== '')->unique()->values()->all();
         }
 
-        usort($fspList, function (string $a, string $b) {
-            $pa = array_map('intval', explode('/', $a));
-            $pb = array_map('intval', explode('/', $b));
-            if (($pa[0] ?? 0) !== ($pb[0] ?? 0)) return ($pa[0] ?? 0) <=> ($pb[0] ?? 0);
-            if (($pa[1] ?? 0) !== ($pb[1] ?? 0)) return ($pa[1] ?? 0) <=> ($pb[1] ?? 0);
-            return ($pa[2] ?? 0) <=> ($pb[2] ?? 0);
-        });
+        $fspList = $this->sortFspValues($fspList);
 
         $summaryMap = [];
         foreach ($fspList as $fsp) {
+            $meta = $this->getFspMetadataItem($fspMetadataMap, $fsp);
             $summaryMap[$fsp] = [
                 'fsp' => $fsp,
+                'name' => $meta['name'],
+                'description' => $meta['description'],
                 'used_slots' => 0,
                 'empty_slots' => self::ONU_SLOT_MAX,
                 'total_slots' => self::ONU_SLOT_MAX,
@@ -1848,8 +1994,11 @@ class OltController extends Controller
             }
 
             if (!isset($summaryMap[$fsp])) {
+                $meta = $this->getFspMetadataItem($fspMetadataMap, $fsp);
                 $summaryMap[$fsp] = [
                     'fsp' => $fsp,
+                    'name' => $meta['name'],
+                    'description' => $meta['description'],
                     'used_slots' => 0,
                     'empty_slots' => self::ONU_SLOT_MAX,
                     'total_slots' => self::ONU_SLOT_MAX,

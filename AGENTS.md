@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-04-16
-Last verified: 2026-04-16
+Last updated: 2026-04-21
+Last verified: 2026-04-21
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -58,6 +58,7 @@ Last verified: 2026-04-16
 - Future v2: jika perlu log per user yang kuat, tambah schema `actor_user_id`, `actor_role`, `actor_type`, dan opsional `request_id/run_id`; baru setelah itu implement tab/grouping log per user yang strict.
 
 ## Change log
+- 2026-04-21: Halaman OLT kini mendukung metadata `nama/deskripsi` per port FSP; ditambah kolom JSON metadata pada `noci_olts`, backend `app/Http/Controllers/Api/OltController.php` men-serialize metadata ini ke detail OLT dan summary slot/register, serta `resources/js/Pages/Olts/Index.vue` menambah editor metadata di modal OLT dan menampilkan label port di filter FSP, popup `Slot Port OLT`, dan modal registrasi manual. Docs: N/A.
 - 2026-04-16: Overlay fullscreen gate GPS teknisi di `AdminLayout` dirapikan lagi; panel kini dibagi menjadi area konteks + area aksi yang lebih proporsional, status validasi memakai kartu progres yang lebih tenang, dan mode lock menampilkan langkah bernomor yang lebih jelas di mobile maupun desktop. Docs: N/A.
 - 2026-04-16: Gate GPS teknisi di `AdminLayout` diubah dari panel inline menjadi overlay lock fullscreen modern; konten halaman tetap dirender di belakang, lalu overlay validasi/lock muncul dengan backdrop blur, kartu pusat, dan CTA yang lebih fokus agar status akses lokasi terasa jelas di mobile maupun desktop. Docs: N/A.
 - 2026-04-16: Overlay lock GPS untuk teknisi di `AdminLayout` dirapikan agar tidak memuat informasi dobel; status validasi dan lock kini memakai kartu modern dengan pesan lebih singkat, alasan yang lebih mudah dipahami teknisi, langkah tindak lanjut yang ringkas, dan CTA `Coba Lagi` yang lebih fokus. Docs: N/A.

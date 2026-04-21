@@ -29,6 +29,7 @@ class Olt extends Model
         'teknisi_onu_rx_max_dbm',
         'teknisi_onu_rx_min_dbm',
         'fsp_cache',
+        'fsp_metadata',
         'fsp_cache_at',
     ];
 
@@ -38,6 +39,7 @@ class Olt extends Model
 
     protected $casts = [
         'fsp_cache' => 'array',
+        'fsp_metadata' => 'array',
         'fsp_cache_at' => 'datetime',
         'is_active' => 'boolean',
         'write_config_pending' => 'boolean',

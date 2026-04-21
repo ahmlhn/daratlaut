@@ -85,6 +85,72 @@ function sortFspList(list) {
     return items;
 }
 
+let fspMetadataRowSeed = 0;
+
+function nextFspMetadataRowKey() {
+    fspMetadataRowSeed += 1;
+    return `fsp-meta-${fspMetadataRowSeed}`;
+}
+
+function createFspMetadataRow(item = {}) {
+    return {
+        key: nextFspMetadataRowKey(),
+        fsp: String(item?.fsp || '').trim(),
+        name: String(item?.name || '').trim(),
+        description: String(item?.description || '').trim(),
+    };
+}
+
+function normalizeFspMetadataEntries(input, knownFspList = []) {
+    const normalized = new Map();
+    const rawItems = Array.isArray(input)
+        ? input
+        : input && typeof input === 'object'
+            ? Object.values(input)
+            : [];
+
+    rawItems.forEach((item) => {
+        const fsp = String(item?.fsp || '').trim();
+        if (!/^\d+\/\d+\/\d+$/.test(fsp)) return;
+        normalized.set(fsp, {
+            fsp,
+            name: String(item?.name || '').trim().slice(0, 100),
+            description: String(item?.description || '').trim().slice(0, 255),
+        });
+    });
+
+    sortFspList(Array.isArray(knownFspList) ? knownFspList : []).forEach((fsp) => {
+        const safeFsp = String(fsp || '').trim();
+        if (!safeFsp || normalized.has(safeFsp)) return;
+        normalized.set(safeFsp, {
+            fsp: safeFsp,
+            name: '',
+            description: '',
+        });
+    });
+
+    return sortFspList(Array.from(normalized.keys())).map((fsp) => createFspMetadataRow(normalized.get(fsp)));
+}
+
+function sanitizeFspMetadataPayload(entries) {
+    const normalized = normalizeFspMetadataEntries(entries);
+    return normalized
+        .map((item) => ({
+            fsp: String(item?.fsp || '').trim(),
+            name: String(item?.name || '').trim().slice(0, 100),
+            description: String(item?.description || '').trim().slice(0, 255),
+        }))
+        .filter((item) => item.fsp && (item.name || item.description));
+}
+
+function buildFspMetadataMap(input) {
+    const map = {};
+    sanitizeFspMetadataPayload(input).forEach((item) => {
+        map[item.fsp] = item;
+    });
+    return map;
+}
+
 function toneClass(tone) {
     if (tone === 'success') return 'text-emerald-700 dark:text-emerald-200';
     if (tone === 'error') return 'text-rose-700 dark:text-rose-200';
@@ -263,6 +329,7 @@ const olts = ref([]);
 const loadingOlts = ref(false);
 const selectedOltId = ref('');
 const selectedOlt = computed(() => olts.value.find(o => String(o.id) === String(selectedOltId.value)) || null);
+const selectedOltFspMetadataMap = computed(() => buildFspMetadataMap(selectedOlt.value?.fsp_metadata || []));
 const selectedOltWriteConfigPending = computed(() => !!selectedOlt.value?.write_config_pending);
 const hasAutoRegisterItems = computed(() => Array.isArray(uncfg.value) && uncfg.value.length > 0);
 const OLT_META_POLL_MS = 10000;
@@ -385,6 +452,44 @@ function setSelectedOltConfigPending(pending, pendingAt = '') {
     olts.value = nextList;
 }
 
+function syncSelectedOltFspContext({ fspCache = null, fspMetadata = null } = {}) {
+    const currentId = String(selectedOltId.value || '').trim();
+    if (!currentId || !Array.isArray(olts.value)) return;
+
+    const safeFspCache = Array.isArray(fspCache) ? sortFspList(fspCache) : null;
+    const safeMetadata = Array.isArray(fspMetadata) ? sanitizeFspMetadataPayload(fspMetadata) : null;
+
+    olts.value = olts.value.map((item) => {
+        if (String(item?.id || '') !== currentId) return item;
+        return {
+            ...item,
+            ...(safeFspCache ? { fsp_cache: safeFspCache, fsp_count: safeFspCache.length } : {}),
+            ...(safeMetadata ? { fsp_metadata: safeMetadata } : {}),
+        };
+    });
+}
+
+function getFspMeta(fsp) {
+    const safeFsp = String(fsp || '').trim();
+    return selectedOltFspMetadataMap.value[safeFsp] || null;
+}
+
+function formatFspOptionLabel(fsp) {
+    const safeFsp = String(fsp || '').trim();
+    if (!safeFsp) return '-';
+    const meta = getFspMeta(safeFsp);
+    return meta?.name ? `${safeFsp} • ${meta.name}` : safeFsp;
+}
+
+function formatFspMetaLine(fsp) {
+    const meta = getFspMeta(fsp);
+    if (!meta) return '';
+    const parts = [];
+    if (meta.name) parts.push(meta.name);
+    if (meta.description) parts.push(meta.description);
+    return parts.join(' • ');
+}
+
 async function refreshSelectedOltMeta() {
     const currentId = String(selectedOltId.value || '').trim();
     if (!currentId) return;
@@ -440,6 +545,7 @@ const formData = ref({
     service_port_id_default: 1,
     teknisi_onu_rx_max_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MAX_DBM, DEFAULT_TEKNISI_ONU_RX_MAX_DBM),
     teknisi_onu_rx_min_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MIN_DBM, DEFAULT_TEKNISI_ONU_RX_MIN_DBM),
+    fsp_metadata: [],
 });
 
 // ========== Deep Sync Modal (Native Parity) ==========
@@ -499,6 +605,7 @@ async function openOltModal(mode) {
                     olt.teknisi_onu_rx_min_dbm,
                     DEFAULT_TEKNISI_ONU_RX_MIN_DBM
                 ),
+                fsp_metadata: normalizeFspMetadataEntries(olt.fsp_metadata, olt.fsp_cache),
             };
 
             showOltModal.value = true;
@@ -522,6 +629,7 @@ async function openOltModal(mode) {
         service_port_id_default: 1,
         teknisi_onu_rx_max_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MAX_DBM, DEFAULT_TEKNISI_ONU_RX_MAX_DBM),
         teknisi_onu_rx_min_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MIN_DBM, DEFAULT_TEKNISI_ONU_RX_MIN_DBM),
+        fsp_metadata: [],
     };
     showOltModal.value = true;
 }
@@ -540,6 +648,7 @@ async function saveOlt() {
         service_port_id_default: Number(formData.value.service_port_id_default || 0),
         teknisi_onu_rx_max_dbm: onuRxBounds.max,
         teknisi_onu_rx_min_dbm: onuRxBounds.min,
+        fsp_metadata: sanitizeFspMetadataPayload(formData.value.fsp_metadata),
     };
 
     if (!payload.nama_olt || !payload.host || !payload.username) {
@@ -721,11 +830,27 @@ async function loadFspList() {
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/fsp`);
         const list = data.status === 'ok' ? data.data : [];
         fspList.value = sortFspList(list);
+        syncSelectedOltFspContext({
+            fspCache: fspList.value,
+            fspMetadata: Array.isArray(data?.fsp_metadata) ? data.fsp_metadata : null,
+        });
     } catch (e) {
         fspList.value = [];
     } finally {
         fspLoading.value = false;
     }
+}
+
+function addFspMetadataRow() {
+    formData.value.fsp_metadata = [
+        ...(Array.isArray(formData.value.fsp_metadata) ? formData.value.fsp_metadata : []),
+        createFspMetadataRow(),
+    ];
+}
+
+function removeFspMetadataRow(key) {
+    formData.value.fsp_metadata = (Array.isArray(formData.value.fsp_metadata) ? formData.value.fsp_metadata : [])
+        .filter((item) => item.key !== key);
 }
 
 // ========== Unregistered ==========
@@ -2119,6 +2244,12 @@ const regFspInfoText = computed(() => {
     const total = Array.isArray(fspList.value) ? fspList.value.length : 0;
     const loaded = Object.keys(regLoadedFsp.value || {}).length;
     if (!total) return 'FSP belum dimuat.';
+    if (regFilterFsp.value && regFilterFsp.value !== 'all') {
+        const metaLine = formatFspMetaLine(regFilterFsp.value);
+        if (metaLine) {
+            return `FSP dimuat: ${loaded}/${total} • ${metaLine}`;
+        }
+    }
     return `FSP dimuat: ${loaded}/${total}`;
 });
 
@@ -3645,7 +3776,7 @@ onBeforeUnmount(() => {
                                 >
                                     <option value="">Pilih F/S/P</option>
                                     <option value="all">Semua F/S/P</option>
-                                    <option v-for="fsp in fspList" :key="fsp" :value="fsp">{{ fsp }}</option>
+                                    <option v-for="fsp in fspList" :key="fsp" :value="fsp">{{ formatFspOptionLabel(fsp) }}</option>
                                 </select>
                                 <div class="text-[10px] text-slate-400 mt-1">{{ regFspInfoText }}</div>
                                 <div v-if="regRxLoadingInfoText" class="text-[10px] text-blue-500 mt-1">
@@ -4498,6 +4629,77 @@ onBeforeUnmount(() => {
                                                 />
                                             </div>
                                         </div>
+
+                                        <div class="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-slate-950/40">
+                                            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                                <div>
+                                                    <div class="text-[11px] font-black uppercase tracking-wide text-slate-500">Nama / Deskripsi Port FSP</div>
+                                                    <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                                        Label ini dipakai di filter FSP, popup slot port, dan konteks registrasi.
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    class="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-100 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                                    @click="addFspMetadataRow()"
+                                                >
+                                                    Tambah FSP
+                                                </button>
+                                            </div>
+
+                                            <div v-if="!formData.fsp_metadata.length" class="mt-4 rounded-xl border border-dashed border-slate-300 px-4 py-4 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
+                                                Belum ada metadata port. Tambah manual atau lakukan load FSP dulu lalu edit ulang OLT ini.
+                                            </div>
+
+                                            <div v-else class="mt-4 space-y-3">
+                                                <div
+                                                    v-for="item in formData.fsp_metadata"
+                                                    :key="item.key"
+                                                    class="rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-slate-900/70"
+                                                >
+                                                    <div class="grid grid-cols-1 gap-3 lg:grid-cols-[160px_minmax(0,1fr)_minmax(0,1.15fr)_auto]">
+                                                        <div>
+                                                            <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">FSP</label>
+                                                            <input
+                                                                v-model="item.fsp"
+                                                                type="text"
+                                                                placeholder="1/1/1"
+                                                                class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60 dark:border-white/10 dark:bg-slate-950"
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Nama Port</label>
+                                                            <input
+                                                                v-model="item.name"
+                                                                type="text"
+                                                                maxlength="100"
+                                                                placeholder="Contoh: Jalur POP Barat"
+                                                                class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60 dark:border-white/10 dark:bg-slate-950"
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Deskripsi</label>
+                                                            <input
+                                                                v-model="item.description"
+                                                                type="text"
+                                                                maxlength="255"
+                                                                placeholder="Catatan singkat port/FSP"
+                                                                class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60 dark:border-white/10 dark:bg-slate-950"
+                                                            />
+                                                        </div>
+                                                        <div class="flex items-end">
+                                                            <button
+                                                                type="button"
+                                                                class="inline-flex h-11 items-center justify-center rounded-lg border border-rose-200 px-3 text-xs font-bold text-rose-700 transition hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10"
+                                                                @click="removeFspMetadataRow(item.key)"
+                                                            >
+                                                                Hapus
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -4600,18 +4802,22 @@ onBeforeUnmount(() => {
                                                 <thead class="bg-slate-50 text-xs uppercase text-slate-500 font-bold border-b border-slate-100 dark:bg-slate-900/60 dark:text-slate-400 dark:border-white/10">
                                                     <tr>
                                                         <th class="px-4 py-3">Port</th>
+                                                        <th class="px-4 py-3">Nama</th>
+                                                        <th class="px-4 py-3">Deskripsi</th>
                                                         <th class="px-4 py-3">Terpakai</th>
                                                         <th class="px-4 py-3">Tersedia</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody class="divide-y divide-slate-100 dark:divide-white/5">
                                                     <tr v-if="!portSlotSummary.length">
-                                                        <td colspan="3" class="px-4 py-10 text-center text-slate-400 italic">
+                                                        <td colspan="5" class="px-4 py-10 text-center text-slate-400 italic">
                                                             Belum ada data port.
                                                         </td>
                                                     </tr>
                                                     <tr v-for="item in portSlotSummary" :key="item.fsp" class="bg-white dark:bg-slate-900/40">
                                                         <td class="px-4 py-3 font-bold text-slate-800 dark:text-white">{{ item.fsp }}</td>
+                                                        <td class="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</td>
+                                                        <td class="px-4 py-3 text-slate-500 dark:text-slate-400">{{ item.description || '-' }}</td>
                                                         <td class="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{{ item.used_slots }} / {{ item.total_slots }}</td>
                                                         <td class="px-4 py-3 font-semibold text-emerald-600 dark:text-emerald-300">{{ item.empty_slots }}</td>
                                                     </tr>
@@ -4667,6 +4873,9 @@ onBeforeUnmount(() => {
                                         <div class="mt-1 text-sm font-bold text-slate-800 dark:text-white">
                                             <span>{{ uncfgSelected.fsp || '-' }}</span> | <span>{{ uncfgSelected.sn || '-' }}</span>
                                         </div>
+                                        <div v-if="formatFspMetaLine(uncfgSelected.fsp)" class="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                                            {{ formatFspMetaLine(uncfgSelected.fsp) }}
+                                        </div>
                                     </div>
 
                                     <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-slate-950/40">
@@ -4680,17 +4889,30 @@ onBeforeUnmount(() => {
                                             {{ manualRegisterSlotSummaryError }}
                                         </div>
 
-                                        <div v-else-if="manualRegisterSlotSummary" class="mt-3 grid grid-cols-2 gap-3 text-xs">
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
-                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Terpakai</div>
-                                                <div class="mt-1 text-base font-black text-slate-800 dark:text-white">
-                                                    {{ manualRegisterSlotSummary.used_slots }} / {{ manualRegisterSlotSummary.total_slots }}
+                                        <div v-else-if="manualRegisterSlotSummary" class="mt-3 space-y-3">
+                                            <div
+                                                v-if="manualRegisterSlotSummary.name || manualRegisterSlotSummary.description"
+                                                class="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs dark:border-white/10 dark:bg-slate-900/60"
+                                            >
+                                                <div class="font-semibold text-slate-700 dark:text-slate-200">
+                                                    {{ manualRegisterSlotSummary.name || manualRegisterSlotSummary.fsp }}
+                                                </div>
+                                                <div v-if="manualRegisterSlotSummary.description" class="mt-1 text-slate-500 dark:text-slate-400">
+                                                    {{ manualRegisterSlotSummary.description }}
                                                 </div>
                                             </div>
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
-                                                <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Tersedia</div>
-                                                <div class="mt-1 text-base font-black text-emerald-600 dark:text-emerald-300">
-                                                    {{ manualRegisterSlotSummary.empty_slots }}
+                                            <div class="grid grid-cols-2 gap-3 text-xs">
+                                                <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Terpakai</div>
+                                                    <div class="mt-1 text-base font-black text-slate-800 dark:text-white">
+                                                        {{ manualRegisterSlotSummary.used_slots }} / {{ manualRegisterSlotSummary.total_slots }}
+                                                    </div>
+                                                </div>
+                                                <div class="rounded-xl border border-slate-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-slate-900/60">
+                                                    <div class="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Tersedia</div>
+                                                    <div class="mt-1 text-base font-black text-emerald-600 dark:text-emerald-300">
+                                                        {{ manualRegisterSlotSummary.empty_slots }}
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
