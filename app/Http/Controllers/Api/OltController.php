@@ -904,6 +904,47 @@ class OltController extends Controller
     }
 
     /**
+     * Update FSP metadata without editing the full OLT profile.
+     */
+    public function updateFspMetadata(Request $request, int $id): JsonResponse
+    {
+        $this->authorizeManageOltProfile($request);
+
+        $request->validate([
+            'items' => 'required|array',
+            'items.*.fsp' => 'required|string|regex:/^\d+\/\d+\/\d+$/',
+            'items.*.name' => 'nullable|string|max:100',
+            'items.*.description' => 'nullable|string|max:255',
+        ]);
+
+        $tenantId = $request->user()->tenant_id ?? 1;
+        $olt = Olt::forTenant($tenantId)->findOrFail($id);
+
+        if (!$this->hasFspMetadataColumn()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Schema metadata FSP belum tersedia. Jalankan migration terbaru dulu.',
+            ], 422);
+        }
+
+        $metadata = $this->serializeFspMetadataMap(
+            $this->normalizeFspMetadataInput($request->input('items', []))
+        );
+
+        $olt->update([
+            'fsp_metadata' => $metadata,
+        ]);
+
+        return response()->json([
+            'status' => 'ok',
+            'message' => 'Metadata port FSP berhasil disimpan.',
+            'data' => [
+                'fsp_metadata' => $metadata,
+            ],
+        ]);
+    }
+
+    /**
      * Delete OLT profile
      */
     public function destroy(Request $request, int $id): JsonResponse

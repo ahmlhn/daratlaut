@@ -204,6 +204,7 @@ Route::middleware(['auth', 'resolve.tenant', 'tenant.feature'])->prefix('v1')->n
     Route::get('/olts/{id}/onu-detail', [OltController::class, 'getOnuDetail']);
     Route::get('/olts/{id}/onu-rx-history', [OltController::class, 'getOnuRxHistory']);
     Route::get('/olts/{id}/port-slot-summary', [OltController::class, 'getPortSlotSummary']);
+    Route::post('/olts/{id}/fsp-metadata', [OltController::class, 'updateFspMetadata']);
     Route::get('/olts/{id}/register-slot-summary', [OltController::class, 'getRegisterSlotSummary']);
     Route::post('/olts/{id}/register-onu', [OltController::class, 'registerOnu']);
     Route::post('/olts/{id}/update-onu-name', [OltController::class, 'updateOnuName']);

@@ -13,6 +13,7 @@ const DEFAULT_TEKNISI_ONU_RX_MIN_DBM = -24.99;
 const role = computed(() => String(page.props.auth?.user?.role || '').trim().toLowerCase());
 const isTeknisi = computed(() => ['teknisi', 'svp lapangan', 'svp_lapangan'].includes(role.value));
 const canManualRegister = computed(() => isTeknisi.value || ['admin', 'cs', 'owner'].includes(role.value));
+const canManageOltProfile = computed(() => !isTeknisi.value);
 
 // In-memory caches (native parity): keep list state when switching OLT (within the same page session).
 const memoryUncfgCache = {};
@@ -85,61 +86,26 @@ function sortFspList(list) {
     return items;
 }
 
-let fspMetadataRowSeed = 0;
-
-function nextFspMetadataRowKey() {
-    fspMetadataRowSeed += 1;
-    return `fsp-meta-${fspMetadataRowSeed}`;
-}
-
-function createFspMetadataRow(item = {}) {
-    return {
-        key: nextFspMetadataRowKey(),
-        fsp: String(item?.fsp || '').trim(),
-        name: String(item?.name || '').trim(),
-        description: String(item?.description || '').trim(),
-    };
-}
-
-function normalizeFspMetadataEntries(input, knownFspList = []) {
-    const normalized = new Map();
-    const rawItems = Array.isArray(input)
-        ? input
-        : input && typeof input === 'object'
-            ? Object.values(input)
+function sanitizeFspMetadataPayload(entries) {
+    const rawItems = Array.isArray(entries)
+        ? entries
+        : entries && typeof entries === 'object'
+            ? Object.values(entries)
             : [];
 
+    const normalized = new Map();
     rawItems.forEach((item) => {
         const fsp = String(item?.fsp || '').trim();
         if (!/^\d+\/\d+\/\d+$/.test(fsp)) return;
         normalized.set(fsp, {
-            fsp,
-            name: String(item?.name || '').trim().slice(0, 100),
-            description: String(item?.description || '').trim().slice(0, 255),
-        });
-    });
-
-    sortFspList(Array.isArray(knownFspList) ? knownFspList : []).forEach((fsp) => {
-        const safeFsp = String(fsp || '').trim();
-        if (!safeFsp || normalized.has(safeFsp)) return;
-        normalized.set(safeFsp, {
-            fsp: safeFsp,
-            name: '',
-            description: '',
-        });
-    });
-
-    return sortFspList(Array.from(normalized.keys())).map((fsp) => createFspMetadataRow(normalized.get(fsp)));
-}
-
-function sanitizeFspMetadataPayload(entries) {
-    const normalized = normalizeFspMetadataEntries(entries);
-    return normalized
-        .map((item) => ({
             fsp: String(item?.fsp || '').trim(),
             name: String(item?.name || '').trim().slice(0, 100),
             description: String(item?.description || '').trim().slice(0, 255),
-        }))
+        });
+    });
+
+    return sortFspList(Array.from(normalized.keys()))
+        .map((fsp) => normalized.get(fsp))
         .filter((item) => item.fsp && (item.name || item.description));
 }
 
@@ -545,7 +511,6 @@ const formData = ref({
     service_port_id_default: 1,
     teknisi_onu_rx_max_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MAX_DBM, DEFAULT_TEKNISI_ONU_RX_MAX_DBM),
     teknisi_onu_rx_min_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MIN_DBM, DEFAULT_TEKNISI_ONU_RX_MIN_DBM),
-    fsp_metadata: [],
 });
 
 // ========== Deep Sync Modal (Native Parity) ==========
@@ -605,7 +570,6 @@ async function openOltModal(mode) {
                     olt.teknisi_onu_rx_min_dbm,
                     DEFAULT_TEKNISI_ONU_RX_MIN_DBM
                 ),
-                fsp_metadata: normalizeFspMetadataEntries(olt.fsp_metadata, olt.fsp_cache),
             };
 
             showOltModal.value = true;
@@ -629,7 +593,6 @@ async function openOltModal(mode) {
         service_port_id_default: 1,
         teknisi_onu_rx_max_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MAX_DBM, DEFAULT_TEKNISI_ONU_RX_MAX_DBM),
         teknisi_onu_rx_min_dbm: formatRxInputValue(DEFAULT_TEKNISI_ONU_RX_MIN_DBM, DEFAULT_TEKNISI_ONU_RX_MIN_DBM),
-        fsp_metadata: [],
     };
     showOltModal.value = true;
 }
@@ -648,7 +611,6 @@ async function saveOlt() {
         service_port_id_default: Number(formData.value.service_port_id_default || 0),
         teknisi_onu_rx_max_dbm: onuRxBounds.max,
         teknisi_onu_rx_min_dbm: onuRxBounds.min,
-        fsp_metadata: sanitizeFspMetadataPayload(formData.value.fsp_metadata),
     };
 
     if (!payload.nama_olt || !payload.host || !payload.username) {
@@ -841,18 +803,6 @@ async function loadFspList() {
     }
 }
 
-function addFspMetadataRow() {
-    formData.value.fsp_metadata = [
-        ...(Array.isArray(formData.value.fsp_metadata) ? formData.value.fsp_metadata : []),
-        createFspMetadataRow(),
-    ];
-}
-
-function removeFspMetadataRow(key) {
-    formData.value.fsp_metadata = (Array.isArray(formData.value.fsp_metadata) ? formData.value.fsp_metadata : [])
-        .filter((item) => item.key !== key);
-}
-
 // ========== Unregistered ==========
 const uncfg = ref([]);
 const uncfgLoading = ref(false);
@@ -877,6 +827,9 @@ const portSlotModalOpen = ref(false);
 const portSlotSummaryLoading = ref(false);
 const portSlotSummaryError = ref('');
 const portSlotSummary = ref([]);
+const portSlotSaveBusy = ref(false);
+const portSlotSaveError = ref('');
+const portSlotSaveMessage = ref('');
 const portSlotTotals = ref({
     total_ports: 0,
     total_used_slots: 0,
@@ -997,11 +950,13 @@ function hideManualRegisterModal() {
 function openPortSlotModal() {
     if (!selectedOltId.value) return;
     portSlotModalOpen.value = true;
+    portSlotSaveError.value = '';
+    portSlotSaveMessage.value = '';
     loadPortSlotSummary().catch(() => {});
 }
 
 function closePortSlotModal() {
-    if (portSlotSummaryLoading.value) return;
+    if (portSlotSummaryLoading.value || portSlotSaveBusy.value) return;
     portSlotModalOpen.value = false;
 }
 
@@ -1032,6 +987,59 @@ async function loadPortSlotSummary() {
         };
     } finally {
         portSlotSummaryLoading.value = false;
+    }
+}
+
+async function savePortSlotMetadata() {
+    if (!selectedOltId.value || portSlotSaveBusy.value || !canManageOltProfile.value) return;
+
+    portSlotSaveBusy.value = true;
+    portSlotSaveError.value = '';
+    portSlotSaveMessage.value = '';
+
+    try {
+        const items = Array.isArray(portSlotSummary.value)
+            ? portSlotSummary.value.map((item) => ({
+                fsp: String(item?.fsp || '').trim(),
+                name: String(item?.name || '').trim(),
+                description: String(item?.description || '').trim(),
+            }))
+            : [];
+
+        const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/fsp-metadata`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items }),
+        });
+
+        const metadata = Array.isArray(data?.data?.fsp_metadata) ? data.data.fsp_metadata : [];
+        const metaMap = buildFspMetadataMap(metadata);
+
+        portSlotSummary.value = (Array.isArray(portSlotSummary.value) ? portSlotSummary.value : []).map((item) => {
+            const meta = metaMap[String(item?.fsp || '').trim()] || null;
+            return {
+                ...item,
+                name: meta?.name || '',
+                description: meta?.description || '',
+            };
+        });
+
+        if (manualRegisterSlotSummary.value?.fsp) {
+            const currentFsp = String(manualRegisterSlotSummary.value.fsp || '').trim();
+            const currentMeta = metaMap[currentFsp] || null;
+            manualRegisterSlotSummary.value = {
+                ...manualRegisterSlotSummary.value,
+                name: currentMeta?.name || '',
+                description: currentMeta?.description || '',
+            };
+        }
+
+        syncSelectedOltFspContext({ fspMetadata: metadata });
+        portSlotSaveMessage.value = data?.message || 'Metadata port berhasil disimpan.';
+    } catch (e) {
+        portSlotSaveError.value = e.message || 'Metadata port gagal disimpan.';
+    } finally {
+        portSlotSaveBusy.value = false;
     }
 }
 
@@ -4630,76 +4638,6 @@ onBeforeUnmount(() => {
                                             </div>
                                         </div>
 
-                                        <div class="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-slate-950/40">
-                                            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                                <div>
-                                                    <div class="text-[11px] font-black uppercase tracking-wide text-slate-500">Nama / Deskripsi Port FSP</div>
-                                                    <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                                        Label ini dipakai di filter FSP, popup slot port, dan konteks registrasi.
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    class="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-100 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                                                    @click="addFspMetadataRow()"
-                                                >
-                                                    Tambah FSP
-                                                </button>
-                                            </div>
-
-                                            <div v-if="!formData.fsp_metadata.length" class="mt-4 rounded-xl border border-dashed border-slate-300 px-4 py-4 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
-                                                Belum ada metadata port. Tambah manual atau lakukan load FSP dulu lalu edit ulang OLT ini.
-                                            </div>
-
-                                            <div v-else class="mt-4 space-y-3">
-                                                <div
-                                                    v-for="item in formData.fsp_metadata"
-                                                    :key="item.key"
-                                                    class="rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-slate-900/70"
-                                                >
-                                                    <div class="grid grid-cols-1 gap-3 lg:grid-cols-[160px_minmax(0,1fr)_minmax(0,1.15fr)_auto]">
-                                                        <div>
-                                                            <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">FSP</label>
-                                                            <input
-                                                                v-model="item.fsp"
-                                                                type="text"
-                                                                placeholder="1/1/1"
-                                                                class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60 dark:border-white/10 dark:bg-slate-950"
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Nama Port</label>
-                                                            <input
-                                                                v-model="item.name"
-                                                                type="text"
-                                                                maxlength="100"
-                                                                placeholder="Contoh: Jalur POP Barat"
-                                                                class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60 dark:border-white/10 dark:bg-slate-950"
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Deskripsi</label>
-                                                            <input
-                                                                v-model="item.description"
-                                                                type="text"
-                                                                maxlength="255"
-                                                                placeholder="Catatan singkat port/FSP"
-                                                                class="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-slate-900/60 dark:border-white/10 dark:bg-slate-950"
-                                                            />
-                                                        </div>
-                                                        <div class="flex items-end">
-                                                            <button
-                                                                type="button"
-                                                                class="inline-flex h-11 items-center justify-center rounded-lg border border-rose-200 px-3 text-xs font-bold text-rose-700 transition hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-300 dark:hover:bg-rose-500/10"
-                                                                @click="removeFspMetadataRow(item.key)"
-                                                            >
-                                                                Hapus
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
                                     </div>
                                 </div>
 
@@ -4773,11 +4711,14 @@ onBeforeUnmount(() => {
                                     <div class="flex items-start justify-between gap-3">
                                         <div>
                                             <div class="text-lg font-black text-slate-800 dark:text-white">Slot Port OLT</div>
+                                            <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                                {{ canManageOltProfile ? 'Nama/deskripsi FSP bisa diedit langsung dari popup ini.' : 'Popup ini menampilkan label FSP yang sudah disimpan.' }}
+                                            </div>
                                         </div>
                                         <button
                                             type="button"
                                             class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-400 transition hover:border-slate-300 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:text-slate-500 dark:hover:border-white/20 dark:hover:text-slate-300"
-                                            :disabled="portSlotSummaryLoading"
+                                            :disabled="portSlotSummaryLoading || portSlotSaveBusy"
                                             @click="closePortSlotModal()"
                                         >
                                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -4797,6 +4738,14 @@ onBeforeUnmount(() => {
                                     </div>
 
                                     <div v-else class="overflow-hidden rounded-2xl border border-slate-200 dark:border-white/10">
+                                        <div v-if="portSlotSaveError" class="border-b border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+                                            {{ portSlotSaveError }}
+                                        </div>
+
+                                        <div v-else-if="portSlotSaveMessage" class="border-b border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+                                            {{ portSlotSaveMessage }}
+                                        </div>
+
                                         <div class="max-h-[48vh] overflow-auto">
                                             <table class="w-full text-left text-sm whitespace-nowrap">
                                                 <thead class="bg-slate-50 text-xs uppercase text-slate-500 font-bold border-b border-slate-100 dark:bg-slate-900/60 dark:text-slate-400 dark:border-white/10">
@@ -4816,8 +4765,28 @@ onBeforeUnmount(() => {
                                                     </tr>
                                                     <tr v-for="item in portSlotSummary" :key="item.fsp" class="bg-white dark:bg-slate-900/40">
                                                         <td class="px-4 py-3 font-bold text-slate-800 dark:text-white">{{ item.fsp }}</td>
-                                                        <td class="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</td>
-                                                        <td class="px-4 py-3 text-slate-500 dark:text-slate-400">{{ item.description || '-' }}</td>
+                                                        <td class="px-4 py-3">
+                                                            <input
+                                                                v-if="canManageOltProfile"
+                                                                v-model="item.name"
+                                                                type="text"
+                                                                maxlength="100"
+                                                                placeholder="Nama port"
+                                                                class="h-10 w-full min-w-[12rem] rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-white/10 dark:bg-slate-950 dark:text-slate-100"
+                                                            />
+                                                            <span v-else class="font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</span>
+                                                        </td>
+                                                        <td class="px-4 py-3">
+                                                            <input
+                                                                v-if="canManageOltProfile"
+                                                                v-model="item.description"
+                                                                type="text"
+                                                                maxlength="255"
+                                                                placeholder="Deskripsi port"
+                                                                class="h-10 w-full min-w-[16rem] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-white/10 dark:bg-slate-950 dark:text-slate-200"
+                                                            />
+                                                            <span v-else class="text-slate-500 dark:text-slate-400">{{ item.description || '-' }}</span>
+                                                        </td>
                                                         <td class="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{{ item.used_slots }} / {{ item.total_slots }}</td>
                                                         <td class="px-4 py-3 font-semibold text-emerald-600 dark:text-emerald-300">{{ item.empty_slots }}</td>
                                                     </tr>
@@ -4827,13 +4796,32 @@ onBeforeUnmount(() => {
                                     </div>
                                 </div>
 
-                                <div class="flex items-center justify-end border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                <div class="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
                                     <button
                                         type="button"
                                         class="h-10 rounded-lg bg-slate-100 px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+                                        :disabled="portSlotSaveBusy"
                                         @click="closePortSlotModal()"
                                     >
                                         Tutup
+                                    </button>
+                                    <button
+                                        v-if="canManageOltProfile"
+                                        type="button"
+                                        class="inline-flex h-10 items-center justify-center rounded-lg bg-slate-900 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                                        :disabled="portSlotSaveBusy || portSlotSummaryLoading"
+                                        @click="savePortSlotMetadata()"
+                                    >
+                                        <span
+                                            v-if="portSlotSaveBusy"
+                                            class="mr-2 inline-flex h-4 w-4 items-center justify-center"
+                                        >
+                                            <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                                <path class="opacity-75" d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="4" stroke-linecap="round" />
+                                            </svg>
+                                        </span>
+                                        {{ portSlotSaveBusy ? 'Menyimpan...' : 'Simpan Nama FSP' }}
                                     </button>
                                 </div>
                             </div>
