@@ -58,6 +58,7 @@ Last verified: 2026-04-21
 - Future v2: jika perlu log per user yang kuat, tambah schema `actor_user_id`, `actor_role`, `actor_type`, dan opsional `request_id/run_id`; baru setelah itu implement tab/grouping log per user yang strict.
 
 ## Change log
+- 2026-04-28: Kolom/input `Deskripsi` di popup `Slot Port OLT` dihapus dari `resources/js/Pages/Olts/Index.vue`; fitur slot port kini hanya menampilkan/edit nama FSP plus ringkasan slot, sementara payload simpan tetap membawa deskripsi lama bila ada agar metadata existing tidak terhapus diam-diam. Docs: N/A.
 - 2026-04-28: Tombol `Slot Port` dobel di halaman OLT dibersihkan; akses lama berupa ikon kecil di header `ONU Registered` dihapus dari `resources/js/Pages/Olts/Index.vue`, sehingga fitur slot port hanya dibuka dari panel `Pilih OLT`. Docs: N/A.
 - 2026-04-28: Akses fitur `Slot Port OLT` di halaman OLT dibuat lebih langsung; `resources/js/Pages/Olts/Index.vue` menambah tombol `Slot Port` di panel `Pilih OLT` dan mendukung deep-link `/olts?feature=slot-port` atau `#slot-port` untuk membuka popup slot port setelah OLT terpilih. Docs: N/A.
 - 2026-04-21: Broadcast progres Reverb untuk auto register OLT di-hardening; `app/Jobs/AutoRegisterOnuBatchJob.php` kini membungkus `event(new OltAutoRegisterProgressUpdated(...))` dalam `try/catch` + warning log agar kegagalan koneksi Reverb tidak lagi menghentikan job queue dan meninggalkan run `register_auto` macet di status `processing`. Docs: N/A.

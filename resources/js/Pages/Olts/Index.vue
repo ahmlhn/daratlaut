@@ -5268,7 +5268,7 @@ onBeforeUnmount(() => {
                                         <div>
                                             <div class="text-lg font-black text-slate-800 dark:text-white">Slot Port OLT</div>
                                             <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                                {{ canManageOltProfile ? 'Nama/deskripsi FSP bisa diedit langsung dari popup ini.' : 'Popup ini menampilkan label FSP yang sudah disimpan.' }}
+                                                {{ canManageOltProfile ? 'Nama FSP bisa diedit langsung dari popup ini.' : 'Popup ini menampilkan nama FSP yang sudah disimpan.' }}
                                             </div>
                                         </div>
                                         <button
@@ -5308,14 +5308,13 @@ onBeforeUnmount(() => {
                                                     <tr>
                                                         <th class="px-4 py-3">Port</th>
                                                         <th class="px-4 py-3">Nama</th>
-                                                        <th class="px-4 py-3">Deskripsi</th>
                                                         <th class="px-4 py-3">Terpakai</th>
                                                         <th class="px-4 py-3">Tersedia</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody class="divide-y divide-slate-100 dark:divide-white/5">
                                                     <tr v-if="!portSlotSummary.length">
-                                                        <td colspan="5" class="px-4 py-10 text-center text-slate-400 italic">
+                                                        <td colspan="4" class="px-4 py-10 text-center text-slate-400 italic">
                                                             Belum ada data port.
                                                         </td>
                                                     </tr>
@@ -5331,17 +5330,6 @@ onBeforeUnmount(() => {
                                                                 class="h-10 w-full min-w-[12rem] rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-white/10 dark:bg-slate-950 dark:text-slate-100"
                                                             />
                                                             <span v-else class="font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</span>
-                                                        </td>
-                                                        <td class="px-4 py-3">
-                                                            <input
-                                                                v-if="canManageOltProfile"
-                                                                v-model="item.description"
-                                                                type="text"
-                                                                maxlength="255"
-                                                                placeholder="Deskripsi port"
-                                                                class="h-10 w-full min-w-[16rem] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-white/10 dark:bg-slate-950 dark:text-slate-200"
-                                                            />
-                                                            <span v-else class="text-slate-500 dark:text-slate-400">{{ item.description || '-' }}</span>
                                                         </td>
                                                         <td class="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{{ item.used_slots }} / {{ item.total_slots }}</td>
                                                         <td class="px-4 py-3 font-semibold text-emerald-600 dark:text-emerald-300">{{ item.empty_slots }}</td>
