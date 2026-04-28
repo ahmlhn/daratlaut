@@ -1039,6 +1039,26 @@ function resetPortSlotNameChanges() {
     portSlotSaveMessage.value = 'Perubahan nama FSP dibatalkan.';
 }
 
+function getPortSlotAvailabilityClass(emptySlots, totalSlots) {
+    const empty = Number(emptySlots || 0);
+    const total = Number(totalSlots || 0);
+    const ratio = total > 0 ? empty / total : 0;
+
+    if (empty <= 0) {
+        return 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-200 dark:ring-rose-500/30';
+    }
+
+    if (ratio <= 0.15) {
+        return 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-500/30';
+    }
+
+    if (ratio <= 0.4) {
+        return 'bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-200 dark:ring-sky-500/30';
+    }
+
+    return 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-200 dark:ring-emerald-500/30';
+}
+
 async function loadPortSlotSummary() {
     if (!selectedOltId.value || !portSlotModalOpen.value) {
         portSlotSummaryLoading.value = false;
@@ -5416,7 +5436,14 @@ onBeforeUnmount(() => {
                                                             </div>
                                                         </td>
                                                         <td class="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{{ item.used_slots }} / {{ item.total_slots }}</td>
-                                                        <td class="px-4 py-3 font-semibold text-emerald-600 dark:text-emerald-300">{{ item.empty_slots }}</td>
+                                                        <td class="px-4 py-3">
+                                                            <span
+                                                                class="inline-flex min-w-12 justify-center rounded-full px-2.5 py-1 text-xs font-black ring-1"
+                                                                :class="getPortSlotAvailabilityClass(item.empty_slots, item.total_slots)"
+                                                            >
+                                                                {{ item.empty_slots }}
+                                                            </span>
+                                                        </td>
                                                     </tr>
                                                 </tbody>
                                             </table>
