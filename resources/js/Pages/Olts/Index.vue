@@ -849,11 +849,23 @@ const portSlotSummary = ref([]);
 const portSlotSaveBusy = ref(false);
 const portSlotSaveError = ref('');
 const portSlotSaveMessage = ref('');
+const portSlotOriginalNameMap = ref({});
 const portSlotTotals = ref({
     total_ports: 0,
     total_used_slots: 0,
     total_empty_slots: 0,
 });
+const portSlotChangedCount = computed(() => {
+    if (!Array.isArray(portSlotSummary.value)) return 0;
+    return portSlotSummary.value.reduce((count, item) => {
+        const fsp = String(item?.fsp || '').trim();
+        if (!fsp) return count;
+        const currentName = normalizePortSlotName(item?.name || '');
+        const originalName = String(portSlotOriginalNameMap.value[fsp] || '');
+        return currentName !== originalName ? count + 1 : count;
+    }, 0);
+});
+const portSlotHasChanges = computed(() => portSlotChangedCount.value > 0);
 const registerProgressText = ref('Registrasi berjalan...');
 const uncfgStatus = ref({ tone: 'info', message: '' });
 const autoRegisterRunId = ref(null);
@@ -980,7 +992,51 @@ function openPortSlotModal() {
 
 function closePortSlotModal() {
     if (portSlotSummaryLoading.value || portSlotSaveBusy.value) return;
+    if (canManageOltProfile.value && portSlotHasChanges.value) {
+        portSlotSaveError.value = 'Simpan atau Batal Edit sebelum menutup popup.';
+        portSlotSaveMessage.value = '';
+        return;
+    }
     portSlotModalOpen.value = false;
+}
+
+function normalizePortSlotName(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+}
+
+function normalizePortSlotSummaryItems(items) {
+    return (Array.isArray(items) ? items : []).map((item) => ({
+        ...item,
+        fsp: String(item?.fsp || '').trim(),
+        name: normalizePortSlotName(item?.name || ''),
+        description: String(item?.description || '').trim(),
+    }));
+}
+
+function snapshotPortSlotNames(items) {
+    const map = {};
+    normalizePortSlotSummaryItems(items).forEach((item) => {
+        if (item.fsp) map[item.fsp] = item.name;
+    });
+    portSlotOriginalNameMap.value = map;
+}
+
+function normalizePortSlotNameField(item) {
+    if (!item) return;
+    item.name = normalizePortSlotName(item.name);
+    portSlotSaveError.value = '';
+    if (portSlotHasChanges.value) {
+        portSlotSaveMessage.value = '';
+    }
+}
+
+function resetPortSlotNameChanges() {
+    portSlotSummary.value = normalizePortSlotSummaryItems(portSlotSummary.value).map((item) => ({
+        ...item,
+        name: String(portSlotOriginalNameMap.value[item.fsp] || ''),
+    }));
+    portSlotSaveError.value = '';
+    portSlotSaveMessage.value = 'Perubahan nama FSP dibatalkan.';
 }
 
 async function loadPortSlotSummary() {
@@ -991,10 +1047,12 @@ async function loadPortSlotSummary() {
 
     portSlotSummaryLoading.value = true;
     portSlotSummaryError.value = '';
+    portSlotOriginalNameMap.value = {};
     try {
         const data = await fetchJson(`${API_BASE}/olts/${selectedOltId.value}/port-slot-summary`);
         const payload = data?.data && typeof data.data === 'object' ? data.data : {};
-        portSlotSummary.value = Array.isArray(payload.items) ? payload.items : [];
+        portSlotSummary.value = normalizePortSlotSummaryItems(payload.items);
+        snapshotPortSlotNames(portSlotSummary.value);
         portSlotTotals.value = {
             total_ports: Number(payload.total_ports || 0),
             total_used_slots: Number(payload.total_used_slots || 0),
@@ -1015,6 +1073,13 @@ async function loadPortSlotSummary() {
 
 async function savePortSlotMetadata() {
     if (!selectedOltId.value || portSlotSaveBusy.value || !canManageOltProfile.value) return;
+
+    portSlotSummary.value = normalizePortSlotSummaryItems(portSlotSummary.value);
+    if (!portSlotHasChanges.value) {
+        portSlotSaveError.value = '';
+        portSlotSaveMessage.value = 'Tidak ada perubahan nama FSP.';
+        return;
+    }
 
     portSlotSaveBusy.value = true;
     portSlotSaveError.value = '';
@@ -1046,6 +1111,7 @@ async function savePortSlotMetadata() {
                 description: meta?.description || '',
             };
         });
+        snapshotPortSlotNames(portSlotSummary.value);
 
         if (manualRegisterSlotSummary.value?.fsp) {
             const currentFsp = String(manualRegisterSlotSummary.value.fsp || '').trim();
@@ -1058,9 +1124,9 @@ async function savePortSlotMetadata() {
         }
 
         syncSelectedOltFspContext({ fspMetadata: metadata });
-        portSlotSaveMessage.value = data?.message || 'Metadata port berhasil disimpan.';
+        portSlotSaveMessage.value = 'Nama FSP berhasil disimpan.';
     } catch (e) {
-        portSlotSaveError.value = e.message || 'Metadata port gagal disimpan.';
+        portSlotSaveError.value = e.message || 'Nama FSP gagal disimpan.';
     } finally {
         portSlotSaveBusy.value = false;
     }
@@ -5302,6 +5368,13 @@ onBeforeUnmount(() => {
                                             {{ portSlotSaveMessage }}
                                         </div>
 
+                                        <div
+                                            v-if="canManageOltProfile && portSlotHasChanges"
+                                            class="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
+                                        >
+                                            {{ portSlotChangedCount }} nama FSP belum disimpan.
+                                        </div>
+
                                         <div class="max-h-[48vh] overflow-auto">
                                             <table class="w-full text-left text-sm whitespace-nowrap">
                                                 <thead class="bg-slate-50 text-xs uppercase text-slate-500 font-bold border-b border-slate-100 dark:bg-slate-900/60 dark:text-slate-400 dark:border-white/10">
@@ -5327,9 +5400,20 @@ onBeforeUnmount(() => {
                                                                 type="text"
                                                                 maxlength="100"
                                                                 placeholder="Nama port"
-                                                                class="h-10 w-full min-w-[12rem] rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:border-white/10 dark:bg-slate-950 dark:text-slate-100"
+                                                                class="h-10 w-full min-w-[12rem] rounded-lg border bg-white px-3 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 dark:bg-slate-950 dark:text-slate-100"
+                                                                :class="normalizePortSlotName(item.name) !== String(portSlotOriginalNameMap[item.fsp] || '')
+                                                                    ? 'border-amber-300 focus:ring-amber-500/30 dark:border-amber-500/40'
+                                                                    : 'border-slate-200 focus:ring-slate-900/20 dark:border-white/10'"
+                                                                @input="portSlotSaveError = ''; portSlotSaveMessage = ''"
+                                                                @blur="normalizePortSlotNameField(item)"
                                                             />
                                                             <span v-else class="font-semibold text-slate-700 dark:text-slate-200">{{ item.name || '-' }}</span>
+                                                            <div
+                                                                v-if="canManageOltProfile && normalizePortSlotName(item.name) !== String(portSlotOriginalNameMap[item.fsp] || '')"
+                                                                class="mt-1 text-[10px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-300"
+                                                            >
+                                                                Diubah
+                                                            </div>
                                                         </td>
                                                         <td class="px-4 py-3 font-semibold text-slate-700 dark:text-slate-200">{{ item.used_slots }} / {{ item.total_slots }}</td>
                                                         <td class="px-4 py-3 font-semibold text-emerald-600 dark:text-emerald-300">{{ item.empty_slots }}</td>
@@ -5340,7 +5424,21 @@ onBeforeUnmount(() => {
                                     </div>
                                 </div>
 
-                                <div class="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:px-6">
+                                <div class="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 dark:border-white/10 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                                    <div class="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                                        <span v-if="canManageOltProfile && portSlotHasChanges">{{ portSlotChangedCount }} perubahan siap disimpan.</span>
+                                        <span v-else-if="canManageOltProfile">Belum ada perubahan nama.</span>
+                                    </div>
+                                    <div class="flex items-center justify-end gap-2">
+                                        <button
+                                            v-if="canManageOltProfile && portSlotHasChanges"
+                                            type="button"
+                                            class="h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                            :disabled="portSlotSaveBusy"
+                                            @click="resetPortSlotNameChanges()"
+                                        >
+                                            Batal Edit
+                                        </button>
                                     <button
                                         type="button"
                                         class="h-10 rounded-lg bg-slate-100 px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
@@ -5353,7 +5451,7 @@ onBeforeUnmount(() => {
                                         v-if="canManageOltProfile"
                                         type="button"
                                         class="inline-flex h-10 items-center justify-center rounded-lg bg-slate-900 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
-                                        :disabled="portSlotSaveBusy || portSlotSummaryLoading"
+                                        :disabled="portSlotSaveBusy || portSlotSummaryLoading || !portSlotHasChanges"
                                         @click="savePortSlotMetadata()"
                                     >
                                         <span
@@ -5367,6 +5465,7 @@ onBeforeUnmount(() => {
                                         </span>
                                         {{ portSlotSaveBusy ? 'Menyimpan...' : 'Simpan Nama FSP' }}
                                     </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
