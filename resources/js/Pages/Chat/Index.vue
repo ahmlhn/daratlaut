@@ -11,11 +11,12 @@ const adminFirst = computed(() => (String(adminName.value || 'Admin').trim().spl
 const legacyChatVersion = computed(() => page.props.legacyChatVersion || '')
 const tenantId = computed(() => Number(page.props.auth?.user?.tenant_id || 0))
 const realtimeState = ref('connecting')
+const realtimeDetail = ref('Mencoba menyambungkan realtime chat.')
 const realtimeStatus = computed(() => {
   if (realtimeState.value === 'connected') {
     return {
       label: 'Realtime aktif',
-      title: 'Reverb tersambung. Update chat diterima lewat websocket.',
+      title: realtimeDetail.value || 'Realtime chat tersambung. Update chat diterima lewat websocket.',
       dot: 'bg-emerald-500 shadow-emerald-500/40',
       text: 'text-emerald-700 dark:text-emerald-300',
       bg: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/20',
@@ -24,7 +25,7 @@ const realtimeStatus = computed(() => {
   if (realtimeState.value === 'connecting') {
     return {
       label: 'Menghubungkan',
-      title: 'Mencoba menyambungkan Reverb. Polling tetap aktif sebagai fallback.',
+      title: realtimeDetail.value || 'Mencoba menyambungkan realtime. Polling tetap aktif sebagai fallback.',
       dot: 'bg-amber-500 shadow-amber-500/40 animate-pulse',
       text: 'text-amber-700 dark:text-amber-300',
       bg: 'bg-amber-50 border-amber-200 dark:bg-amber-500/10 dark:border-amber-500/20',
@@ -32,7 +33,7 @@ const realtimeStatus = computed(() => {
   }
   return {
     label: 'Polling aktif',
-    title: 'Reverb belum tersambung. Chat tetap berjalan dengan polling fallback.',
+    title: realtimeDetail.value || 'Realtime belum tersambung. Chat tetap berjalan dengan polling fallback.',
     dot: 'bg-slate-400 shadow-slate-400/30',
     text: 'text-slate-600 dark:text-slate-300',
     bg: 'bg-slate-50 border-slate-200 dark:bg-white/5 dark:border-white/10',
@@ -41,6 +42,7 @@ const realtimeStatus = computed(() => {
 
 let chatRealtimeChannelName = ''
 let chatRealtimeInitPromise = null
+let chatRealtimeUnbindConnection = null
 
 async function ensureChatEcho() {
   if (window.Echo) return window.Echo
@@ -55,42 +57,73 @@ async function ensureChatEcho() {
   return chatRealtimeInitPromise
 }
 
-function setChatRealtimeConnected(value) {
+function setChatRealtimeConnected(value, detail = '') {
   realtimeState.value = value ? 'connected' : 'fallback'
+  if (detail) realtimeDetail.value = detail
   window.__chatRealtimeSetConnected?.(!!value)
 }
 
 async function subscribeChatRealtime() {
   realtimeState.value = 'connecting'
+  realtimeDetail.value = 'Mencoba menyambungkan realtime chat.'
   window.setTimeout(() => {
-    if (realtimeState.value === 'connecting') setChatRealtimeConnected(false)
-  }, 5000)
+    if (realtimeState.value === 'connecting') {
+      setChatRealtimeConnected(false, 'Realtime belum tersambung setelah beberapa detik. Polling fallback tetap aktif.')
+    }
+  }, 8000)
 
   if (!tenantId.value) {
-    setChatRealtimeConnected(false)
+    setChatRealtimeConnected(false, 'Tenant tidak ditemukan untuk subscribe channel chat.')
     return
   }
 
   const echo = await ensureChatEcho()
   if (!echo) {
-    setChatRealtimeConnected(false)
+    setChatRealtimeConnected(false, 'Asset realtime gagal dimuat.')
     return
   }
 
-  const connector = echo.connector?.pusher?.connection
-  connector?.bind?.('connected', () => setChatRealtimeConnected(true))
-  connector?.bind?.('disconnected', () => setChatRealtimeConnected(false))
-  connector?.bind?.('unavailable', () => setChatRealtimeConnected(false))
-  connector?.bind?.('failed', () => setChatRealtimeConnected(false))
-  setChatRealtimeConnected(connector?.state === 'connected')
-
   chatRealtimeChannelName = `tenants.${tenantId.value}.chat`
-  echo.private(chatRealtimeChannelName).listen('.chat.updated', (payload) => {
-    window.__chatRealtimeHandle?.(payload)
+  const channel = echo.private(chatRealtimeChannelName)
+    .listen('.chat.updated', (payload) => {
+      window.__chatRealtimeHandle?.(payload)
+    })
+
+  channel.subscribed?.(() => {
+    setChatRealtimeConnected(true, `Realtime tersambung ke channel ${chatRealtimeChannelName}.`)
   })
+  channel.error?.((error) => {
+    console.warn('Chat realtime subscription failed:', error)
+    setChatRealtimeConnected(false, 'Subscribe private channel chat gagal. Cek /broadcasting/auth dan konfigurasi Ably/Pusher.')
+  })
+
+  const connector = echo.connector
+  chatRealtimeUnbindConnection = connector?.onConnectionChange?.((state) => {
+    if (state === 'connected' && realtimeState.value !== 'connected') {
+      realtimeState.value = 'connecting'
+      realtimeDetail.value = 'Socket realtime tersambung, menunggu subscribe private channel chat.'
+      return
+    }
+    if (state === 'connecting' || state === 'reconnecting') {
+      realtimeState.value = 'connecting'
+      realtimeDetail.value = 'Menghubungkan socket realtime.'
+      return
+    }
+    if (state === 'failed' || state === 'disconnected') {
+      setChatRealtimeConnected(false, `Socket realtime ${state}. Polling fallback aktif.`)
+    }
+  }) || null
+
+  const connectionState = connector?.connectionStatus?.()
+  if (connectionState === 'connected' && realtimeState.value !== 'connected') {
+    realtimeState.value = 'connecting'
+    realtimeDetail.value = 'Socket realtime tersambung, menunggu subscribe private channel chat.'
+  }
 }
 
 function unsubscribeChatRealtime() {
+  chatRealtimeUnbindConnection?.()
+  chatRealtimeUnbindConnection = null
   if (chatRealtimeChannelName && window.Echo?.leave) {
     try {
       window.Echo.leave(chatRealtimeChannelName)

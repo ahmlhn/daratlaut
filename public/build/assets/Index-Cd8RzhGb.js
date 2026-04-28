@@ -1,0 +1,1 @@
+import{c as a,a as e,u as t,h as r,m as o,F as s,j as _}from"./app-Dr93VIvK.js";import{_ as l}from"./AdminLayout-BLxcuFic.js";import m from"./RoleManagementPanel-C03q8Jb2.js";/* empty css            */const h={__name:"Index",setup(n){return(c,f)=>(_(),a(s,null,[e(t(r),{title:"Kelola Role"}),e(l,null,{default:o(()=>[e(m)]),_:1})],64))}};export{h as default};
