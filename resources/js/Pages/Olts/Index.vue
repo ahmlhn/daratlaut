@@ -4143,16 +4143,6 @@ onBeforeUnmount(() => {
                             <div>
                                 <div class="flex items-center gap-2">
                                     <div class="text-base font-black text-slate-700 dark:text-slate-200 uppercase">ONU Registered</div>
-                                    <button
-                                        type="button"
-                                        class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                                        :disabled="registerBusy"
-                                        @click="openPortSlotModal()"
-                                    >
-                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
-                                        </svg>
-                                    </button>
                                 </div>
                             </div>
                         </div>
