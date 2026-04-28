@@ -42,10 +42,16 @@ jobs:
 
       - name: Build frontend (Vite)
         env:
+          VITE_BROADCAST_DRIVER: ${{ vars.VITE_BROADCAST_DRIVER }}
           VITE_REVERB_APP_KEY: ${{ secrets.VITE_REVERB_APP_KEY }}
           VITE_REVERB_HOST: ${{ vars.VITE_REVERB_HOST }}
           VITE_REVERB_PORT: ${{ vars.VITE_REVERB_PORT }}
           VITE_REVERB_SCHEME: ${{ vars.VITE_REVERB_SCHEME }}
+          VITE_PUSHER_APP_KEY: ${{ secrets.VITE_PUSHER_APP_KEY }}
+          VITE_PUSHER_APP_CLUSTER: ${{ vars.VITE_PUSHER_APP_CLUSTER }}
+          VITE_PUSHER_HOST: ${{ vars.VITE_PUSHER_HOST }}
+          VITE_PUSHER_PORT: ${{ vars.VITE_PUSHER_PORT }}
+          VITE_PUSHER_SCHEME: ${{ vars.VITE_PUSHER_SCHEME }}
         run: npm run build
 
       - name: Create update package zip (includes vendor + public/build)

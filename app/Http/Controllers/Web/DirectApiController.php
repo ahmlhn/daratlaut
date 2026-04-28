@@ -69,8 +69,10 @@ class DirectApiController extends Controller
             return $this->json(['message' => 'Session not found'], $request, 403);
         }
 
-        $key = (string) config('broadcasting.connections.reverb.key', '');
-        $secret = (string) config('broadcasting.connections.reverb.secret', '');
+        $broadcastDriver = (string) config('broadcasting.default', 'null');
+        $connection = $broadcastDriver === 'pusher' ? 'pusher' : 'reverb';
+        $key = (string) config("broadcasting.connections.{$connection}.key", '');
+        $secret = (string) config("broadcasting.connections.{$connection}.secret", '');
         if ($key === '' || $secret === '') {
             return $this->json(['message' => 'Realtime belum dikonfigurasi'], $request, 503);
         }

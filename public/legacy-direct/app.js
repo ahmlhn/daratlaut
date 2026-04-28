@@ -25,10 +25,11 @@ const LOG_URL = TENANT_TOKEN ? `../log.php?t=${encodeURIComponent(TENANT_TOKEN)}
 const PRESENCE_HEARTBEAT_MS = 10000;
 const CHAT_POLL_FALLBACK_MS = 3000;
 const CHAT_POLL_REALTIME_MS = 15000;
-const REVERB_KEY = document.body ? (document.body.dataset.reverbKey || '') : '';
-const REVERB_HOST = document.body ? (document.body.dataset.reverbHost || window.location.hostname) : window.location.hostname;
-const REVERB_PORT = document.body ? (document.body.dataset.reverbPort || '') : '';
-const REVERB_SCHEME = document.body ? (document.body.dataset.reverbScheme || 'https') : 'https';
+const REALTIME_DRIVER = document.body ? (document.body.dataset.realtimeDriver || 'reverb') : 'reverb';
+const REALTIME_KEY = document.body ? (document.body.dataset.realtimeKey || '') : '';
+const REALTIME_HOST = document.body ? (document.body.dataset.realtimeHost || window.location.hostname) : window.location.hostname;
+const REALTIME_PORT = document.body ? (document.body.dataset.realtimePort || '') : '';
+const REALTIME_SCHEME = document.body ? (document.body.dataset.realtimeScheme || 'https') : 'https';
 // Use same-origin uploads so it works both on localhost and production domains.
 const UPLOAD_URL = (() => {
     try { return `${window.location.origin}/chat/uploads/`; } catch (e) { return '/chat/uploads/'; }
@@ -48,12 +49,12 @@ function setRealtimeConnected(value) {
     if (isSessionInitialized) restartMessagePolling();
 }
 
-function reverbWebSocketUrl() {
-    if (!REVERB_KEY) return '';
-    const protocol = REVERB_SCHEME === 'https' ? 'wss' : 'ws';
-    const host = REVERB_HOST || window.location.hostname;
-    const port = REVERB_PORT ? `:${REVERB_PORT}` : '';
-    return `${protocol}://${host}${port}/app/${encodeURIComponent(REVERB_KEY)}?protocol=7&client=noci-direct&version=1.0&flash=false`;
+function realtimeWebSocketUrl() {
+    if (!REALTIME_KEY) return '';
+    const protocol = REALTIME_SCHEME === 'https' ? 'wss' : 'ws';
+    const host = REALTIME_HOST || window.location.hostname;
+    const port = REALTIME_PORT ? `:${REALTIME_PORT}` : '';
+    return `${protocol}://${host}${port}/app/${encodeURIComponent(REALTIME_KEY)}?protocol=7&client=noci-direct-${encodeURIComponent(REALTIME_DRIVER)}&version=1.0&flash=false`;
 }
 
 function scheduleRealtimeReconnect() {
@@ -72,7 +73,7 @@ function sendRealtimeFrame(event, data) {
 
 function connectCustomerRealtime(channelName = '') {
     if (channelName) realtimeChannel = channelName;
-    if (!realtimeChannel || !TENANT_TOKEN || !visitId || !REVERB_KEY) {
+    if (!realtimeChannel || !TENANT_TOKEN || !visitId || !REALTIME_KEY) {
         setRealtimeConnected(false);
         return;
     }
@@ -80,7 +81,7 @@ function connectCustomerRealtime(channelName = '') {
         return;
     }
 
-    const wsUrl = reverbWebSocketUrl();
+    const wsUrl = realtimeWebSocketUrl();
     if (!wsUrl) {
         setRealtimeConnected(false);
         return;
@@ -149,7 +150,7 @@ function authenticateRealtimeChannel(socketId) {
     fd.append('socket_id', socketId);
     fd.append('channel_name', realtimeChannel);
 
-    fetch('reverb/auth', { method: 'POST', body: fd })
+    fetch('realtime/auth', { method: 'POST', body: fd })
         .then(r => r.json())
         .then((res) => {
             if (!res || !res.auth) throw new Error('Realtime auth failed');

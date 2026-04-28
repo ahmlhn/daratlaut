@@ -30,16 +30,30 @@ class DirectController extends Controller
             return response('<h2>Link tenant tidak valid.</h2>', 404);
         }
 
+        $broadcastDriver = (string) config('broadcasting.default', 'null');
+        $pusherConfig = (array) config('broadcasting.connections.pusher', []);
+        $reverbConfig = (array) config('broadcasting.connections.reverb', []);
+        $realtime = $broadcastDriver === 'pusher'
+            ? [
+                'driver' => 'pusher',
+                'key' => (string) env('VITE_PUSHER_APP_KEY', (string) ($pusherConfig['key'] ?? '')),
+                'host' => (string) env('VITE_PUSHER_HOST', 'main.pusher.ably.net'),
+                'port' => (int) env('VITE_PUSHER_PORT', 443),
+                'scheme' => (string) env('VITE_PUSHER_SCHEME', 'https'),
+            ]
+            : [
+                'driver' => 'reverb',
+                'key' => (string) ($reverbConfig['key'] ?? ''),
+                'host' => (string) ($reverbConfig['options']['host'] ?? 'localhost'),
+                'port' => (int) ($reverbConfig['options']['port'] ?? 443),
+                'scheme' => (string) ($reverbConfig['options']['scheme'] ?? 'https'),
+            ];
+
         return response()
             ->view('direct.index', [
                 'token' => $token,
                 'tenant_name' => (string) ($tenant->name ?? 'ISP'),
-                'reverb' => [
-                    'key' => (string) config('broadcasting.connections.reverb.key', ''),
-                    'host' => (string) config('broadcasting.connections.reverb.options.host', 'localhost'),
-                    'port' => (int) config('broadcasting.connections.reverb.options.port', 443),
-                    'scheme' => (string) config('broadcasting.connections.reverb.options.scheme', 'https'),
-                ],
+                'realtime' => $realtime,
             ], 200)
             ->header('Content-Type', 'text/html; charset=UTF-8');
     }

@@ -104,6 +104,7 @@ Route::match(['GET', 'POST', 'OPTIONS'], '/log.php', [LogController::class, 'han
 // Public Direct portal (token-based)
 Route::get('/direct', [DirectController::class, 'index'])->name('direct.index');
 Route::match(['GET', 'POST', 'OPTIONS'], '/direct/api.php', [DirectApiController::class, 'handle'])->name('direct.api');
+Route::match(['POST', 'OPTIONS'], '/direct/realtime/auth', [DirectApiController::class, 'reverbAuth'])->name('direct.realtime_auth');
 Route::match(['POST', 'OPTIONS'], '/direct/reverb/auth', [DirectApiController::class, 'reverbAuth'])->name('direct.reverb_auth');
 Route::get('/direct/{path}', [DirectController::class, 'asset'])
     ->where('path', '.*')

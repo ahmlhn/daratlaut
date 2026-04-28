@@ -95,10 +95,11 @@
 </head>
 <body
     data-tenant-token="{{ $token }}"
-    data-reverb-key="{{ $reverb['key'] ?? '' }}"
-    data-reverb-host="{{ $reverb['host'] ?? 'localhost' }}"
-    data-reverb-port="{{ $reverb['port'] ?? 443 }}"
-    data-reverb-scheme="{{ $reverb['scheme'] ?? 'https' }}"
+    data-realtime-driver="{{ $realtime['driver'] ?? 'reverb' }}"
+    data-realtime-key="{{ $realtime['key'] ?? '' }}"
+    data-realtime-host="{{ $realtime['host'] ?? 'localhost' }}"
+    data-realtime-port="{{ $realtime['port'] ?? 443 }}"
+    data-realtime-scheme="{{ $realtime['scheme'] ?? 'https' }}"
 >
     <audio id="sfx-in" src="assets/ding.mp3"></audio>
     <audio id="sfx-out" src="assets/pop.mp3"></audio>
