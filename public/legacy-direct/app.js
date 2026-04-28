@@ -13,15 +13,167 @@ let isSessionInitialized = false;
 let sessionInitPromise = null;
 let sessionLoadingBubble = null;
 let dynamicWelcome = "Halo kak, ada yang bisa kami bantu?"; // Default
+let realtimeSocket = null;
+let realtimeChannel = '';
+let realtimeConnected = false;
+let realtimeRetryTimer = null;
+let realtimeRetryCount = 0;
 
 const TENANT_TOKEN = document.body ? (document.body.dataset.tenantToken || '') : '';
 const API_URL = TENANT_TOKEN ? `api.php?t=${encodeURIComponent(TENANT_TOKEN)}` : 'api.php';
 const LOG_URL = TENANT_TOKEN ? `../log.php?t=${encodeURIComponent(TENANT_TOKEN)}` : '../log.php';
 const PRESENCE_HEARTBEAT_MS = 10000;
+const CHAT_POLL_FALLBACK_MS = 3000;
+const CHAT_POLL_REALTIME_MS = 15000;
+const REVERB_KEY = document.body ? (document.body.dataset.reverbKey || '') : '';
+const REVERB_HOST = document.body ? (document.body.dataset.reverbHost || window.location.hostname) : window.location.hostname;
+const REVERB_PORT = document.body ? (document.body.dataset.reverbPort || '') : '';
+const REVERB_SCHEME = document.body ? (document.body.dataset.reverbScheme || 'https') : 'https';
 // Use same-origin uploads so it works both on localhost and production domains.
 const UPLOAD_URL = (() => {
     try { return `${window.location.origin}/chat/uploads/`; } catch (e) { return '/chat/uploads/'; }
 })(); 
+
+function chatPollMs() {
+    return realtimeConnected ? CHAT_POLL_REALTIME_MS : CHAT_POLL_FALLBACK_MS;
+}
+
+function restartMessagePolling() {
+    if (checkInterval) clearInterval(checkInterval);
+    checkInterval = setInterval(() => loadMessages(false), chatPollMs());
+}
+
+function setRealtimeConnected(value) {
+    realtimeConnected = !!value;
+    if (isSessionInitialized) restartMessagePolling();
+}
+
+function reverbWebSocketUrl() {
+    if (!REVERB_KEY) return '';
+    const protocol = REVERB_SCHEME === 'https' ? 'wss' : 'ws';
+    const host = REVERB_HOST || window.location.hostname;
+    const port = REVERB_PORT ? `:${REVERB_PORT}` : '';
+    return `${protocol}://${host}${port}/app/${encodeURIComponent(REVERB_KEY)}?protocol=7&client=noci-direct&version=1.0&flash=false`;
+}
+
+function scheduleRealtimeReconnect() {
+    if (realtimeRetryTimer || !isSessionInitialized) return;
+    const delay = Math.min(30000, 1500 * Math.max(1, ++realtimeRetryCount));
+    realtimeRetryTimer = setTimeout(() => {
+        realtimeRetryTimer = null;
+        connectCustomerRealtime();
+    }, delay);
+}
+
+function sendRealtimeFrame(event, data) {
+    if (!realtimeSocket || realtimeSocket.readyState !== WebSocket.OPEN) return;
+    realtimeSocket.send(JSON.stringify({ event, data }));
+}
+
+function connectCustomerRealtime(channelName = '') {
+    if (channelName) realtimeChannel = channelName;
+    if (!realtimeChannel || !TENANT_TOKEN || !visitId || !REVERB_KEY) {
+        setRealtimeConnected(false);
+        return;
+    }
+    if (realtimeSocket && (realtimeSocket.readyState === WebSocket.OPEN || realtimeSocket.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+
+    const wsUrl = reverbWebSocketUrl();
+    if (!wsUrl) {
+        setRealtimeConnected(false);
+        return;
+    }
+
+    try {
+        realtimeSocket = new WebSocket(wsUrl);
+    } catch (e) {
+        setRealtimeConnected(false);
+        scheduleRealtimeReconnect();
+        return;
+    }
+
+    realtimeSocket.onopen = () => {};
+    realtimeSocket.onclose = () => {
+        realtimeSocket = null;
+        setRealtimeConnected(false);
+        scheduleRealtimeReconnect();
+    };
+    realtimeSocket.onerror = () => {
+        setRealtimeConnected(false);
+    };
+    realtimeSocket.onmessage = (event) => {
+        let frame = null;
+        try { frame = JSON.parse(event.data); } catch (e) { return; }
+        const eventName = String(frame.event || '');
+
+        if (eventName === 'pusher:connection_established') {
+            let data = frame.data;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch (e) { data = {}; }
+            }
+            const socketId = String(data?.socket_id || '');
+            authenticateRealtimeChannel(socketId);
+            return;
+        }
+
+        if (eventName === 'pusher_internal:subscription_succeeded') {
+            realtimeRetryCount = 0;
+            setRealtimeConnected(true);
+            return;
+        }
+
+        if (eventName === 'pusher:ping') {
+            sendRealtimeFrame('pusher:pong', {});
+            return;
+        }
+        if (eventName === 'pusher:pong') return;
+
+        if (eventName === 'chat.updated') {
+            let data = frame.data;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch (e) { data = {}; }
+            }
+            handleRealtimeChatUpdate(data || {});
+        }
+    };
+}
+
+function authenticateRealtimeChannel(socketId) {
+    if (!socketId || !realtimeChannel) return;
+
+    const fd = new FormData();
+    fd.append('t', TENANT_TOKEN);
+    fd.append('visit_id', visitId);
+    fd.append('socket_id', socketId);
+    fd.append('channel_name', realtimeChannel);
+
+    fetch('reverb/auth', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then((res) => {
+            if (!res || !res.auth) throw new Error('Realtime auth failed');
+            sendRealtimeFrame('pusher:subscribe', {
+                auth: res.auth,
+                channel: realtimeChannel,
+            });
+        })
+        .catch(() => {
+            setRealtimeConnected(false);
+            try { realtimeSocket?.close(); } catch (e) {}
+        });
+}
+
+function handleRealtimeChatUpdate(payload) {
+    if (!payload || String(payload.visit_id || '') !== String(visitId || '')) return;
+    const message = payload.payload && payload.payload.message ? payload.payload.message : null;
+    if (message) {
+        mergeMessageUpdates([message], true);
+        if (payload.server_time && String(message.sender || '') !== 'admin') {
+            lastSyncTime = payload.server_time;
+        }
+    }
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     // 1. Generate ID Lokal
@@ -274,6 +426,7 @@ function ensureSessionInitialized() {
         .then(async d => {
             if (d.status === 'success') {
                 isSessionInitialized = true;
+                if (d.realtime_channel) connectCustomerRealtime(String(d.realtime_channel));
                 await startPolling();
                 return true;
             }
@@ -430,7 +583,9 @@ function resolveDisplayWelcomeMessage() {
 }
 
 function getRenderableMessages() {
-    const renderList = Array.isArray(messagesCache) ? messagesCache.slice() : [];
+    const renderList = Array.isArray(messagesCache)
+        ? messagesCache.filter(m => String(m?.status || 'active') !== 'deleted').slice()
+        : [];
     if (renderList.length > 0) return renderList;
 
     renderList.push({
@@ -445,10 +600,65 @@ function getRenderableMessages() {
     return renderList;
 }
 
+function rebuildMessagesView() {
+    const container = document.getElementById('chat-messages');
+    if (!container) return;
+
+    container.innerHTML = '';
+    messagesCache.sort((a, b) => (parseInt(a?.id || 0, 10) - parseInt(b?.id || 0, 10)));
+    messagePos = {};
+    for (let i = 0; i < messagesCache.length; i++) {
+        const id = String(messagesCache[i]?.id ?? '');
+        if (id) messagePos[id] = i;
+    }
+    getRenderableMessages().forEach((m) => {
+        appendBubble(m.message, m.sender, m.time, m.type || 'text', m.is_edited);
+    });
+    scrollToBottom();
+}
+
+function mergeMessageUpdates(msgs, fromRealtime = false) {
+    if (!Array.isArray(msgs) || msgs.length === 0) return false;
+
+    const beforeCount = messagesCache.filter(m => String(m?.status || 'active') !== 'deleted').length;
+    let hasNewAdminMsg = false;
+    let changed = false;
+
+    msgs.forEach(m => {
+        const id = String(m?.id ?? '');
+        if (!id) return;
+
+        const idx = messagePos[id];
+        if (idx === undefined) {
+            messagePos[id] = messagesCache.length;
+            messagesCache.push(m);
+            changed = true;
+            if (m.sender === 'admin' && String(m.status || 'active') !== 'deleted') hasNewAdminMsg = true;
+            return;
+        }
+
+        messagesCache[idx] = m;
+        changed = true;
+    });
+
+    if (!changed) return false;
+
+    if (hasNewAdminMsg && (beforeCount > 0 || fromRealtime)) {
+        playSound();
+        if (!isChatOpen) {
+            unreadCount++;
+            showToast("Pesan baru dari Admin!");
+            updateFrontBadge();
+        }
+    }
+
+    rebuildMessagesView();
+    return true;
+}
+
 async function startPolling() { 
     const firstLoadOk = await loadMessages(true); 
-    if(checkInterval) clearInterval(checkInterval); 
-    checkInterval = setInterval(() => loadMessages(false), 3000);
+    restartMessagePolling();
     return firstLoadOk;
 }
 
@@ -487,11 +697,7 @@ function loadMessages(isFirstLoad = false) {
 
             const container = document.getElementById('chat-messages');
             if (container) {
-                container.innerHTML = '';
-                getRenderableMessages().forEach(m => {
-                    appendBubble(m.message, m.sender, m.time, m.type || 'text', m.is_edited);
-                });
-                scrollToBottom();
+                rebuildMessagesView();
             }
 
             return true;
@@ -499,56 +705,7 @@ function loadMessages(isFirstLoad = false) {
 
         // Delta update: merge new/updated messages into cache.
         if (!Array.isArray(msgs) || msgs.length === 0) return true;
-
-        const beforeCount = messagesCache.length;
-        let hasNewAdminMsg = false;
-        let changed = false;
-
-        msgs.forEach(m => {
-            const id = String(m?.id ?? '');
-            if (!id) return;
-
-            const idx = messagePos[id];
-            if (idx === undefined) {
-                // New message
-                messagePos[id] = messagesCache.length;
-                messagesCache.push(m);
-                changed = true;
-                if (m.sender === 'admin') hasNewAdminMsg = true;
-                return;
-            }
-
-            // Updated message (edit/delete). Replace in-place.
-            messagesCache[idx] = m;
-            changed = true;
-        });
-
-        if (!changed) return true;
-
-        if (hasNewAdminMsg && beforeCount > 0) {
-            playSound();
-            if (!isChatOpen) {
-                unreadCount++;
-                showToast("Pesan baru dari Admin!");
-                updateFrontBadge();
-            }
-        }
-
-        const container = document.getElementById('chat-messages');
-        if (container) {
-            container.innerHTML = '';
-            // Ensure stable order by id (delta may include edits of older messages).
-            messagesCache.sort((a, b) => (parseInt(a?.id || 0, 10) - parseInt(b?.id || 0, 10)));
-            messagePos = {};
-            for (let i = 0; i < messagesCache.length; i++) {
-                const id = String(messagesCache[i]?.id ?? '');
-                if (id) messagePos[id] = i;
-            }
-            getRenderableMessages().forEach((m) => {
-                appendBubble(m.message, m.sender, m.time, m.type || 'text', m.is_edited);
-            });
-            scrollToBottom();
-        }
+        mergeMessageUpdates(msgs);
         return true;
     }).catch(() => false);
 }

@@ -20,9 +20,12 @@ class ChatUpdated implements ShouldBroadcastNow
     ) {
     }
 
-    public function broadcastOn(): PrivateChannel
+    public function broadcastOn(): array
     {
-        return new PrivateChannel("tenants.{$this->tenantId}.chat");
+        return [
+            new PrivateChannel("tenants.{$this->tenantId}.chat"),
+            new PrivateChannel("tenants.{$this->tenantId}.chat.visits." . md5($this->visitId)),
+        ];
     }
 
     public function broadcastAs(): string

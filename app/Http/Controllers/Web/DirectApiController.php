@@ -30,6 +30,58 @@ class DirectApiController extends Controller
     {
     }
 
+    public function reverbAuth(Request $request): JsonResponse
+    {
+        if ($request->isMethod('options')) {
+            return response()->json([], 204, $this->corsHeaders($request));
+        }
+
+        $token = trim((string) ($request->input('t') ?? $request->query('t') ?? ''));
+        $visitId = trim((string) ($request->input('visit_id') ?? ''));
+        $socketId = trim((string) ($request->input('socket_id') ?? ''));
+        $channelName = trim((string) ($request->input('channel_name') ?? ''));
+
+        if ($token === '' || $visitId === '' || $socketId === '' || $channelName === '') {
+            return $this->json(['message' => 'Invalid realtime auth payload'], $request, 422);
+        }
+
+        $tenant = DB::table('tenants')
+            ->where('public_token', $token)
+            ->where('status', 'active')
+            ->first(['id']);
+
+        $tenantId = (int) ($tenant->id ?? 0);
+        if ($tenantId <= 0) {
+            return $this->json(['message' => 'Tenant tidak valid'], $request, 403);
+        }
+
+        $expectedChannel = 'private-tenants.' . $tenantId . '.chat.visits.' . md5($visitId);
+        if (!hash_equals($expectedChannel, $channelName)) {
+            return $this->json(['message' => 'Forbidden channel'], $request, 403);
+        }
+
+        $customerExists = DB::table('noci_customers')
+            ->where('visit_id', $visitId)
+            ->when($this->hasColumn('noci_customers', 'tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))
+            ->exists();
+
+        if (!$customerExists) {
+            return $this->json(['message' => 'Session not found'], $request, 403);
+        }
+
+        $key = (string) config('broadcasting.connections.reverb.key', '');
+        $secret = (string) config('broadcasting.connections.reverb.secret', '');
+        if ($key === '' || $secret === '') {
+            return $this->json(['message' => 'Realtime belum dikonfigurasi'], $request, 503);
+        }
+
+        $signature = hash_hmac('sha256', $socketId . ':' . $channelName, $secret);
+
+        return $this->json([
+            'auth' => $key . ':' . $signature,
+        ], $request);
+    }
+
     public function handle(Request $request): JsonResponse
     {
         if ($request->isMethod('options')) {
@@ -222,6 +274,7 @@ class DirectApiController extends Controller
         return $this->json([
             'status' => 'success',
             'welcome_msg' => $this->resolveWelcomeMessage($tenantId, $name),
+            'realtime_channel' => 'private-tenants.' . $tenantId . '.chat.visits.' . md5($visitId),
         ], $request);
     }
 
@@ -286,9 +339,15 @@ class DirectApiController extends Controller
 
         $lastSync = trim((string) ($request->query('last_sync') ?? ''));
         $hasUpdatedAt = $this->hasColumn('noci_chat', 'updated_at');
+        $hasMsgStatus = $this->hasColumn('noci_chat', 'msg_status');
 
         $q = DB::table('noci_chat')->where('visit_id', $visitId)->orderBy('id');
         if ($this->hasColumn('noci_chat', 'tenant_id')) $q->where('tenant_id', $tenantId);
+        if ($lastSync === '' && $hasMsgStatus) {
+            $q->where(function ($qq) {
+                $qq->where('msg_status', 'active')->orWhereNull('msg_status');
+            });
+        }
 
         $isDelta = false;
         if ($lastSync !== '') {
@@ -301,6 +360,7 @@ class DirectApiController extends Controller
 
         $select = ['id', 'sender', 'message', 'type', 'is_edited', 'created_at'];
         if ($hasUpdatedAt) $select[] = 'updated_at';
+        if ($hasMsgStatus) $select[] = 'msg_status';
         $rows = $q->get($select);
 
         $uploadDir = public_path('uploads/chat');
@@ -331,6 +391,7 @@ class DirectApiController extends Controller
                 'message' => $msg,
                 'type' => $type,
                 'is_edited' => (int) ($r->is_edited ?? 0),
+                'status' => $hasMsgStatus ? ((string) ($r->msg_status ?? 'active')) : 'active',
                 'time' => !empty($r->created_at) ? date('H:i', strtotime((string) $r->created_at)) : '',
             ];
         }

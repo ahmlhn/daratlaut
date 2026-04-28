@@ -10,6 +10,34 @@ const adminRole = computed(() => page.props.auth?.user?.role || 'Staff')
 const adminFirst = computed(() => (String(adminName.value || 'Admin').trim().split(/\s+/)[0]) || 'Admin')
 const legacyChatVersion = computed(() => page.props.legacyChatVersion || '')
 const tenantId = computed(() => Number(page.props.auth?.user?.tenant_id || 0))
+const realtimeState = ref('connecting')
+const realtimeStatus = computed(() => {
+  if (realtimeState.value === 'connected') {
+    return {
+      label: 'Realtime aktif',
+      title: 'Reverb tersambung. Update chat diterima lewat websocket.',
+      dot: 'bg-emerald-500 shadow-emerald-500/40',
+      text: 'text-emerald-700 dark:text-emerald-300',
+      bg: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/20',
+    }
+  }
+  if (realtimeState.value === 'connecting') {
+    return {
+      label: 'Menghubungkan',
+      title: 'Mencoba menyambungkan Reverb. Polling tetap aktif sebagai fallback.',
+      dot: 'bg-amber-500 shadow-amber-500/40 animate-pulse',
+      text: 'text-amber-700 dark:text-amber-300',
+      bg: 'bg-amber-50 border-amber-200 dark:bg-amber-500/10 dark:border-amber-500/20',
+    }
+  }
+  return {
+    label: 'Polling aktif',
+    title: 'Reverb belum tersambung. Chat tetap berjalan dengan polling fallback.',
+    dot: 'bg-slate-400 shadow-slate-400/30',
+    text: 'text-slate-600 dark:text-slate-300',
+    bg: 'bg-slate-50 border-slate-200 dark:bg-white/5 dark:border-white/10',
+  }
+})
 
 let chatRealtimeChannelName = ''
 let chatRealtimeInitPromise = null
@@ -28,11 +56,20 @@ async function ensureChatEcho() {
 }
 
 function setChatRealtimeConnected(value) {
+  realtimeState.value = value ? 'connected' : 'fallback'
   window.__chatRealtimeSetConnected?.(!!value)
 }
 
 async function subscribeChatRealtime() {
-  if (!tenantId.value) return
+  realtimeState.value = 'connecting'
+  window.setTimeout(() => {
+    if (realtimeState.value === 'connecting') setChatRealtimeConnected(false)
+  }, 5000)
+
+  if (!tenantId.value) {
+    setChatRealtimeConnected(false)
+    return
+  }
 
   const echo = await ensureChatEcho()
   if (!echo) {
@@ -232,7 +269,16 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
             <!-- Chat Tab Content -->
             <div v-show="activeTab === 'chat'" class="flex flex-col flex-1 min-h-0">
             <!-- Chat tools (moved from legacy header; navigation stays in admin sidebar) -->
-            <div class="flex items-center justify-end gap-2 px-3 pt-3 pb-1 shrink-0">
+            <div class="flex items-center justify-between gap-2 px-3 pt-3 pb-1 shrink-0">
+                <div
+                  class="inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide"
+                  :class="[realtimeStatus.bg, realtimeStatus.text]"
+                  :title="realtimeStatus.title"
+                >
+                    <span class="h-2 w-2 shrink-0 rounded-full shadow-sm" :class="realtimeStatus.dot"></span>
+                    <span class="truncate">{{ realtimeStatus.label }}</span>
+                </div>
+                <div class="flex items-center gap-2">
                 <button type="button" onclick="openTplManager()" class="h-9 w-9 flex items-center justify-center rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#202c33] text-slate-600 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5 transition" title="Atur Balas Cepat">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -249,6 +295,7 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 21a9 9 0 100-18 9 9 0 000 18z" />
                     </svg>
                 </button>
+                </div>
             </div>
             <div class="px-3 pt-3 pb-2 border-b border-slate-200 dark:border-white/10 bg-slate-50/50 dark:bg-transparent shrink-0 space-y-2">
                 <form action="#" onsubmit="return false;" autocomplete="off" class="relative group">

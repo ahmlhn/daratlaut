@@ -34,6 +34,12 @@ class DirectController extends Controller
             ->view('direct.index', [
                 'token' => $token,
                 'tenant_name' => (string) ($tenant->name ?? 'ISP'),
+                'reverb' => [
+                    'key' => (string) config('broadcasting.connections.reverb.key', ''),
+                    'host' => (string) config('broadcasting.connections.reverb.options.host', 'localhost'),
+                    'port' => (int) config('broadcasting.connections.reverb.options.port', 443),
+                    'scheme' => (string) config('broadcasting.connections.reverb.options.scheme', 'https'),
+                ],
             ], 200)
             ->header('Content-Type', 'text/html; charset=UTF-8');
     }
@@ -60,4 +66,3 @@ class DirectController extends Controller
         return response()->file($full);
     }
 }
-
