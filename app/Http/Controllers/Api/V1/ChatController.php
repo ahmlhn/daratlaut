@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\ChatRealtimeBroadcaster;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,6 +20,10 @@ class ChatController extends Controller
     private static array $colCache = [];
     private static array $autoEndLastRun = [];
     private ?string $dbNowCache = null;
+
+    public function __construct(private ChatRealtimeBroadcaster $realtime)
+    {
+    }
 
     private function tenantId(Request $request): int
     {
@@ -751,6 +756,9 @@ class ChatController extends Controller
             }
         }
 
+        $this->realtime->messageCreated($tenantId, $visitId, (int) $id);
+        $this->realtime->contactUpdated($tenantId, $visitId);
+
         return response()->json(['status' => 'success', 'id' => $id]);
     }
 
@@ -799,6 +807,8 @@ class ChatController extends Controller
         }
 
         $this->bumpConversationCacheVersion($tenantId, (string) ($row->visit_id ?? ''));
+        $this->realtime->messageDeleted($tenantId, (string) ($row->visit_id ?? ''), $id);
+        $this->realtime->contactUpdated($tenantId, (string) ($row->visit_id ?? ''));
 
         return response()->json(['status' => 'success']);
     }
@@ -837,6 +847,8 @@ class ChatController extends Controller
             ->update($upd);
 
         $this->bumpConversationCacheVersion($tenantId, (string) ($row->visit_id ?? ''));
+        $this->realtime->messageUpdated($tenantId, (string) ($row->visit_id ?? ''), $id);
+        $this->realtime->contactUpdated($tenantId, (string) ($row->visit_id ?? ''));
 
         return response()->json(['status' => 'success']);
     }
@@ -864,6 +876,8 @@ class ChatController extends Controller
             ->where('visit_id', (string) $validated['visit_id'])
             ->update($upd);
 
+        $this->realtime->contactUpdated($tenantId, (string) $validated['visit_id']);
+
         return response()->json(['status' => 'success']);
     }
 
@@ -882,6 +896,8 @@ class ChatController extends Controller
             ->where('visit_id', (string) $validated['visit_id'])
             ->update(['notes' => (string) ($validated['note'] ?? '')]);
 
+        $this->realtime->contactUpdated($tenantId, (string) $validated['visit_id'], 'note.updated');
+
         return response()->json(['status' => 'success']);
     }
 
@@ -898,6 +914,8 @@ class ChatController extends Controller
             ->when($this->hasCustomerColumn('tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))
             ->where('visit_id', (string) $validated['visit_id'])
             ->update(['status' => 'Selesai']);
+
+        $this->realtime->contactUpdated($tenantId, (string) $validated['visit_id'], 'session.updated');
 
         return response()->json(['status' => 'success']);
     }
@@ -920,6 +938,8 @@ class ChatController extends Controller
             ->when($this->hasCustomerColumn('tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))
             ->where('visit_id', (string) $validated['visit_id'])
             ->update($upd);
+
+        $this->realtime->contactUpdated($tenantId, (string) $validated['visit_id'], 'session.updated');
 
         return response()->json(['status' => 'success']);
     }
@@ -953,6 +973,7 @@ class ChatController extends Controller
         DB::table('noci_customers')->when($this->hasCustomerColumn('tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))->where('visit_id', $visitId)->delete();
         $this->bumpConversationCacheVersion($tenantId, $visitId);
         $this->forgetContactsCache($tenantId);
+        $this->realtime->sessionDeleted($tenantId, $visitId);
 
         return response()->json(['status' => 'success']);
     }

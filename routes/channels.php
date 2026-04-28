@@ -30,3 +30,18 @@ Broadcast::channel('tenants.{tenantId}.olts.{oltId}.auto-register.{runId}', func
         return false;
     }
 });
+
+Broadcast::channel('tenants.{tenantId}.chat', function ($user, $tenantId) {
+    if ((int) ($user->tenant_id ?? 0) !== (int) $tenantId) {
+        return false;
+    }
+
+    try {
+        if (method_exists($user, 'can') && $user->can('view chat')) {
+            return true;
+        }
+    } catch (\Throwable) {
+    }
+
+    return true;
+});

@@ -52,9 +52,40 @@ let customerOverviewPeriod = 'today';
 let customerOverviewReqSeq = 0;
 let customerOverviewPoll = null;
 const CUSTOMER_OVERVIEW_POLL_MS = 8000;
+const CHAT_POLL_FALLBACK_MS = 3000;
+const CHAT_POLL_REALTIME_MS = 15000;
+const CHAT_CONTACTS_POLL_REALTIME_MS = 30000;
 let customerOverviewChart = null;
 let customerOverviewApexPromise = null;
 const CHAT_WEEKDAY_SHORT = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+
+function chatRealtimePollMs(kind = 'messages') {
+    if (!window.__chatRealtimeConnected) return CHAT_POLL_FALLBACK_MS;
+    return kind === 'contacts' ? CHAT_CONTACTS_POLL_REALTIME_MS : CHAT_POLL_REALTIME_MS;
+}
+
+function restartContactsPolling() {
+    if (window.__chatContactsPoll) clearInterval(window.__chatContactsPoll);
+    window.__chatContactsPoll = setInterval(() => loadContacts(false), chatRealtimePollMs('contacts'));
+}
+
+function restartMessagePolling() {
+    if (pollingInterval) clearInterval(pollingInterval);
+    pollingInterval = null;
+    if (activeVisitId) {
+        pollingInterval = setInterval(() => loadMessages(false), chatRealtimePollMs('messages'));
+    }
+}
+
+window.__chatRealtimeSetConnected = function (connected) {
+    window.__chatRealtimeConnected = !!connected;
+    restartContactsPolling();
+    restartMessagePolling();
+};
+
+window.__chatRealtimeHandle = function (payload) {
+    handleChatRealtimePayload(payload);
+};
 
 function parseChatDateTime(rawValue) {
     if (!rawValue) return null;
@@ -236,9 +267,7 @@ function __chatBoot() {
     // Initial Load
     loadContacts(!restoredContacts); 
     
-    // Polling Sidebar tiap 3 detik
-    if (window.__chatContactsPoll) clearInterval(window.__chatContactsPoll);
-    window.__chatContactsPoll = setInterval(() => loadContacts(false), 3000);
+    restartContactsPolling();
 
     const msgInput = document.getElementById('msg-input');
     if (msgInput) {
@@ -1318,6 +1347,54 @@ function loadOlderMessages() {
 }
 
 // [SMART SIDEBAR] Load Contacts (Delta Updates)
+function handleChatRealtimePayload(payload) {
+    if (!payload || typeof payload !== 'object') return;
+
+    const eventName = String(payload.event || '');
+    const visitId = String(payload.visit_id || '');
+    const message = payload.payload && payload.payload.message ? payload.payload.message : null;
+    const isActiveChat = visitId && String(activeVisitId || '') === visitId;
+
+    if (eventName === 'session.deleted') {
+        if (visitId) {
+            delete chatRoomCache[visitId];
+            persistChatCacheToSession();
+            deleteChatRoomFromIndexedDb(visitId);
+            usersData = usersData.filter(u => String(u.visit_id) !== visitId);
+            renderUserList(usersData, true);
+            renderFilterButtons(usersData);
+            persistContactsCache(true);
+            if (isActiveChat) closeActiveChat();
+        }
+        lastContactSync = '';
+        loadContacts(true);
+        return;
+    }
+
+    if (message && isActiveChat) {
+        processMessageUpdates([message]);
+        refreshMessageDaySeparators();
+        cacheActiveChatState();
+
+        if (eventName === 'message.created') {
+            scrollToBottom();
+            if (message.sender === 'user') playSound();
+        }
+
+        if (payload.server_time && message.sender !== 'user') {
+            lastSyncTime = payload.server_time;
+        }
+
+        if (message.sender === 'user') {
+            setTimeout(() => loadMessages(false), 500);
+        }
+    } else if (isActiveChat && (eventName === 'message.updated' || eventName === 'message.deleted')) {
+        loadMessages(false);
+    }
+
+    loadContacts(false);
+}
+
 function loadContacts(isFirstLoad = false) { 
     // Jangan polling jika sedang mode search (user sedang mengetik/mencari)
     if (isSearching && !isFirstLoad) return;
@@ -1755,7 +1832,7 @@ function openChat(visitId) {
                 runInitialLoad(false);
             });
     }
-    pollingInterval = setInterval(() => loadMessages(false), 3000);
+    restartMessagePolling();
 }
 
 function updateTitleNotification(totalUnread) { document.title = totalUnread > 0 ? `(${totalUnread}) Chat Admin` : "Chat Admin | Isolir"; }

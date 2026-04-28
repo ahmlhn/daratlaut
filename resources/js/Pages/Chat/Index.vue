@@ -9,6 +9,61 @@ const adminName = computed(() => page.props.auth?.user?.name || page.props.auth?
 const adminRole = computed(() => page.props.auth?.user?.role || 'Staff')
 const adminFirst = computed(() => (String(adminName.value || 'Admin').trim().split(/\s+/)[0]) || 'Admin')
 const legacyChatVersion = computed(() => page.props.legacyChatVersion || '')
+const tenantId = computed(() => Number(page.props.auth?.user?.tenant_id || 0))
+
+let chatRealtimeChannelName = ''
+let chatRealtimeInitPromise = null
+
+async function ensureChatEcho() {
+  if (window.Echo) return window.Echo
+  if (!chatRealtimeInitPromise) {
+    chatRealtimeInitPromise = import('@/echo.js')
+      .then(() => window.Echo || null)
+      .catch((e) => {
+        console.warn('Chat realtime init failed:', e)
+        return null
+      })
+  }
+  return chatRealtimeInitPromise
+}
+
+function setChatRealtimeConnected(value) {
+  window.__chatRealtimeSetConnected?.(!!value)
+}
+
+async function subscribeChatRealtime() {
+  if (!tenantId.value) return
+
+  const echo = await ensureChatEcho()
+  if (!echo) {
+    setChatRealtimeConnected(false)
+    return
+  }
+
+  const connector = echo.connector?.pusher?.connection
+  connector?.bind?.('connected', () => setChatRealtimeConnected(true))
+  connector?.bind?.('disconnected', () => setChatRealtimeConnected(false))
+  connector?.bind?.('unavailable', () => setChatRealtimeConnected(false))
+  connector?.bind?.('failed', () => setChatRealtimeConnected(false))
+  setChatRealtimeConnected(connector?.state === 'connected')
+
+  chatRealtimeChannelName = `tenants.${tenantId.value}.chat`
+  echo.private(chatRealtimeChannelName).listen('.chat.updated', (payload) => {
+    window.__chatRealtimeHandle?.(payload)
+  })
+}
+
+function unsubscribeChatRealtime() {
+  if (chatRealtimeChannelName && window.Echo?.leave) {
+    try {
+      window.Echo.leave(chatRealtimeChannelName)
+    } catch (e) {
+      console.warn('Chat realtime leave failed:', e)
+    }
+  }
+  chatRealtimeChannelName = ''
+  setChatRealtimeConnected(false)
+}
 
 function loadScriptOnce(src, id) {
   return new Promise((resolve, reject) => {
@@ -50,10 +105,12 @@ onMounted(async () => {
 
   applyAdminPlaceholders()
   window.__chatBoot?.()
+  subscribeChatRealtime()
   loadLeadStats() // preload for badge count
 })
 
 onBeforeUnmount(() => {
+  unsubscribeChatRealtime()
   window.__chatDispose?.()
   document.documentElement.classList.remove('chat-admin-lock')
   document.body.classList.remove('chat-admin-lock')

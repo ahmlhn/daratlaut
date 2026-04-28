@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Web;
 
 use App\Support\WaGatewaySender;
 use App\Http\Controllers\Controller;
+use App\Services\ChatRealtimeBroadcaster;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +26,10 @@ use Illuminate\Support\Facades\Schema;
  */
 class DirectApiController extends Controller
 {
+    public function __construct(private ChatRealtimeBroadcaster $realtime)
+    {
+    }
+
     public function handle(Request $request): JsonResponse
     {
         if ($request->isMethod('options')) {
@@ -436,7 +441,7 @@ class DirectApiController extends Controller
         if ($this->hasColumn('noci_chat', 'updated_at')) $ins['updated_at'] = DB::raw('NOW()');
         if ($this->hasColumn('noci_chat', 'msg_status')) $ins['msg_status'] = 'active';
 
-        DB::table('noci_chat')->insert($ins);
+        $messageId = (int) DB::table('noci_chat')->insertGetId($ins);
 
         // Update customer status to Menunggu unless already Proses.
         try {
@@ -455,6 +460,9 @@ class DirectApiController extends Controller
         if ($type === 'text') {
             $this->autoDetectInfo($tenantId, $displayMsg, $visitId);
         }
+
+        $this->realtime->messageCreated($tenantId, $visitId, $messageId);
+        $this->realtime->contactUpdated($tenantId, $visitId);
 
         $qCount = DB::table('noci_chat')
             ->where('visit_id', $visitId)
