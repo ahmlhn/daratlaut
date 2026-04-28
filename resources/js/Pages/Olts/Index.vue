@@ -300,6 +300,7 @@ const selectedOltWriteConfigPending = computed(() => !!selectedOlt.value?.write_
 const hasAutoRegisterItems = computed(() => Array.isArray(uncfg.value) && uncfg.value.length > 0);
 const OLT_META_POLL_MS = 10000;
 let oltMetaPollTimer = null;
+const openPortSlotFromLink = ref(false);
 
 function readLastSelectedOltId() {
     try {
@@ -320,6 +321,24 @@ function writeLastSelectedOltId(value) {
     } catch {
         // ignore storage errors
     }
+}
+
+function shouldOpenPortSlotFromLocation() {
+    try {
+        const params = new URLSearchParams(window.location.search || '');
+        const feature = String(params.get('feature') || params.get('open') || '').trim().toLowerCase();
+        const hash = String(window.location.hash || '').replace(/^#/, '').trim().toLowerCase();
+        return ['slot-port', 'port-slot', 'slot_port', 'port_slot'].includes(feature)
+            || ['slot-port', 'port-slot', 'slot_port', 'port_slot'].includes(hash);
+    } catch {
+        return false;
+    }
+}
+
+function openPortSlotModalFromLink() {
+    if (!openPortSlotFromLink.value || !selectedOltId.value || portSlotModalOpen.value) return;
+    openPortSlotFromLink.value = false;
+    openPortSlotModal();
 }
 
 function sanitizeOnuName(value) {
@@ -3853,6 +3872,7 @@ watch(selectedOltId, (val, oldVal) => {
     stopOltMetaPolling();
     onOltChanged(val, oldVal).catch(() => {});
     startOltMetaPolling();
+    openPortSlotModalFromLink();
 });
 
 watch(logFilterQueryKey, () => {
@@ -3861,8 +3881,10 @@ watch(logFilterQueryKey, () => {
 });
 
 onMounted(async () => {
+    openPortSlotFromLink.value = shouldOpenPortSlotFromLocation();
     await loadOlts();
     startOltMetaPolling();
+    openPortSlotModalFromLink();
 });
 
 onBeforeUnmount(() => {
@@ -3925,6 +3947,18 @@ onBeforeUnmount(() => {
                             </select>
                         </div>
                         <div class="flex shrink-0 items-end gap-2">
+                            <button
+                                type="button"
+                                class="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/15 sm:px-4"
+                                :disabled="!selectedOltId"
+                                title="Slot Port OLT"
+                                @click="openPortSlotModal()"
+                            >
+                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
+                                </svg>
+                                <span class="hidden sm:inline">Slot Port</span>
+                            </button>
                             <button
                                 v-if="!isTeknisi"
                                 type="button"
