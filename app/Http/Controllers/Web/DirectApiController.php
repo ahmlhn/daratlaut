@@ -31,6 +31,18 @@ class DirectApiController extends Controller
     {
     }
 
+    private function activeBroadcastConnection(): string
+    {
+        $driver = (string) (env('VITE_BROADCAST_DRIVER') ?: env('BROADCAST_DRIVER') ?: config('broadcasting.default', 'null'));
+
+        return $driver === 'pusher' ? 'pusher' : 'reverb';
+    }
+
+    private function realtimeChannel(int $tenantId, string $visitId): string
+    {
+        return 'private-tenants.' . $tenantId . '.chat.visits.' . md5($visitId);
+    }
+
     private function isImageExtension(string $ext): bool
     {
         return in_array(strtolower($ext), ['jpg', 'jpeg', 'png', 'webp'], true);
@@ -66,7 +78,7 @@ class DirectApiController extends Controller
             return $this->json(['message' => 'Tenant tidak valid'], $request, 403);
         }
 
-        $expectedChannel = 'private-tenants.' . $tenantId . '.chat.visits.' . md5($visitId);
+        $expectedChannel = $this->realtimeChannel($tenantId, $visitId);
         if (!hash_equals($expectedChannel, $channelName)) {
             return $this->json(['message' => 'Forbidden channel'], $request, 403);
         }
@@ -80,8 +92,7 @@ class DirectApiController extends Controller
             return $this->json(['message' => 'Session not found'], $request, 403);
         }
 
-        $broadcastDriver = (string) config('broadcasting.default', 'null');
-        $connection = $broadcastDriver === 'pusher' ? 'pusher' : 'reverb';
+        $connection = $this->activeBroadcastConnection();
         $key = (string) config("broadcasting.connections.{$connection}.key", '');
         $secret = (string) config("broadcasting.connections.{$connection}.secret", '');
         if ($key === '' || $secret === '') {
@@ -297,7 +308,7 @@ class DirectApiController extends Controller
         return $this->json([
             'status' => 'success',
             'welcome_msg' => $this->resolveWelcomeMessage($tenantId, $name),
-            'realtime_channel' => 'private-tenants.' . $tenantId . '.chat.visits.' . md5($visitId),
+            'realtime_channel' => $this->realtimeChannel($tenantId, $visitId),
         ], $request);
     }
 
@@ -481,6 +492,7 @@ class DirectApiController extends Controller
             'session_status' => $currStatus,
             'server_time' => $serverTime,
             'is_delta' => $isDelta,
+            'realtime_channel' => $this->realtimeChannel($tenantId, $visitId),
         ], $request);
     }
 

@@ -928,6 +928,7 @@ function loadMessages(isFirstLoad = false) {
             msgs = res.data || [];
             serverTime = res.server_time || '';
             isDelta = !!res.is_delta;
+            if (res.realtime_channel) connectCustomerRealtime(String(res.realtime_channel));
         }
 
         if (serverTime) lastSyncTime = serverTime;

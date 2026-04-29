@@ -30,19 +30,23 @@ class DirectController extends Controller
             return response('<h2>Link tenant tidak valid.</h2>', 404);
         }
 
-        $broadcastDriver = (string) config('broadcasting.default', 'null');
+        $broadcastDriver = (string) (env('VITE_BROADCAST_DRIVER') ?: env('BROADCAST_DRIVER') ?: config('broadcasting.default', 'null'));
         $pusherConfig = (array) config('broadcasting.connections.pusher', []);
         $reverbConfig = (array) config('broadcasting.connections.reverb', []);
-        $pusherCluster = (string) env('VITE_PUSHER_APP_CLUSTER', (string) ($pusherConfig['options']['cluster'] ?? 'mt1'));
+        $pusherKey = (string) ($pusherConfig['key'] ?? '');
+        if ($pusherKey === '') {
+            $pusherKey = (string) env('VITE_PUSHER_APP_KEY', '');
+        }
+        $pusherCluster = (string) (env('VITE_PUSHER_APP_CLUSTER') ?: ($pusherConfig['options']['cluster'] ?? 'mt1'));
         $pusherHost = trim((string) env('VITE_PUSHER_HOST', ''));
-        $pusherScheme = (string) env('VITE_PUSHER_SCHEME', (string) ($pusherConfig['options']['scheme'] ?? 'https'));
+        $pusherScheme = (string) (env('VITE_PUSHER_SCHEME') ?: ($pusherConfig['options']['scheme'] ?? 'https'));
         $realtime = $broadcastDriver === 'pusher'
             ? [
                 'driver' => 'pusher',
-                'key' => (string) env('VITE_PUSHER_APP_KEY', (string) ($pusherConfig['key'] ?? '')),
+                'key' => $pusherKey,
                 'cluster' => $pusherCluster !== '' ? $pusherCluster : 'mt1',
                 'host' => $pusherHost !== '' ? $pusherHost : 'ws-' . ($pusherCluster !== '' ? $pusherCluster : 'mt1') . '.pusher.com',
-                'port' => (int) env('VITE_PUSHER_PORT', $pusherScheme === 'https' ? 443 : 80),
+                'port' => (int) (env('VITE_PUSHER_PORT') ?: ($pusherConfig['options']['port'] ?? ($pusherScheme === 'https' ? 443 : 80))),
                 'scheme' => $pusherScheme,
             ]
             : [
