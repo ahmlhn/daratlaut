@@ -225,6 +225,7 @@ function authenticateRealtimeChannel(socketId) {
         })
         .catch(() => {
             setRealtimeConnected(false);
+            updateConnectionStatus('polling', 'Auth realtime gagal');
             try { realtimeSocket?.close(); } catch (e) {}
         });
 }

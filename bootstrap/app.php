@@ -58,6 +58,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: [
             'chat/admin_api.php',
             'direct/api.php',
+            'direct/realtime/auth',
             'direct/reverb/auth',
             'log.php',
         ]);
