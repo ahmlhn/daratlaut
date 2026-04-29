@@ -9,7 +9,7 @@
     <style>
         /* BASE STYLES */
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f1f5f9; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: #334155; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f1f5f9; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); color: #334155; }
 
         .card { background: #ffffff; border-radius: 24px; box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.1); padding: 35px 30px; max-width: 420px; width: 100%; text-align: center; border: 1px solid #e2e8f0; position: relative; z-index: 1; }
         .brand-logo { max-width: 180px; height: auto; margin: 0 auto 20px; display: block; }
@@ -32,6 +32,13 @@
         @keyframes wiggle { 0% { transform: rotate(-2deg); } 100% { transform: rotate(2deg); } }
 
         .footer-note { font-size: 0.8rem; color: #166534; margin-top: 10px; line-height: 1.5; background: #f0fdf4; border: 1px solid #bbf7d0; padding: 12px; border-radius: 12px; }
+        .quick-actions { display: grid; gap: 8px; grid-template-columns: 1fr; margin: -8px 0 18px; }
+        .quick-actions button { border: 1px solid #dbeafe; background: #eff6ff; color: #1d4ed8; border-radius: 12px; padding: 11px 12px; font-weight: 800; font-size: 0.82rem; cursor: pointer; text-align: left; display: flex; align-items: center; justify-content: space-between; }
+        .quick-actions button:hover { background: #dbeafe; }
+        .connection-pill { margin-top: 4px; font-size: 0.68rem; color: #64748b; font-weight: 700; display: flex; align-items: center; gap: 5px; }
+        .connection-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; }
+        .connection-pill.connected .dot { background: #22c55e; }
+        .connection-pill.polling .dot { background: #f59e0b; }
         .visit-id { margin-top: 30px; font-size: 0.65rem; color: #cbd5e1; font-family: monospace; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
         .copyright { margin-top: 10px; padding-top: 15px; border-top: 1px solid #f1f5f9; font-size: 0.7rem; color: #94a3b8; font-weight: 600; }
 
@@ -78,7 +85,7 @@
         .msg-time { display: block; font-size: 10px; margin-top: 4px; text-align: right; opacity: 0.7; font-weight: 500; }
         .msg-user .msg-time { color: rgba(255,255,255,0.8); }
 
-        .chat-input-area { padding: 12px 16px; background: #ffffff; border-top: 1px solid #e2e8f0; display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; }
+        .chat-input-area { padding: 12px 16px max(12px, env(safe-area-inset-bottom)); background: #ffffff; border-top: 1px solid #e2e8f0; display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; }
         .input-wrapper { position: relative; flex: 1; display: flex; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 20px; transition: all 0.2s; }
         .input-wrapper:focus-within { border-color: #2563eb; background: #ffffff; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
         .msg-input { width: 100%; padding: 12px 14px 12px 48px; border: none; background: transparent; outline: none; font-size: 14px; line-height: 1.4; resize: none; overflow-y: hidden; min-height: 44px; max-height: 120px; color: #1e293b; border-radius: 20px; }
@@ -91,6 +98,17 @@
 
         #cust-toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-150%); background: #1e293b; color: white; padding: 12px 20px; border-radius: 50px; z-index: 2000; display: flex; align-items: center; gap: 12px; transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: pointer; width: 90%; max-width: 380px; font-weight: 500; font-size: 13px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); }
         #cust-toast.show { transform: translateX(-50%) translateY(0); }
+        .identity-modal { position: fixed; inset: 0; z-index: 10001; display: none; align-items: flex-end; justify-content: center; background: rgba(15,23,42,0.55); padding: 16px; }
+        .identity-modal.active { display: flex; }
+        .identity-card { width: 100%; max-width: 420px; background: #fff; border-radius: 18px; padding: 18px; box-shadow: 0 20px 45px rgba(15,23,42,0.25); border: 1px solid #e2e8f0; }
+        .identity-card h3 { margin: 0 0 4px; color: #0f172a; font-size: 1rem; }
+        .identity-card p { margin: 0 0 14px; font-size: 0.8rem; color: #64748b; line-height: 1.4; }
+        .identity-card label { display: block; font-size: 0.68rem; text-transform: uppercase; font-weight: 800; color: #64748b; margin: 10px 0 4px; }
+        .identity-card input { width: 100%; border: 1px solid #cbd5e1; border-radius: 12px; padding: 11px 12px; outline: none; font-size: 0.9rem; }
+        .identity-card input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
+        .identity-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+        .identity-actions button { border: 1px solid #cbd5e1; border-radius: 12px; padding: 11px 12px; font-weight: 800; cursor: pointer; }
+        .identity-actions .primary { border-color: #2563eb; background: #2563eb; color: #fff; }
     </style>
 </head>
 <body
@@ -118,6 +136,10 @@
             <p class="info-main">Akses internet Anda saat ini dinonaktifkan sementara. Hubungi admin untuk konfirmasi pembayaran atau bantuan teknis.</p>
             <p class="info-note"><strong>Catatan:</strong> Jika sudah melakukan pembayaran dan internet belum aktif kembali, silahkan restart modem dengan cara cabut colok adaptor.</p>
         </div>
+        <div class="quick-actions">
+            <button type="button" onclick="openQuickAction('paid')"><span>Saya sudah bayar</span><span>Kirim bukti</span></button>
+            <button type="button" onclick="openQuickAction('technical')"><span>Bantuan teknis</span><span>Chat admin</span></button>
+        </div>
         
         <button class="btn-chat-lokal" onclick="openLocalChat()">
             <div>
@@ -142,12 +164,16 @@
                 <div class="chat-title">
                     <h3>Layanan Pelanggan</h3>
                     <p><span style="width:8px; height:8px; background:#22c55e; border-radius:50%; display:inline-block;"></span> Online & Siap Membantu</p>
+                    <div id="direct-connection-status" class="connection-pill polling"><span class="dot"></span><span>Polling aktif</span></div>
                 </div>
                 <button class="btn-close" type="button" onclick="closeLocalChat()" title="Sembunyikan chat">x</button>
             </div>
             
             <div id="view-room">
                 <div class="chat-body" id="chat-messages"></div>
+                <div id="customer-typing-indicator" style="display:none; padding:0 16px 8px; color:#64748b; font-size:11px; font-weight:700;">
+                    Admin sedang mengetik...
+                </div>
                 <div class="chat-input-area">
                     <div class="input-wrapper">
                         <input type="file" id="img-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" style="display: none;" onchange="sendImageClient()">
@@ -160,6 +186,23 @@
                         <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>
                     </button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="identity-modal" class="identity-modal">
+        <div class="identity-card">
+            <h3>Data singkat pelanggan</h3>
+            <p>Isi sekali agar admin lebih cepat mengenali akun dan lokasi bantuan.</p>
+            <label for="identity-name">Nama</label>
+            <input id="identity-name" type="text" autocomplete="name" placeholder="Nama pelanggan">
+            <label for="identity-phone">Nomor WhatsApp</label>
+            <input id="identity-phone" type="tel" autocomplete="tel" placeholder="08xx">
+            <label for="identity-address">Alamat singkat</label>
+            <input id="identity-address" type="text" autocomplete="street-address" placeholder="Dusun / blok / patokan">
+            <div class="identity-actions">
+                <button type="button" onclick="skipIdentityForm()">Lewati</button>
+                <button type="button" class="primary" onclick="saveIdentityForm()">Mulai Chat</button>
             </div>
         </div>
     </div>

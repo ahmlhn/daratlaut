@@ -419,6 +419,7 @@ class ChatController extends Controller
             $lm = $lastMsgs->get($vid);
             $data[] = [
                 'visit_id' => $vid,
+                'realtime_channel' => 'tenants.' . $tenantId . '.chat.visits.' . md5($vid),
                 'name' => (string) ($r->customer_name ?? 'Tanpa Nama'),
                 'phone' => (string) ($r->customer_phone ?? ''),
                 'address' => (string) ($r->customer_address ?? ''),

@@ -45,3 +45,18 @@ Broadcast::channel('tenants.{tenantId}.chat', function ($user, $tenantId) {
 
     return true;
 });
+
+Broadcast::channel('tenants.{tenantId}.chat.visits.{visitHash}', function ($user, $tenantId, $visitHash) {
+    if ((int) ($user->tenant_id ?? 0) !== (int) $tenantId) {
+        return false;
+    }
+
+    try {
+        if (method_exists($user, 'can') && $user->can('view chat')) {
+            return true;
+        }
+    } catch (\Throwable) {
+    }
+
+    return true;
+});

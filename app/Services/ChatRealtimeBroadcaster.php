@@ -40,6 +40,16 @@ class ChatRealtimeBroadcaster
         $this->broadcast($tenantId, $event, $visitId);
     }
 
+    public function presenceUpdated(int $tenantId, string $visitId, bool $isOnline, ?string $lastSeen = null): void
+    {
+        $this->broadcast($tenantId, 'presence.updated', $visitId, [
+            'presence' => [
+                'is_online' => $isOnline,
+                'last_seen' => $lastSeen ?: now()->format('Y-m-d H:i:s'),
+            ],
+        ]);
+    }
+
     public function sessionDeleted(int $tenantId, string $visitId): void
     {
         $this->broadcast($tenantId, 'session.deleted', $visitId);

@@ -18,6 +18,12 @@ let realtimeChannel = '';
 let realtimeConnected = false;
 let realtimeRetryTimer = null;
 let realtimeRetryCount = 0;
+let pendingSeq = 0;
+let pendingDraftMessage = '';
+const pendingSends = {};
+let typingSendTimer = null;
+let remoteTypingTimer = null;
+let lastTypingSentAt = 0;
 
 const TENANT_TOKEN = document.body ? (document.body.dataset.tenantToken || '') : '';
 const API_URL = TENANT_TOKEN ? `api.php?t=${encodeURIComponent(TENANT_TOKEN)}` : 'api.php';
@@ -25,6 +31,8 @@ const LOG_URL = TENANT_TOKEN ? `../log.php?t=${encodeURIComponent(TENANT_TOKEN)}
 const PRESENCE_HEARTBEAT_MS = 10000;
 const CHAT_POLL_FALLBACK_MS = 3000;
 const CHAT_POLL_REALTIME_MS = 15000;
+const DIRECT_CHAT_CACHE_TTL_MS = 30 * 60 * 1000;
+const DIRECT_CHAT_CACHE_MAX = 80;
 const REALTIME_DRIVER = document.body ? (document.body.dataset.realtimeDriver || 'reverb') : 'reverb';
 const REALTIME_KEY = document.body ? (document.body.dataset.realtimeKey || '') : '';
 const REALTIME_CLUSTER = document.body ? (document.body.dataset.realtimeCluster || 'mt1') : 'mt1';
@@ -47,7 +55,24 @@ function restartMessagePolling() {
 
 function setRealtimeConnected(value) {
     realtimeConnected = !!value;
+    updateConnectionStatus(realtimeConnected ? 'connected' : 'polling');
     if (isSessionInitialized) restartMessagePolling();
+}
+
+function updateConnectionStatus(state, text = '') {
+    const el = document.getElementById('direct-connection-status');
+    if (!el) return;
+    el.classList.remove('connected', 'polling');
+    if (state === 'connected') {
+        el.classList.add('connected');
+        el.querySelector('span:last-child').textContent = text || 'Realtime terhubung';
+    } else if (state === 'connecting') {
+        el.classList.add('polling');
+        el.querySelector('span:last-child').textContent = text || 'Menghubungkan...';
+    } else {
+        el.classList.add('polling');
+        el.querySelector('span:last-child').textContent = text || 'Polling aktif';
+    }
 }
 
 function realtimeWebSocketUrl() {
@@ -72,6 +97,15 @@ function sendRealtimeFrame(event, data) {
     realtimeSocket.send(JSON.stringify({ event, data }));
 }
 
+function sendClientEvent(event, payload = {}) {
+    if (!realtimeChannel || !realtimeConnected) return;
+    realtimeSocket.send(JSON.stringify({
+        event,
+        channel: realtimeChannel,
+        data: JSON.stringify(payload),
+    }));
+}
+
 function connectCustomerRealtime(channelName = '') {
     if (channelName) realtimeChannel = channelName;
     if (!realtimeChannel || !TENANT_TOKEN || !visitId || !REALTIME_KEY) {
@@ -85,10 +119,12 @@ function connectCustomerRealtime(channelName = '') {
     const wsUrl = realtimeWebSocketUrl();
     if (!wsUrl) {
         setRealtimeConnected(false);
+        updateConnectionStatus('polling', 'Polling aktif');
         return;
     }
 
     try {
+        updateConnectionStatus('connecting');
         realtimeSocket = new WebSocket(wsUrl);
     } catch (e) {
         setRealtimeConnected(false);
@@ -138,8 +174,35 @@ function connectCustomerRealtime(channelName = '') {
                 try { data = JSON.parse(data); } catch (e) { data = {}; }
             }
             handleRealtimeChatUpdate(data || {});
+            return;
+        }
+
+        if (eventName === 'client-typing') {
+            let data = frame.data;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch (e) { data = {}; }
+            }
+            if (String(data?.from || '') === 'admin') showRemoteTyping();
         }
     };
+}
+
+function emitCustomerTyping() {
+    if (!isSessionInitialized || !realtimeConnected) return;
+    const now = Date.now();
+    if (now - lastTypingSentAt < 1200) return;
+    lastTypingSentAt = now;
+    sendClientEvent('client-typing', { from: 'customer', visit_id: visitId, at: now });
+}
+
+function showRemoteTyping() {
+    const el = document.getElementById('customer-typing-indicator');
+    if (!el) return;
+    el.style.display = 'block';
+    clearTimeout(remoteTypingTimer);
+    remoteTypingTimer = setTimeout(() => {
+        el.style.display = 'none';
+    }, 2500);
 }
 
 function authenticateRealtimeChannel(socketId) {
@@ -185,6 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const dispId = document.getElementById('disp-id'); 
     if(dispId) dispId.innerText = visitId;
+    restoreDirectChatCache();
     
     // 2. Cek History Lokal
     const savedName = localStorage.getItem('noci_user_name');
@@ -209,7 +273,48 @@ document.addEventListener('DOMContentLoaded', () => {
             sendPresenceHeartbeat();
         }
     });
+
+    const chatInput = document.getElementById('chat-input');
+    if (chatInput) {
+        chatInput.addEventListener('input', () => {
+            clearTimeout(typingSendTimer);
+            typingSendTimer = setTimeout(emitCustomerTyping, 120);
+        });
+    }
 });
+
+function directCacheKey() {
+    return `noci_direct_chat_cache_${TENANT_TOKEN || 'default'}_${visitId || 'unknown'}`;
+}
+
+function persistDirectChatCache() {
+    try {
+        const rows = Array.isArray(messagesCache)
+            ? messagesCache.filter(m => String(m?.id || '') !== 'local-welcome').slice(-DIRECT_CHAT_CACHE_MAX)
+            : [];
+        localStorage.setItem(directCacheKey(), JSON.stringify({ cachedAt: Date.now(), messages: rows }));
+    } catch (e) {}
+}
+
+function restoreDirectChatCache() {
+    try {
+        const raw = localStorage.getItem(directCacheKey());
+        if (!raw) return false;
+        const parsed = JSON.parse(raw);
+        if (!parsed || Date.now() - Number(parsed.cachedAt || 0) > DIRECT_CHAT_CACHE_TTL_MS) return false;
+        if (!Array.isArray(parsed.messages) || parsed.messages.length === 0) return false;
+        messagesCache = parsed.messages;
+        messagePos = {};
+        for (let i = 0; i < messagesCache.length; i++) {
+            const id = String(messagesCache[i]?.id ?? '');
+            if (id) messagePos[id] = i;
+        }
+        rebuildMessagesView();
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
 
 function checkChatSystemStatus() {
     const fd = new FormData();
@@ -263,7 +368,8 @@ function checkChatSystemStatus() {
                     statusBadge.style.borderColor = "#cbd5e1";
                 }
                 if(footerNote) {
-                    footerNote.innerHTML = "<strong>Catatan:</strong> Menghubungi via WhatsApp membutuhkan koneksi internet atau kuota data pribadi.";
+                    const schedule = data.mode === 'scheduled' ? ` Chat lokal buka ${data.start_hour || '08:00'}-${data.end_hour || '17:00'}.` : '';
+                    footerNote.innerHTML = `<strong>Catatan:</strong> Menghubungi via WhatsApp membutuhkan koneksi internet atau kuota data pribadi.${schedule}`;
                     footerNote.style.background = "#fff7ed";
                     footerNote.style.borderColor = "#fdba74";
                     footerNote.style.color = "#c2410c";
@@ -319,6 +425,18 @@ function sendPresenceHeartbeat() {
     fetch(API_URL, { method: 'POST', body: fd }).catch(() => {});
 }
 
+function sendPresenceOffline() {
+    if (!visitId) return;
+    const fd = new FormData();
+    fd.append('action', 'presence_offline');
+    fd.append('visit_id', visitId);
+    if (navigator.sendBeacon) {
+        navigator.sendBeacon(API_URL, fd);
+        return;
+    }
+    fetch(API_URL, { method: 'POST', body: fd, keepalive: true }).catch(() => {});
+}
+
 function startPresenceHeartbeat() {
     sendPresenceHeartbeat();
     if (heartbeatInterval) clearInterval(heartbeatInterval);
@@ -329,12 +447,75 @@ function startPresenceHeartbeat() {
     }, PRESENCE_HEARTBEAT_MS);
 }
 
+window.addEventListener('pagehide', sendPresenceOffline);
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        sendPresenceOffline();
+    } else if (document.visibilityState === 'visible') {
+        sendPresenceHeartbeat();
+    }
+});
+
 function getAutoName() {
     const savedName = localStorage.getItem('noci_user_name');
     if (savedName) return savedName;
     const urlParams = new URLSearchParams(window.location.search);
     const urlName = urlParams.get('nama'); 
     return urlName ? decodeURIComponent(urlName) : ("Pelanggan " + visitId.slice(-4));
+}
+
+function hasSavedIdentity() {
+    return !!String(localStorage.getItem('noci_user_name') || '').trim();
+}
+
+function openIdentityForm() {
+    const modal = document.getElementById('identity-modal');
+    if (!modal) return Promise.resolve(true);
+    document.getElementById('identity-name').value = localStorage.getItem('noci_user_name') || '';
+    document.getElementById('identity-phone').value = localStorage.getItem('noci_user_phone') || '';
+    document.getElementById('identity-address').value = localStorage.getItem('noci_user_address') || '';
+    modal.classList.add('active');
+    setTimeout(() => document.getElementById('identity-name')?.focus(), 50);
+    return new Promise(resolve => {
+        window.__identityResolve = resolve;
+    });
+}
+
+function saveIdentityForm() {
+    const name = String(document.getElementById('identity-name')?.value || '').trim() || getAutoName();
+    const phone = String(document.getElementById('identity-phone')?.value || '').trim();
+    const address = String(document.getElementById('identity-address')?.value || '').trim();
+    localStorage.setItem('noci_user_name', name);
+    if (phone) localStorage.setItem('noci_user_phone', phone);
+    if (address) localStorage.setItem('noci_user_address', address);
+    document.getElementById('identity-modal')?.classList.remove('active');
+    window.__identityResolve?.(true);
+    window.__identityResolve = null;
+}
+
+function skipIdentityForm() {
+    localStorage.setItem('noci_user_name', getAutoName());
+    document.getElementById('identity-modal')?.classList.remove('active');
+    window.__identityResolve?.(true);
+    window.__identityResolve = null;
+}
+
+function openQuickAction(type) {
+    const input = document.getElementById('chat-input');
+    const drafts = {
+        paid: 'Halo admin, saya sudah melakukan pembayaran. Saya ingin konfirmasi agar internet bisa aktif kembali.',
+        technical: 'Halo admin, saya butuh bantuan teknis. Internet saya masih bermasalah.',
+    };
+    pendingDraftMessage = drafts[type] || '';
+    openLocalChat();
+    setTimeout(() => {
+        if (input && pendingDraftMessage) {
+            input.value = pendingDraftMessage;
+            input.style.height = 'auto';
+            input.style.height = input.scrollHeight + 'px';
+            input.focus();
+        }
+    }, 350);
 }
 
 function setComposerBusy(isBusy) {
@@ -413,6 +594,9 @@ function ensureSessionInitialized() {
         return sessionInitPromise;
     }
 
+    const ensureIdentity = hasSavedIdentity() ? Promise.resolve(true) : openIdentityForm();
+
+    sessionInitPromise = ensureIdentity.then(() => {
     const autoName = getAutoName();
     localStorage.setItem('noci_user_name', autoName);
 
@@ -420,10 +604,12 @@ function ensureSessionInitialized() {
     fd.append('action', 'start_session');
     fd.append('visit_id', visitId);
     fd.append('name', autoName);
+    fd.append('phone', localStorage.getItem('noci_user_phone') || '');
+    fd.append('address', localStorage.getItem('noci_user_address') || '');
 
     setSessionOpeningState(true);
 
-    sessionInitPromise = fetch(API_URL, { method: 'POST', body: fd })
+    return fetch(API_URL, { method: 'POST', body: fd })
         .then(r => r.json())
         .then(async d => {
             if (d.status === 'success') {
@@ -434,11 +620,11 @@ function ensureSessionInitialized() {
             }
             return false;
         })
-        .catch(() => false)
-        .finally(() => {
-            setSessionOpeningState(false);
-            sessionInitPromise = null;
-        });
+        .catch(() => false);
+    }).finally(() => {
+        setSessionOpeningState(false);
+        sessionInitPromise = null;
+    });
 
     return sessionInitPromise;
 }
@@ -498,17 +684,11 @@ function sendMsg() {
     if(!msg) return;
 
     markChatStarted();
-    
-    appendBubble(msg, 'user', 'Baru saja', 'text'); 
     input.value = ''; 
     input.style.height = 'auto'; 
-    scrollToBottom();
+    const pendingId = createPendingBubble(msg, 'text');
 
-    if (!isSessionInitialized) {
-        registerAndSend(msg, null);
-    } else {
-        doSendMsg(msg);
-    }
+    sendPendingText(pendingId, msg);
 }
 
 function doSendMsg(msg) {
@@ -518,24 +698,87 @@ function doSendMsg(msg) {
     fd.append('message', msg); 
     fd.append('sender', 'user');
     
-    fetch(API_URL, { method: 'POST', body: fd }).then(res => res.json()).catch(err => {});
+    return fetch(API_URL, { method: 'POST', body: fd }).then(res => res.json());
+}
+
+function createPendingBubble(label, type = 'text', file = null) {
+    const id = `pending-${++pendingSeq}`;
+    pendingSends[id] = { label, type, file };
+    renderPendingBubble(id, 'sending');
+    return id;
+}
+
+function renderPendingBubble(id, state = 'sending') {
+    const item = pendingSends[id];
+    const container = document.getElementById('chat-messages');
+    if (!item || !container) return;
+    let div = document.getElementById(id);
+    if (!div) {
+        div = document.createElement('div');
+        div.id = id;
+        div.className = 'msg msg-user';
+        container.appendChild(div);
+    }
+    const failed = state === 'failed';
+    const label = failed ? 'Gagal terkirim' : 'Mengirim...';
+    const retry = failed ? `<button type="button" onclick="retryPendingSend('${id}')" style="margin-left:6px; border:none; background:transparent; color:#fff; text-decoration:underline; font-weight:800; cursor:pointer;">Kirim ulang</button>` : '';
+    div.innerHTML = `${linkify(item.label)}<div class="msg-time">${label}${retry}</div>`;
+    scrollToBottom();
+}
+
+function retryPendingSend(id) {
+    const item = pendingSends[id];
+    if (!item) return;
+    renderPendingBubble(id, 'sending');
+    if (item.type === 'file') sendPendingFile(id, item.file);
+    else sendPendingText(id, item.label);
+}
+
+function finishPendingSend(id) {
+    delete pendingSends[id];
+    document.getElementById(id)?.remove();
+    loadMessages();
+}
+
+function failPendingSend(id) {
+    renderPendingBubble(id, 'failed');
+}
+
+function sendPendingText(id, msg) {
+    ensureSessionInitialized()
+        .then(ok => {
+            if (!ok) throw new Error('Session failed');
+            return doSendMsg(msg);
+        })
+        .then(json => {
+            if (!json || json.status !== 'success') throw new Error(json?.msg || 'Send failed');
+            finishPendingSend(id);
+        })
+        .catch(() => failPendingSend(id));
 }
 
 async function sendImageClient() {
     const fileInput = document.getElementById('img-input'); 
     if (fileInput.files.length === 0) return;
     const file = fileInput.files[0];
-    appendBubble(file.type && file.type.startsWith('image/') ? 'Mengirim gambar...' : 'Mengirim file...', 'user', '...', 'text');
-    scrollToBottom();
+    const pendingId = createPendingBubble(file.name || (file.type && file.type.startsWith('image/') ? 'Gambar' : 'File'), 'file', file);
 
     markChatStarted();
-    if (!isSessionInitialized) {
-        registerAndSend(null, file);
-        fileInput.value = ''; 
-    } else {
-        doSendImage(file);
-        fileInput.value = ''; 
-    }
+    fileInput.value = '';
+    sendPendingFile(pendingId, file);
+}
+
+function sendPendingFile(id, file) {
+    ensureSessionInitialized()
+        .then(ok => {
+            if (!ok) throw new Error('Session failed');
+            return doSendImage(file);
+        })
+        .then(json => {
+            if (!json || json.status !== 'success') throw new Error(json?.msg || 'Upload failed');
+            finishPendingSend(id);
+        })
+        .catch(() => failPendingSend(id));
 }
 
 async function doSendImage(originalFile) {
@@ -555,9 +798,7 @@ async function doSendImage(originalFile) {
     fd.append('sender', 'user'); 
     fd.append('image', fileToSend, fileName);
     
-    fetch(API_URL, { method: 'POST', body: fd }).then(res => res.json()).then(json => { 
-        if(json.status === 'success') { loadMessages(); }
-    }).catch(e => {});
+    return fetch(API_URL, { method: 'POST', body: fd }).then(res => res.json());
 }
 
 function compressImage(file, quality = 0.7, maxWidth = 1000) {
@@ -618,6 +859,7 @@ function rebuildMessagesView() {
     getRenderableMessages().forEach((m) => {
         appendBubble(m.message, m.sender, m.time, m.type || 'text', m.is_edited);
     });
+    persistDirectChatCache();
     scrollToBottom();
 }
 

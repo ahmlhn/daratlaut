@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Schema;
  *  - check_status
  *  - start_session
  *  - heartbeat
+ *  - presence_offline
  *  - get_messages
  *  - send (text or multipart image)
  */
@@ -130,6 +131,9 @@ class DirectApiController extends Controller
             if ($action === 'heartbeat') {
                 return $this->heartbeat($request, $tenantId);
             }
+            if ($action === 'presence_offline') {
+                return $this->presenceOffline($request, $tenantId);
+            }
             if ($action === 'get_messages') {
                 return $this->getMessages($request, $tenantId);
             }
@@ -158,17 +162,17 @@ class DirectApiController extends Controller
         }
 
         if (!$set) {
-            return $this->json(['status' => 'online', 'welcome_msg' => $welMsg], $request);
+            return $this->json(['status' => 'online', 'welcome_msg' => $welMsg, 'mode' => 'manual_on'], $request);
         }
 
         $status = 'online';
         $mode = (string) ($set->mode ?? 'manual_on');
+        $start = (string) ($set->start_hour ?? '08:00:00');
+        $end = (string) ($set->end_hour ?? '17:00:00');
         if ($mode === 'manual_off') {
             $status = 'offline';
         } elseif ($mode === 'scheduled') {
             $now = date('H:i:s');
-            $start = (string) ($set->start_hour ?? '08:00:00');
-            $end = (string) ($set->end_hour ?? '17:00:00');
             if ($now < $start || $now > $end) $status = 'offline';
         }
 
@@ -187,6 +191,9 @@ class DirectApiController extends Controller
             'status' => $status,
             'wa_link' => $waLink,
             'welcome_msg' => $welMsg,
+            'mode' => $mode,
+            'start_hour' => substr($start, 0, 5),
+            'end_hour' => substr($end, 0, 5),
         ], $request);
     }
 
@@ -248,6 +255,8 @@ class DirectApiController extends Controller
         if ($name === '') {
             $name = 'Pelanggan ' . substr($visitId, -4);
         }
+        $phone = $this->normalizePhone((string) ($request->input('phone') ?? ''));
+        $address = trim((string) ($request->input('address') ?? ''));
 
         $ip = (string) ($request->server('REMOTE_ADDR') ?? $request->ip() ?? '0.0.0.0');
         $loc = $this->detectIsp($ip);
@@ -260,6 +269,8 @@ class DirectApiController extends Controller
 
         if ($exists) {
             $update = ['customer_name' => $name];
+            if ($phone !== '' && $this->hasColumn('noci_customers', 'customer_phone')) $update['customer_phone'] = $phone;
+            if ($address !== '' && $this->hasColumn('noci_customers', 'customer_address')) $update['customer_address'] = $address;
             if ($this->hasColumn('noci_customers', 'ip_address')) $update['ip_address'] = $ip;
             if ($this->hasColumn('noci_customers', 'location_info')) $update['location_info'] = $loc;
             if ($this->hasColumn('noci_customers', 'last_seen')) $update['last_seen'] = DB::raw('NOW()');
@@ -273,8 +284,8 @@ class DirectApiController extends Controller
                 'customer_name' => $name,
             ];
             if ($hasTenant) $insert['tenant_id'] = $tenantId;
-            if ($this->hasColumn('noci_customers', 'customer_phone')) $insert['customer_phone'] = '-';
-            if ($this->hasColumn('noci_customers', 'customer_address')) $insert['customer_address'] = '-';
+            if ($this->hasColumn('noci_customers', 'customer_phone')) $insert['customer_phone'] = $phone !== '' ? $phone : '-';
+            if ($this->hasColumn('noci_customers', 'customer_address')) $insert['customer_address'] = $address !== '' ? $address : '-';
             if ($this->hasColumn('noci_customers', 'ip_address')) $insert['ip_address'] = $ip;
             if ($this->hasColumn('noci_customers', 'location_info')) $insert['location_info'] = $loc;
             if ($this->hasColumn('noci_customers', 'last_seen')) $insert['last_seen'] = DB::raw('NOW()');
@@ -312,7 +323,41 @@ class DirectApiController extends Controller
             }
 
             if (!empty($update)) {
-                $q->update($update);
+                $updated = (int) $q->update($update);
+                if ($updated > 0) {
+                    $this->realtime->presenceUpdated($tenantId, $visitId, true, date('Y-m-d H:i:s'));
+                }
+            }
+        } catch (\Throwable) {
+        }
+
+        return $this->json([
+            'status' => 'success',
+            'server_time' => date('Y-m-d H:i:s'),
+        ], $request);
+    }
+
+    private function presenceOffline(Request $request, int $tenantId): JsonResponse
+    {
+        $visitId = trim((string) ($request->input('visit_id') ?? $request->query('visit_id') ?? ''));
+        if ($visitId === '') {
+            return $this->json(['status' => 'error', 'msg' => 'visit_id kosong'], $request, 422);
+        }
+
+        $lastSeen = date('Y-m-d H:i:s', time() - 31);
+
+        try {
+            if ($this->hasColumn('noci_customers', 'last_seen')) {
+                $q = DB::table('noci_customers')->where('visit_id', $visitId);
+                if ($this->hasColumn('noci_customers', 'tenant_id')) {
+                    $q->where('tenant_id', $tenantId);
+                }
+                $updated = (int) $q->update(['last_seen' => DB::raw('NOW() - INTERVAL 31 SECOND')]);
+                if ($updated > 0) {
+                    $this->realtime->presenceUpdated($tenantId, $visitId, false, $lastSeen);
+                }
+            } else {
+                $this->realtime->presenceUpdated($tenantId, $visitId, false, $lastSeen);
             }
         } catch (\Throwable) {
         }
@@ -328,16 +373,6 @@ class DirectApiController extends Controller
         $visitId = trim((string) ($request->query('visit_id') ?? ''));
         if ($visitId === '') {
             return $this->json(['status' => 'success', 'data' => [], 'session_status' => 'Baru', 'server_time' => ''], $request);
-        }
-
-        // Update last_seen.
-        if ($this->hasColumn('noci_customers', 'last_seen')) {
-            try {
-                $q = DB::table('noci_customers')->where('visit_id', $visitId);
-                if ($this->hasColumn('noci_customers', 'tenant_id')) $q->where('tenant_id', $tenantId);
-                $q->update(['last_seen' => DB::raw('NOW()')]);
-            } catch (\Throwable) {
-            }
         }
 
         $currStatus = 'Baru';
@@ -800,6 +835,15 @@ class DirectApiController extends Controller
         }
 
         return 'Unknown IP';
+    }
+
+    private function normalizePhone(string $raw): string
+    {
+        $p = preg_replace('/\D/', '', $raw);
+        if ($p === '') return '';
+        if (str_starts_with($p, '0')) $p = '62' . substr($p, 1);
+        if (str_starts_with($p, '8')) $p = '62' . $p;
+        return $p;
     }
 
     private function hasColumn(string $table, string $col): bool

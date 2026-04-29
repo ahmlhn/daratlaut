@@ -28,7 +28,7 @@ let loadingOlderHistory = false;
 let historyPrefetchTimer = null;
 const CHAT_SESSION_CACHE_KEY = 'noci_chat_room_cache_v3';
 const CHAT_SESSION_TTL_MS = 30 * 60 * 1000;
-const CHAT_CONTACTS_SESSION_CACHE_KEY = 'noci_chat_contacts_cache_v1';
+const CHAT_CONTACTS_SESSION_CACHE_KEY = 'noci_chat_contacts_cache_v2';
 const CHAT_CONTACTS_SESSION_TTL_MS = 10 * 60 * 1000;
 const CHAT_CONTACTS_CACHE_MAX = 300;
 const CHAT_INDEXEDDB_NAME = 'noci_chat_cache_db';
@@ -54,6 +54,11 @@ let customerOverviewPoll = null;
 let contactSearchTimer = null;
 let pendingChatSeq = 0;
 const pendingChatMessages = {};
+let adminTypingTimer = null;
+let remoteTypingTimer = null;
+let lastAdminTypingSentAt = 0;
+const subscribedVisitTypingChannels = new Set();
+let contactPresenceRefreshTimer = null;
 const CUSTOMER_OVERVIEW_POLL_MS = 8000;
 const CHAT_POLL_FALLBACK_MS = 3000;
 const CHAT_POLL_REALTIME_MS = 15000;
@@ -80,9 +85,23 @@ function restartMessagePolling() {
     }
 }
 
+function restartContactPresenceRefresh() {
+    if (contactPresenceRefreshTimer) clearInterval(contactPresenceRefreshTimer);
+    contactPresenceRefreshTimer = setInterval(() => {
+        if (!Array.isArray(usersData) || usersData.length === 0) return;
+        renderUserList(usersData);
+        if (activeVisitId) {
+            const currentUser = usersData.find(u => String(u.visit_id) === String(activeVisitId));
+            const hStatus = document.getElementById('h-status');
+            if (currentUser && hStatus) hStatus.innerHTML = getStatus(currentUser.last_seen, currentUser.presence_online);
+        }
+    }, 5000);
+}
+
 window.__chatRealtimeSetConnected = function (connected) {
     window.__chatRealtimeConnected = !!connected;
     restartContactsPolling();
+    restartContactPresenceRefresh();
     restartMessagePolling();
 };
 
@@ -188,6 +207,7 @@ function getContactPriorityMeta(priority) {
 }
 
 function isContactOnline(user) {
+    if (user?.presence_online === false) return false;
     const seenDate = parseChatDateTime(user?.last_seen);
     if (!seenDate) return false;
     const diffSeconds = Math.floor((Date.now() - seenDate.getTime()) / 1000);
@@ -321,6 +341,7 @@ function __chatBoot() {
     loadContacts(!restoredContacts); 
     
     restartContactsPolling();
+    restartContactPresenceRefresh();
 
     const msgInput = document.getElementById('msg-input');
     if (msgInput) {
@@ -337,6 +358,8 @@ function __chatBoot() {
             const val = e.target.value; 
             if (val.startsWith('/')) showTemplatePopup(val.substring(1)); 
             else document.getElementById('tpl-popup').classList.add('hidden'); 
+            clearTimeout(adminTypingTimer);
+            adminTypingTimer = setTimeout(emitAdminTyping, 120);
         });
     }
 
@@ -1103,7 +1126,7 @@ function restoreContactsListFromSession() {
 }
 
 function indexedDbContactsKey() {
-    return `${CHAT_CACHE_SCOPE}:__contacts__`;
+    return `${CHAT_CACHE_SCOPE}:__contacts_v2__`;
 }
 
 function persistContactsListToIndexedDb(payload = null) {
@@ -1424,6 +1447,11 @@ function handleChatRealtimePayload(payload) {
         return;
     }
 
+    if (eventName === 'presence.updated') {
+        applyPresenceUpdate(visitId, payload.payload?.presence || {}, payload.server_time || '');
+        return;
+    }
+
     if (message && isActiveChat) {
         processMessageUpdates([message]);
         refreshMessageDaySeparators();
@@ -1446,6 +1474,88 @@ function handleChatRealtimePayload(payload) {
     }
 
     loadContacts(false);
+}
+
+function applyPresenceUpdate(visitId, presence = {}, serverTime = '') {
+    if (!visitId) return;
+
+    const index = usersData.findIndex(u => String(u.visit_id) === visitId);
+    if (index === -1) {
+        loadContacts(false);
+        return;
+    }
+
+    const isOnline = presence.is_online === true || presence.is_online === 1 || presence.is_online === '1';
+    const lastSeen = String(presence.last_seen || serverTime || usersData[index].last_seen || '');
+    usersData[index] = {
+        ...usersData[index],
+        last_seen: lastSeen,
+        presence_online: isOnline,
+    };
+
+    renderUserList(usersData);
+    renderFilterButtons(usersData);
+    persistContactsCache(true);
+
+    if (String(activeVisitId || '') === visitId) {
+        const hStatus = document.getElementById('h-status');
+        if (hStatus) hStatus.innerHTML = getStatus(lastSeen, isOnline);
+    }
+}
+
+function getVisitChannelName(visitId) {
+    if (!visitId) return '';
+    const user = usersData.find(u => String(u.visit_id) === String(visitId));
+    return String(user?.realtime_channel || '');
+}
+
+function emitAdminTyping() {
+    if (!activeVisitId || !window.Echo) return;
+    const channelName = getVisitChannelName(activeVisitId);
+    if (!channelName) return;
+    const now = Date.now();
+    if (now - lastAdminTypingSentAt < 1200) return;
+    lastAdminTypingSentAt = now;
+    try {
+        window.Echo.private(channelName).whisper('typing', {
+            from: 'admin',
+            visit_id: String(activeVisitId),
+            at: now,
+        });
+    } catch (e) {}
+}
+
+function showCustomerTyping(payload = {}) {
+    if (payload.visit_id && String(payload.visit_id) !== String(activeVisitId || '')) return;
+    const el = document.getElementById('admin-typing-indicator');
+    if (!el) return;
+    el.classList.remove('hidden');
+    clearTimeout(remoteTypingTimer);
+    remoteTypingTimer = setTimeout(() => {
+        el.classList.add('hidden');
+    }, 2500);
+}
+
+function hideCustomerTyping() {
+    const el = document.getElementById('admin-typing-indicator');
+    if (el) el.classList.add('hidden');
+    clearTimeout(remoteTypingTimer);
+}
+
+function subscribeVisitTyping(visitId) {
+    if (!visitId || !window.Echo) return;
+    const channelName = getVisitChannelName(visitId);
+    if (!channelName) return;
+    if (subscribedVisitTypingChannels.has(channelName)) return;
+    subscribedVisitTypingChannels.add(channelName);
+    try {
+        window.Echo.private(channelName)
+            .listenForWhisper('typing', (payload) => {
+                if (String(payload?.from || '') === 'customer') showCustomerTyping(payload || {});
+            });
+    } catch (e) {
+        subscribedVisitTypingChannels.delete(channelName);
+    }
 }
 
 function loadContacts(isFirstLoad = false) { 
@@ -1481,7 +1591,7 @@ function loadContacts(isFirstLoad = false) {
                     setText('.info-phone', currentUser.phone || '-');
                     setText('.info-address', currentUser.address || '-');
                     const hStatus = document.getElementById('h-status'); 
-                    if(hStatus) hStatus.innerHTML = getStatus(currentUser.last_seen);
+                    if(hStatus) hStatus.innerHTML = getStatus(currentUser.last_seen, currentUser.presence_online);
                     
                     if (currentUser.status === 'Selesai') {
                          document.getElementById('footer-active').classList.add('hidden');
@@ -1870,6 +1980,8 @@ function openChat(visitId) {
     }
     
     activeVisitId = visitId; lastMsgCount = 0; 
+    hideCustomerTyping();
+    subscribeVisitTyping(visitId);
     let restoredFromCache = false;
     
     try {
@@ -1885,7 +1997,7 @@ function openChat(visitId) {
             const noteInput = document.getElementById('customer-note'); if(noteInput) { noteInput.value = user.notes || ''; const st = document.getElementById('note-status'); if(st) { st.innerText = 'Saved'; st.className = 'text-[9px] text-slate-400 font-normal opacity-0'; } }
             const hName = document.getElementById('h-name'); if(hName) hName.innerText = user.name;
             const hAvatar = document.getElementById('h-avatar'); if(hAvatar) hAvatar.innerText = (user.name||'U').charAt(0).toUpperCase();
-            const hStatus = document.getElementById('h-status'); if(hStatus) hStatus.innerHTML = getStatus(user.last_seen);
+            const hStatus = document.getElementById('h-status'); if(hStatus) hStatus.innerHTML = getStatus(user.last_seen, user.presence_online);
             const hId = document.getElementById('h-id'); if(hId) hId.innerText = '#' + user.visit_id;
             
             const waLink = document.getElementById('wa-link'); 
@@ -2291,7 +2403,10 @@ function saveAdminProfile() { const name = document.getElementById('adm-name').v
 
 function setText(selector, text) { document.querySelectorAll(selector).forEach(el => el.innerText = text || '-'); }
 
-function getStatus(lastSeen) {
+function getStatus(lastSeen, presenceOnline = null) {
+    if (presenceOnline === false) {
+        return '<span class="text-slate-400 dark:text-slate-500 text-xs">Offline</span>';
+    }
     const seenDate = parseChatDateTime(lastSeen);
     if (!seenDate) {
         return '<span class="text-slate-400 dark:text-slate-500 text-xs">Offline</span>';

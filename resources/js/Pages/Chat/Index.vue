@@ -566,6 +566,9 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
                     </div>
                     
                     <div id="messages" class="flex-1 overflow-y-auto pt-24 md:pt-28 p-4 md:p-5 custom-scrollbar space-y-3 bg-[#efeae2] dark:bg-[#0b141a] bg-opacity-30 dark:bg-opacity-100 transition-colors" style="background-image: radial-gradient(#d1d5db 1px, transparent 1px); background-size: 20px 20px;"></div>
+                    <div id="admin-typing-indicator" class="hidden absolute left-4 bottom-[78px] z-30 rounded-full border border-slate-200 dark:border-white/10 bg-white/95 dark:bg-[#202c33]/95 px-3 py-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-300 shadow-sm">
+                        Pelanggan sedang mengetik...
+                    </div>
                     
                     <div class="flex-none px-3 md:px-4 pt-2 pb-3 md:pt-2.5 md:pb-4 bg-[#f0f2f5] dark:bg-[#202c33] border-t border-slate-200/80 dark:border-white/[0.06] relative z-20 shrink-0 pb-safe transition-colors">
                         <div id="footer-active" class="flex items-end gap-2 w-full">
