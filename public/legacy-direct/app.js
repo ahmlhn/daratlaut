@@ -27,6 +27,7 @@ const CHAT_POLL_FALLBACK_MS = 3000;
 const CHAT_POLL_REALTIME_MS = 15000;
 const REALTIME_DRIVER = document.body ? (document.body.dataset.realtimeDriver || 'reverb') : 'reverb';
 const REALTIME_KEY = document.body ? (document.body.dataset.realtimeKey || '') : '';
+const REALTIME_CLUSTER = document.body ? (document.body.dataset.realtimeCluster || 'mt1') : 'mt1';
 const REALTIME_HOST = document.body ? (document.body.dataset.realtimeHost || window.location.hostname) : window.location.hostname;
 const REALTIME_PORT = document.body ? (document.body.dataset.realtimePort || '') : '';
 const REALTIME_SCHEME = document.body ? (document.body.dataset.realtimeScheme || 'https') : 'https';
@@ -52,7 +53,7 @@ function setRealtimeConnected(value) {
 function realtimeWebSocketUrl() {
     if (!REALTIME_KEY) return '';
     const protocol = REALTIME_SCHEME === 'https' ? 'wss' : 'ws';
-    const host = REALTIME_HOST || window.location.hostname;
+    const host = REALTIME_HOST || (REALTIME_DRIVER === 'pusher' ? `ws-${REALTIME_CLUSTER || 'mt1'}.pusher.com` : window.location.hostname);
     const port = REALTIME_PORT ? `:${REALTIME_PORT}` : '';
     return `${protocol}://${host}${port}/app/${encodeURIComponent(REALTIME_KEY)}?protocol=7&client=noci-direct-${encodeURIComponent(REALTIME_DRIVER)}&version=1.0&flash=false`;
 }

@@ -7,6 +7,7 @@ export default {
         './resources/views/**/*.blade.php',
         './resources/js/**/*.vue',
         './resources/js/**/*.js',
+        './public/legacy-chat/**/*.js',
     ],
     theme: {
         extend: {

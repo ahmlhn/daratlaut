@@ -285,7 +285,7 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
 
     <div id="main-app">
 
-        <div id="panel-list" class="w-full md:w-80 flex-shrink-0 flex flex-col border-r border-slate-200 dark:border-white/10 bg-white dark:bg-darkpanel h-full z-20 relative shadow-sm transition-colors">
+        <div id="panel-list" class="w-full md:w-[22rem] flex-shrink-0 flex flex-col border-r border-slate-200 dark:border-white/10 bg-white dark:bg-darkpanel h-full z-20 relative shadow-sm transition-colors">
             <!-- Tab Bar: Chat / Leads -->
             <div class="flex shrink-0 border-b border-slate-200 dark:border-white/10">
               <button @click="switchTab('chat')" :class="activeTab === 'chat' ? 'text-blue-600 dark:text-green-400 border-blue-600 dark:border-green-400 bg-blue-50/50 dark:bg-green-900/10' : 'text-slate-400 dark:text-slate-500 border-transparent hover:text-slate-600'" class="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-bold uppercase tracking-wider border-b-2 transition-all">
@@ -302,7 +302,7 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
             <!-- Chat Tab Content -->
             <div v-show="activeTab === 'chat'" class="flex flex-col flex-1 min-h-0">
             <!-- Chat tools (moved from legacy header; navigation stays in admin sidebar) -->
-            <div class="flex items-center justify-between gap-2 px-3 pt-3 pb-1 shrink-0">
+            <div class="flex items-start justify-between gap-2 px-4 pt-3 pb-2 shrink-0">
                 <div
                   class="inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide"
                   :class="[realtimeStatus.bg, realtimeStatus.text]"
@@ -330,17 +330,34 @@ function fmtLeadDate(d) { return d ? new Date(d).toLocaleDateString('id-ID', { d
                 </button>
                 </div>
             </div>
-            <div class="px-3 pt-3 pb-2 border-b border-slate-200 dark:border-white/10 bg-slate-50/50 dark:bg-transparent shrink-0 space-y-2">
+            <div class="px-4 pb-3 border-b border-slate-200 dark:border-white/10 bg-slate-50/70 dark:bg-transparent shrink-0 space-y-3">
+                <div class="flex items-end justify-between gap-3">
+                    <div class="min-w-0">
+                        <h2 class="text-sm font-extrabold text-slate-800 dark:text-white leading-tight">Kontak Chat</h2>
+                        <p class="text-[11px] text-slate-500 dark:text-slate-400">
+                            <span id="contact-total-count">0</span> kontak
+                            <span id="contact-unread-summary" class="hidden">, <span id="contact-unread-count">0</span> belum dibaca</span>
+                        </p>
+                    </div>
+                    <button id="contact-refresh-btn" type="button" onclick="loadContacts(true)" class="h-8 w-8 flex items-center justify-center rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#202c33] text-slate-500 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 transition" title="Refresh kontak">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5M5.5 15A7 7 0 0017 18.5M18.5 9A7 7 0 007 5.5" />
+                        </svg>
+                    </button>
+                </div>
                 <form action="#" onsubmit="return false;" autocomplete="off" class="relative group">
-                    <input type="text" id="search-user" onkeyup="filterUsers()" placeholder="Cari pelanggan..." autocomplete="off" class="w-full bg-white dark:bg-[#202c33] border border-slate-300 dark:border-transparent text-sm rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:border-blue-500 dark:focus:bg-[#2a3942] dark:text-white transition text-slate-700 shadow-sm placeholder-slate-400 dark:placeholder-slate-500">
+                    <input type="text" id="search-user" onkeyup="filterUsers()" placeholder="Cari nama, HP, atau ID..." autocomplete="off" class="w-full bg-white dark:bg-[#202c33] border border-slate-300 dark:border-transparent text-sm rounded-lg pl-9 pr-9 py-2 focus:outline-none focus:border-blue-500 dark:focus:bg-[#2a3942] dark:text-white transition text-slate-700 shadow-sm placeholder-slate-400 dark:placeholder-slate-500">
                     <svg class="w-4 h-4 absolute left-3 top-2.5 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    <button id="search-user-clear" type="button" onclick="clearContactSearch()" class="hidden absolute right-2 top-1.5 h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-200 transition" title="Bersihkan pencarian">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
                 </form>
-                <div id="filter-container" class="flex gap-2 overflow-x-auto custom-scrollbar pb-1 min-h-[30px]">
+                <div id="filter-container" class="flex gap-2 overflow-x-auto custom-scrollbar pb-1 min-h-[32px]">
                     <div class="text-[10px] text-slate-400 italic px-2">Memuat filter...</div>
                 </div>
             </div>
 
-            <div id="user-list" class="flex-1 overflow-y-auto custom-scrollbar bg-white dark:bg-darkpanel space-y-0.5">
+            <div id="user-list" class="flex-1 overflow-y-auto custom-scrollbar bg-white dark:bg-darkpanel">
                 <div class="flex flex-col items-center justify-center h-40 text-slate-400 text-sm animate-pulse">Memuat...</div>
             </div>
             </div><!-- /chat tab -->

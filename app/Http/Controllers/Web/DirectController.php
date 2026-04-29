@@ -33,17 +33,22 @@ class DirectController extends Controller
         $broadcastDriver = (string) config('broadcasting.default', 'null');
         $pusherConfig = (array) config('broadcasting.connections.pusher', []);
         $reverbConfig = (array) config('broadcasting.connections.reverb', []);
+        $pusherCluster = (string) env('VITE_PUSHER_APP_CLUSTER', (string) ($pusherConfig['options']['cluster'] ?? 'mt1'));
+        $pusherHost = trim((string) env('VITE_PUSHER_HOST', ''));
+        $pusherScheme = (string) env('VITE_PUSHER_SCHEME', (string) ($pusherConfig['options']['scheme'] ?? 'https'));
         $realtime = $broadcastDriver === 'pusher'
             ? [
                 'driver' => 'pusher',
                 'key' => (string) env('VITE_PUSHER_APP_KEY', (string) ($pusherConfig['key'] ?? '')),
-                'host' => (string) env('VITE_PUSHER_HOST', 'main.pusher.ably.net'),
-                'port' => (int) env('VITE_PUSHER_PORT', 443),
-                'scheme' => (string) env('VITE_PUSHER_SCHEME', 'https'),
+                'cluster' => $pusherCluster !== '' ? $pusherCluster : 'mt1',
+                'host' => $pusherHost !== '' ? $pusherHost : 'ws-' . ($pusherCluster !== '' ? $pusherCluster : 'mt1') . '.pusher.com',
+                'port' => (int) env('VITE_PUSHER_PORT', $pusherScheme === 'https' ? 443 : 80),
+                'scheme' => $pusherScheme,
             ]
             : [
                 'driver' => 'reverb',
                 'key' => (string) ($reverbConfig['key'] ?? ''),
+                'cluster' => '',
                 'host' => (string) ($reverbConfig['options']['host'] ?? 'localhost'),
                 'port' => (int) ($reverbConfig['options']['port'] ?? 443),
                 'scheme' => (string) ($reverbConfig['options']['scheme'] ?? 'https'),

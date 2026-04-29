@@ -51,6 +51,7 @@ let lastContactsIndexedDbPersistAt = 0;
 let customerOverviewPeriod = 'today';
 let customerOverviewReqSeq = 0;
 let customerOverviewPoll = null;
+let contactSearchTimer = null;
 const CUSTOMER_OVERVIEW_POLL_MS = 8000;
 const CHAT_POLL_FALLBACK_MS = 3000;
 const CHAT_POLL_REALTIME_MS = 15000;
@@ -154,6 +155,47 @@ function formatContactTimestampTooltip(rawValue) {
         const dd = String(dt.getDate()).padStart(2, '0');
         return `${dd}/${mm}/${yyyy} ${formatHourMinute(dt)}`;
     }
+}
+
+function getContactActivityTime(user) {
+    const primary = parseChatDateTime(user?.last_msg_at || user?.updated_at);
+    if (primary) return primary.getTime();
+
+    const fallback = parseChatDateTime(user?.last_seen || user?.created_at);
+    return fallback ? fallback.getTime() : 0;
+}
+
+function getContactStatusMeta(user) {
+    const status = String(user?.status || 'Baru');
+    const isDone = status === 'Selesai';
+    return {
+        label: status,
+        dotClass: isDone ? 'bg-green-500' : 'bg-blue-500 dark:bg-green-500',
+        badgeClass: isDone
+            ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-900/50'
+            : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-900/50',
+    };
+}
+
+function isContactOnline(user) {
+    const seenDate = parseChatDateTime(user?.last_seen);
+    if (!seenDate) return false;
+    const diffSeconds = Math.floor((Date.now() - seenDate.getTime()) / 1000);
+    return Number.isFinite(diffSeconds) && diffSeconds <= 30;
+}
+
+function updateContactPanelStats(data) {
+    const totalEl = document.getElementById('contact-total-count');
+    const unreadEl = document.getElementById('contact-unread-count');
+    const unreadSummary = document.getElementById('contact-unread-summary');
+    const total = Array.isArray(data) ? data.length : 0;
+    const unread = Array.isArray(data)
+        ? data.reduce((sum, user) => sum + (parseInt(user.unread) || 0), 0)
+        : 0;
+
+    if (totalEl) totalEl.innerText = String(total);
+    if (unreadEl) unreadEl.innerText = String(unread);
+    if (unreadSummary) unreadSummary.classList.toggle('hidden', unread <= 0);
 }
 
 function getMessageDayKey(rawValue) {
@@ -1466,11 +1508,9 @@ function mergeUserData(newItems, reset = false) {
         });
     }
 
-    // Sortir: Terakhir dilihat (last_seen) paling atas
+    // Sortir: aktivitas pesan terakhir paling atas, fallback ke last_seen.
     usersData.sort((a, b) => {
-        const timeA = new Date(a.last_seen || 0);
-        const timeB = new Date(b.last_seen || 0);
-        return timeB - timeA;
+        return getContactActivityTime(b) - getContactActivityTime(a);
     });
 
     renderUserList(usersData);
@@ -1479,12 +1519,21 @@ function mergeUserData(newItems, reset = false) {
 
 // [SMART SIDEBAR] Search (Server Side)
 function filterUsers() { 
-    const q = document.getElementById('search-user').value.trim();
+    const searchInput = document.getElementById('search-user');
+    const clearBtn = document.getElementById('search-user-clear');
+    if (!searchInput) return;
+    const q = searchInput.value.trim();
     const listContainer = document.getElementById('user-list');
+    if (!listContainer) return;
+    if (clearBtn) {
+        clearBtn.classList.toggle('hidden', q.length === 0);
+        clearBtn.classList.toggle('flex', q.length > 0);
+    }
     
     if (q.length === 0) {
         isSearching = false;
         lastContactSync = ''; // Reset sync agar load ulang default list
+        if (contactSearchTimer) clearTimeout(contactSearchTimer);
         loadContacts(true); // Load ulang list normal
         return;
     }
@@ -1492,21 +1541,41 @@ function filterUsers() {
     isSearching = true;
     listContainer.innerHTML = `<div class="flex h-20 items-center justify-center text-xs text-slate-400 animate-pulse">Mencari '${escapeHtml(q)}'...</div>`;
 
-    // Request Search ke Server
-    fetch(`admin_api.php?action=get_contacts&search=${encodeURIComponent(q)}`)
-    .then(r => r.json())
-    .then(res => {
-        if (res.status === 'success') {
-            // Render hasil pencarian langsung (jangan merge ke usersData utama agar tidak kotor)
-            renderUserList(res.data, true); 
-        }
-    });
+    if (contactSearchTimer) clearTimeout(contactSearchTimer);
+    contactSearchTimer = setTimeout(() => {
+        const latestQ = searchInput.value.trim();
+        if (latestQ !== q || latestQ.length === 0) return;
+
+        // Request Search ke Server
+        fetch(`admin_api.php?action=get_contacts&search=${encodeURIComponent(q)}`)
+        .then(r => r.json())
+        .then(res => {
+            if (res.status === 'success' && searchInput.value.trim() === q) {
+                // Render hasil pencarian langsung (jangan merge ke usersData utama agar tidak kotor)
+                renderUserList(res.data, true);
+            }
+        });
+    }, 250);
 }
 
+function clearContactSearch() {
+    const searchInput = document.getElementById('search-user');
+    const clearBtn = document.getElementById('search-user-clear');
+    if (searchInput) searchInput.value = '';
+    if (contactSearchTimer) clearTimeout(contactSearchTimer);
+    if (clearBtn) {
+        clearBtn.classList.add('hidden');
+        clearBtn.classList.remove('flex');
+    }
+    isSearching = false;
+    lastContactSync = '';
+    loadContacts(true);
+}
 
 function renderUserList(data, force = false) {
     const listContainer = document.getElementById('user-list');
     if (!listContainer) return;
+    updateContactPanelStats(usersData);
 
     // Filter Client-Side (kecuali mode search)
     let filteredData = data;
@@ -1518,11 +1587,13 @@ function renderUserList(data, force = false) {
         });
     }
 
+    const globalUnread = usersData.reduce((sum, u) => sum + (parseInt(u.unread) || 0), 0);
+    updateTitleNotification(globalUnread);
+
     if (filteredData.length === 0) {
         let emptyMsg = 'Data tidak ditemukan.';
         if (currentFilter === 'unread') emptyMsg = 'Tidak ada pesan belum dibaca.';
         listContainer.innerHTML = `<div class="flex flex-col items-center justify-center h-40 text-slate-400 text-xs text-center"><p>${escapeHtml(emptyMsg)}</p></div>`;
-        updateTitleNotification(0);
         return;
     }
 
@@ -1533,61 +1604,77 @@ function renderUserList(data, force = false) {
         const currentUnread = parseInt(user.unread) || 0;
         const visitIdStr = String(user.visit_id || '');
         const isActive = (String(activeVisitId) === visitIdStr);
+        const isOnline = isContactOnline(user);
+        const statusMeta = getContactStatusMeta(user);
 
-        const bgClass = isActive ? 'user-item-active bg-blue-50 border-l-4 border-blue-600' : 'hover:bg-slate-50 border-l-4 border-transparent';
-        const avatarColor = isActive ? 'from-blue-600 to-blue-700 text-white' : 'from-blue-100 to-blue-200 text-blue-600';
+        const bgClass = isActive ? 'user-item-active bg-blue-50 border-l-4 border-blue-600' : 'hover:bg-slate-50 dark:hover:bg-white/5 border-l-4 border-transparent';
+        const avatarColor = isActive ? 'from-blue-600 to-blue-700 text-white' : 'from-slate-100 to-slate-200 text-slate-700 dark:from-[#233138] dark:to-[#2a3942] dark:text-slate-200';
 
         let badge = '';
         if (currentUnread > 0) {
-            badge = `<span class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center shadow-md shadow-red-200 animate-pulse">${currentUnread}</span>`;
+            badge = `<span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center shadow-md shadow-red-200 dark:shadow-none">${currentUnread}</span>`;
         }
 
         // Safe strings (anti-XSS)
         const uNameRaw = (user.name || 'Tanpa Nama');
         const uName = escapeHtml(uNameRaw);
+        const initials = escapeHtml(uNameRaw.trim().charAt(0).toUpperCase() || 'U');
         const shortIdRaw = visitIdStr.length > 4 ? visitIdStr.substring(visitIdStr.length - 4) : visitIdStr;
         const shortId = escapeHtml(shortIdRaw);
+        const phone = escapeHtml(user.phone || '');
+        const location = escapeHtml(user.address || user.location || '');
 
         let prevMsgRaw = user.last_msg || '...';
-        if (user.msg_type === 'image') prevMsgRaw = '📷 Gambar';
-        const prevMsg = escapeHtml(String(prevMsgRaw)).substring(0, 30);
+        if (user.msg_type === 'image') prevMsgRaw = 'Gambar';
+        const prevMsg = escapeHtml(String(prevMsgRaw).slice(0, 90));
 
         const listDateRaw = String(user.last_msg_at || user.last_seen || '');
         const displayTime = escapeHtml(formatContactTimestamp(listDateRaw, String(user.display_time || '')));
         const displayTimeTitle = formatContactTimestampTooltip(listDateRaw);
         const displayTimeAttr = displayTimeTitle ? ` title="${escapeHtml(displayTimeTitle)}"` : '';
-        const statusIcon = (user.status === 'Selesai')
-            ? '<span class="text-[9px] text-green-600 font-bold ml-1">✔</span>'
-            : '';
+        const onlineLabel = isOnline ? 'Online' : 'Offline';
+        const onlineClass = isOnline ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-slate-500';
 
         html += `
-            <div class="user-item flex items-center gap-3 p-3 cursor-pointer transition border-b border-slate-50 dark:border-white/5 ${bgClass} relative select-none"
+            <div class="user-item flex items-start gap-3 px-3 py-3 cursor-pointer transition border-b border-slate-100 dark:border-white/5 ${bgClass} relative select-none"
                  data-visit-id="${escapeHtml(visitIdStr)}"
                  id="user-item-${escapeHtml(visitIdStr)}">
-                <div class="relative">
-                    <div class="user-avatar w-10 h-10 rounded-full bg-gradient-to-br ${avatarColor} flex items-center justify-center font-bold shrink-0 text-sm shadow-sm transition-all">
-                        ${uName.charAt(0).toUpperCase()}
+                <div class="relative shrink-0">
+                    <div class="user-avatar w-11 h-11 rounded-full bg-gradient-to-br ${avatarColor} flex items-center justify-center font-extrabold text-sm shadow-sm ring-1 ring-black/5 dark:ring-white/10 transition-all">
+                        ${initials}
                     </div>
+                    <span class="absolute -right-0.5 -bottom-0.5 h-3.5 w-3.5 rounded-full border-2 border-white dark:border-darkpanel ${isOnline ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'}"></span>
                 </div>
                 <div class="flex-1 min-w-0">
-                    <div class="flex justify-between items-center mb-0.5">
-                        <h4 class="text-slate-800 dark:text-white font-bold text-sm truncate flex items-center gap-1">
+                    <div class="flex items-start justify-between gap-2">
+                        <h4 class="min-w-0 text-slate-800 dark:text-white font-bold text-sm leading-5 truncate">
                             ${uName}
-                            <span class="text-[10px] text-slate-400 font-normal">#${shortId}</span>
-                            ${statusIcon}
                         </h4>
-                        <span class="text-[10px] text-slate-400 font-mono"${displayTimeAttr}>${displayTime}</span>
+                        <div class="flex shrink-0 items-center gap-1.5">
+                            ${badge}
+                            <span class="text-[10px] text-slate-400 font-mono whitespace-nowrap"${displayTimeAttr}>${displayTime}</span>
+                        </div>
                     </div>
-                    <div class="flex items-center text-xs text-slate-500 dark:text-slate-400">
-                        <p class="truncate flex-1 opacity-80">${prevMsg}</p>
-                        ${badge}
+                    <div class="mt-1 flex items-center gap-1.5 text-[11px] leading-4">
+                        <span class="inline-flex items-center rounded-md border px-1.5 py-0.5 font-bold ${statusMeta.badgeClass}">
+                            ${escapeHtml(statusMeta.label)}
+                        </span>
+                        <span class="${onlineClass} font-semibold">${onlineLabel}</span>
+                        <span class="text-slate-300 dark:text-slate-600">#${shortId}</span>
+                    </div>
+                    <div class="mt-1.5 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                        <p class="truncate flex-1 ${currentUnread > 0 ? 'font-semibold text-slate-700 dark:text-slate-200' : 'opacity-80'}">${prevMsg}</p>
+                    </div>
+                    <div class="mt-1 flex items-center gap-2 text-[11px] text-slate-400 dark:text-slate-500">
+                        ${phone ? `<span class="truncate">${phone}</span>` : ''}
+                        ${phone && location ? '<span class="shrink-0 text-slate-300 dark:text-slate-600">|</span>' : ''}
+                        ${location ? `<span class="truncate">${location}</span>` : ''}
                     </div>
                 </div>
             </div>`;
     });
 
     // Play Sound jika ada unread global bertambah
-    const globalUnread = data.reduce((sum, u) => sum + (parseInt(u.unread) || 0), 0);
     if (lastGlobalUnread !== -1 && globalUnread > lastGlobalUnread) { playSound(); }
     lastGlobalUnread = globalUnread;
     updateTitleNotification(globalUnread);

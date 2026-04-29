@@ -97,6 +97,7 @@
     data-tenant-token="{{ $token }}"
     data-realtime-driver="{{ $realtime['driver'] ?? 'reverb' }}"
     data-realtime-key="{{ $realtime['key'] ?? '' }}"
+    data-realtime-cluster="{{ $realtime['cluster'] ?? '' }}"
     data-realtime-host="{{ $realtime['host'] ?? 'localhost' }}"
     data-realtime-port="{{ $realtime['port'] ?? 443 }}"
     data-realtime-scheme="{{ $realtime['scheme'] ?? 'https' }}"
