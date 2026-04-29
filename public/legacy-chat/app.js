@@ -52,6 +52,8 @@ let customerOverviewPeriod = 'today';
 let customerOverviewReqSeq = 0;
 let customerOverviewPoll = null;
 let contactSearchTimer = null;
+let pendingChatSeq = 0;
+const pendingChatMessages = {};
 const CUSTOMER_OVERVIEW_POLL_MS = 8000;
 const CHAT_POLL_FALLBACK_MS = 3000;
 const CHAT_POLL_REALTIME_MS = 15000;
@@ -177,6 +179,14 @@ function getContactStatusMeta(user) {
     };
 }
 
+function getContactPriorityMeta(priority) {
+    const value = String(priority || 'normal');
+    if (value === 'urgent') return { label: 'Urgent', cls: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-900/50' };
+    if (value === 'high') return { label: 'Tinggi', cls: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-300 dark:border-orange-900/50' };
+    if (value === 'low') return { label: 'Rendah', cls: 'bg-slate-50 text-slate-600 border-slate-200 dark:bg-white/5 dark:text-slate-400 dark:border-white/10' };
+    return { label: 'Normal', cls: 'bg-slate-50 text-slate-600 border-slate-200 dark:bg-white/5 dark:text-slate-400 dark:border-white/10' };
+}
+
 function isContactOnline(user) {
     const seenDate = parseChatDateTime(user?.last_seen);
     if (!seenDate) return false;
@@ -295,6 +305,7 @@ function __chatBoot() {
     document.body.addEventListener('click', () => { if(audioNotif) { audioNotif.muted = false; } }, { once: true });
     injectSmartModal(); 
     injectEditIndicator(); 
+    injectChatOpsControls();
     ensureListStateForDeepLink();
     setupMobileBackHandler();
     ensureDefaultCustomerSidebarVisibility();
@@ -1606,6 +1617,8 @@ function renderUserList(data, force = false) {
         const isActive = (String(activeVisitId) === visitIdStr);
         const isOnline = isContactOnline(user);
         const statusMeta = getContactStatusMeta(user);
+        const priorityMeta = getContactPriorityMeta(user.priority);
+        const tag = String(user.tag || '').trim();
 
         const bgClass = isActive ? 'user-item-active bg-blue-50 border-l-4 border-blue-600' : 'hover:bg-slate-50 dark:hover:bg-white/5 border-l-4 border-transparent';
         const avatarColor = isActive ? 'from-blue-600 to-blue-700 text-white' : 'from-slate-100 to-slate-200 text-slate-700 dark:from-[#233138] dark:to-[#2a3942] dark:text-slate-200';
@@ -1659,6 +1672,8 @@ function renderUserList(data, force = false) {
                         <span class="inline-flex items-center rounded-md border px-1.5 py-0.5 font-bold ${statusMeta.badgeClass}">
                             ${escapeHtml(statusMeta.label)}
                         </span>
+                        ${tag ? `<span class="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 font-bold text-blue-700 dark:border-blue-900/50 dark:bg-blue-900/20 dark:text-blue-300">${escapeHtml(tag)}</span>` : ''}
+                        ${user.priority && user.priority !== 'normal' ? `<span class="inline-flex items-center rounded-md border px-1.5 py-0.5 font-bold ${priorityMeta.cls}">${priorityMeta.label}</span>` : ''}
                         <span class="${onlineClass} font-semibold">${onlineLabel}</span>
                         <span class="text-slate-300 dark:text-slate-600">#${shortId}</span>
                     </div>
@@ -2012,21 +2027,80 @@ function processMessageUpdates(data) {
     refreshMessageDaySeparators();
 }
 
+function renderPendingMessage(tempId, text, state = 'sending') {
+    const container = document.getElementById('messages');
+    if (!container) return;
+    let wrapper = document.getElementById(tempId);
+    const isFailed = state === 'failed';
+    const label = isFailed ? 'Gagal terkirim' : 'Mengirim...';
+    const retry = isFailed ? `<button onclick="retryPendingMessage('${tempId}')" class="ml-2 text-[10px] font-bold text-red-600 underline">Coba lagi</button>` : '';
+    const html = `<div class="max-w-[85%] md:max-w-[75%] flex items-start"><div class="bg-[#d9fdd3] dark:bg-darkme text-gray-900 dark:text-white rounded-lg rounded-br-none shadow-sm px-3 py-2 text-[13.5px] leading-relaxed relative break-words opacity-80"><span class="msg-text">${linkify(text)}</span><div class="msg-time text-[9px] opacity-60 text-right mt-1 font-mono tracking-wide flex justify-end items-center gap-1 select-none"><span>${label}</span>${retry}</div></div></div>`;
+    if (!wrapper) {
+        wrapper = document.createElement('div');
+        wrapper.id = tempId;
+        wrapper.className = 'flex justify-end mb-2 shrink-0 group animate-in fade-in zoom-in duration-200';
+        container.appendChild(wrapper);
+    }
+    wrapper.innerHTML = html;
+    scrollToBottom();
+}
+
+function retryPendingMessage(tempId) {
+    const item = pendingChatMessages[tempId];
+    if (!item || !activeVisitId) return;
+    renderPendingMessage(tempId, item.text, 'sending');
+    postAdminTextMessage(item.text, tempId);
+}
+
+function postAdminTextMessage(text, tempId = '') {
+    const fd = new FormData();
+    fd.append('action', 'send');
+    fd.append('visit_id', activeVisitId);
+    fd.append('sender', 'admin');
+    fd.append('message', text);
+    return fetch('admin_api.php', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+            if (res.status !== 'success') throw new Error(res.msg || 'Kirim gagal');
+            if (tempId) {
+                delete pendingChatMessages[tempId];
+                document.getElementById(tempId)?.remove();
+            }
+            loadMessages(false);
+            return res;
+        })
+        .catch((err) => {
+            if (tempId) renderPendingMessage(tempId, text, 'failed');
+            else showSmartAlert('Gagal', err.message || 'Kirim pesan gagal.', 'error');
+            throw err;
+        });
+}
+
 function createBubbleHtml(msg) {
     const isMe = (msg.sender === 'admin'); 
     const isImg = (msg.type === 'image'); 
+    const isFile = (msg.type === 'file');
     const bg = isMe ? 'bg-[#d9fdd3] dark:bg-darkme text-gray-900 dark:text-white rounded-br-none shadow-sm' : 'bg-white dark:bg-darkbubble text-gray-900 dark:text-white rounded-bl-none shadow-sm border border-gray-100 dark:border-transparent'; 
     const padClass = isImg ? 'p-1' : 'px-3 py-2'; 
     
     let content = ''; 
     if (isImg) { 
         content = `<div class="cursor-pointer group relative" onclick="openImageViewer('uploads/${msg.message}')"><img src="uploads/${msg.message}" class="block rounded-lg max-w-[250px] max-h-[300px] w-auto h-auto shadow-sm bg-slate-50 dark:bg-black/20 object-contain border border-slate-200 dark:border-white/10" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'p-3 bg-red-50 text-[10px] text-red-500 rounded border border-red-100 italic\\'>Gagal muat gambar</div>';"><div class="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition rounded-lg"></div></div>`; 
+    } else if (isFile) {
+        const safeFile = escapeHtml(msg.file_name || msg.message || 'File');
+        const safeUrl = `uploads/${encodeURIComponent(String(msg.message || ''))}`;
+        content = `<a href="${safeUrl}" target="_blank" class="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white/70 dark:bg-black/20 px-3 py-2 hover:bg-white dark:hover:bg-white/5"><span class="text-lg">📎</span><span class="min-w-0"><span class="block truncate text-xs font-bold">${safeFile}</span><span class="block text-[10px] opacity-60">Buka file</span></span></a>`;
     } else { 
         content = linkify(msg.message); 
     }
     
     let statusIcon = ''; 
-    if(isMe) statusIcon = `<span class="text-blue-500 dark:text-blue-300 font-bold ml-1">✓</span>`; 
+    if(isMe) {
+        const delivery = String(msg.delivery_status || 'sent');
+        const readAt = String(msg.read_at || '');
+        const label = delivery === 'read' || readAt ? 'Dibaca' : 'Terkirim';
+        statusIcon = `<span class="${delivery === 'read' || readAt ? 'text-blue-500 dark:text-blue-300' : 'text-slate-400 dark:text-slate-300'} font-bold ml-1" title="${label}">${delivery === 'read' || readAt ? '✓✓' : '✓'}</span>`;
+    }
     const editedLabel = (msg.is_edited == 1) ? `<span class="text-[9px] italic opacity-60 mx-1">(diedit)</span>` : '';
     
     let menuBtn = ''; 
@@ -2060,10 +2134,11 @@ function sendImageAdmin() {
         return;
     }
 
-    // ANIMASI LOADING UPLOAD
+    const isImage = file.type && file.type.startsWith('image/');
+    const uploadLabel = isImage ? 'Mengupload gambar...' : 'Mengupload file...';
     const container = document.getElementById('messages');
     const tempId = 'loading-' + Date.now();
-    const loaderHtml = `<div id="${tempId}" class="flex justify-end mb-2 shrink-0 animate-pulse"><div class="bg-blue-50 dark:bg-white/10 px-4 py-3 rounded-lg rounded-br-none border border-blue-100 dark:border-white/5 flex items-center gap-2 shadow-sm"><svg class="animate-spin h-4 w-4 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span class="text-xs font-bold text-blue-700 dark:text-blue-300">Mengupload gambar...</span></div></div>`;
+    const loaderHtml = `<div id="${tempId}" class="flex justify-end mb-2 shrink-0 animate-pulse"><div class="bg-blue-50 dark:bg-white/10 px-4 py-3 rounded-lg rounded-br-none border border-blue-100 dark:border-white/5 flex items-center gap-2 shadow-sm"><svg class="animate-spin h-4 w-4 text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span class="text-xs font-bold text-blue-700 dark:text-blue-300">${uploadLabel}</span></div></div>`;
     container.insertAdjacentHTML('beforeend', loaderHtml);
     scrollToBottom();
 
@@ -2121,14 +2196,10 @@ function sendMessage() {
         input.value = '';
         input.style.height = 'auto';
         input.focus();
-        const fd = new FormData();
-        fd.append('action', 'send');
-        fd.append('visit_id', activeVisitId);
-        fd.append('sender', 'admin');
-        fd.append('message', text);
-        fetch('admin_api.php', { method: 'POST', body: fd })
-            .then(r => r.json())
-            .then(res => { loadMessages(false); });
+        const tempId = `pending-msg-${++pendingChatSeq}`;
+        pendingChatMessages[tempId] = { text, visitId: activeVisitId };
+        renderPendingMessage(tempId, text, 'sending');
+        postAdminTextMessage(text, tempId).catch(() => {});
     }
 }
 
@@ -2137,7 +2208,84 @@ function sendMessage() {
 
 function injectEditIndicator() { const footer = document.getElementById('footer-active'); if(footer) { const div = document.createElement('div'); div.id = 'edit-indicator'; div.className = 'hidden w-full bg-blue-50 dark:bg-white/10 border-t border-x border-blue-200 dark:border-white/10 rounded-t-xl px-4 py-2 flex justify-between items-center text-xs text-blue-700 dark:text-blue-300 absolute bottom-full left-0 mb-[-5px] z-0 shadow-sm'; div.innerHTML = `<div class="flex items-center gap-2"><span class="font-bold">✏️ Edit Mode</span></div><button onclick="cancelEditMode()" class="text-slate-400 hover:text-red-500 font-bold px-2 uppercase text-[10px]">Batal (ESC)</button>`; footer.parentElement.style.position = 'relative'; footer.parentElement.insertBefore(div, footer.parentElement.firstChild); } }
 
+function injectChatOpsControls() {
+    const headerActions = document.querySelector('#chat-interface .absolute.top-0 .flex.items-center.gap-1');
+    if (headerActions && !document.getElementById('btn-message-search')) {
+        const btn = document.createElement('button');
+        btn.id = 'btn-message-search';
+        btn.type = 'button';
+        btn.className = 'p-2 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition';
+        btn.title = 'Cari pesan';
+        btn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35m1.1-5.15a6.25 6.25 0 11-12.5 0 6.25 6.25 0 0112.5 0z"/></svg>';
+        btn.onclick = openMessageSearch;
+        headerActions.insertBefore(btn, headerActions.firstChild);
+    }
+
+    if (!document.getElementById('modal-message-search')) {
+        const modal = document.createElement('div');
+        modal.id = 'modal-message-search';
+        modal.className = 'hidden fixed inset-0 z-[80] flex items-center justify-center p-4';
+        modal.innerHTML = `<div class="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onclick="closeMessageSearch()"></div><div class="relative z-10 w-full max-w-lg rounded-2xl bg-white dark:bg-[#233138] border border-slate-200 dark:border-white/10 shadow-2xl overflow-hidden"><div class="p-4 border-b border-slate-100 dark:border-white/10 flex items-center justify-between"><h3 class="font-bold text-slate-800 dark:text-white">Cari Pesan</h3><button onclick="closeMessageSearch()" class="text-slate-400 hover:text-slate-600">x</button></div><div class="p-4"><input id="message-search-input" type="text" class="w-full rounded-lg border border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-white/5 px-3 py-2 text-sm text-slate-800 dark:text-white outline-none focus:border-blue-500" placeholder="Ketik kata kunci..."><div id="message-search-results" class="mt-3 max-h-80 overflow-y-auto custom-scrollbar divide-y divide-slate-100 dark:divide-white/10 text-sm"><div class="py-6 text-center text-xs text-slate-400">Masukkan kata kunci.</div></div></div></div>`;
+        document.body.appendChild(modal);
+        const input = modal.querySelector('#message-search-input');
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') runMessageSearch(); });
+        input.addEventListener('input', () => {
+            clearTimeout(window.__messageSearchTimer);
+            window.__messageSearchTimer = setTimeout(runMessageSearch, 300);
+        });
+    }
+}
+
 function openAdminProfile() { fetch('admin_api.php?action=get_admin_profile').then(r => r.json()).then(res => { if (res.status === 'success') { const d = res.data; document.getElementById('adm-name').value = d.name || ''; document.getElementById('adm-username').value = d.username || ''; document.getElementById('adm-password').value = ''; const s = document.getElementById('sidebar-menu'); if (s) s.classList.add('hidden'); document.getElementById('modal-admin-profile').classList.remove('hidden'); } else { showSmartAlert("Gagal", res.msg || "Gagal.", "error"); } }); }
+
+function openMessageSearch() {
+    if (!activeVisitId) return showSmartAlert('Pilih Chat', 'Pilih percakapan dulu.', 'warning');
+    const modal = document.getElementById('modal-message-search');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    const input = document.getElementById('message-search-input');
+    const results = document.getElementById('message-search-results');
+    if (results) results.innerHTML = '<div class="py-6 text-center text-xs text-slate-400">Masukkan kata kunci.</div>';
+    setTimeout(() => input?.focus(), 50);
+}
+
+function closeMessageSearch() {
+    document.getElementById('modal-message-search')?.classList.add('hidden');
+}
+
+function runMessageSearch() {
+    const input = document.getElementById('message-search-input');
+    const results = document.getElementById('message-search-results');
+    if (!input || !results || !activeVisitId) return;
+    const q = input.value.trim();
+    if (q.length < 2) {
+        results.innerHTML = '<div class="py-6 text-center text-xs text-slate-400">Minimal 2 karakter.</div>';
+        return;
+    }
+    results.innerHTML = '<div class="py-6 text-center text-xs text-slate-400 animate-pulse">Mencari...</div>';
+    fetch(`admin_api.php?action=search_messages&visit_id=${encodeURIComponent(activeVisitId)}&q=${encodeURIComponent(q)}`)
+        .then(r => r.json())
+        .then(res => {
+            const rows = Array.isArray(res.data) ? res.data : [];
+            if (rows.length === 0) {
+                results.innerHTML = '<div class="py-6 text-center text-xs text-slate-400">Tidak ada hasil.</div>';
+                return;
+            }
+            results.innerHTML = rows.map(row => `<button type="button" onclick="jumpToMessage('${escapeHtml(row.id)}')" class="block w-full text-left px-2 py-2 hover:bg-slate-50 dark:hover:bg-white/5"><div class="flex items-center justify-between gap-2"><span class="text-xs font-bold text-slate-500 dark:text-slate-400">${escapeHtml(row.sender)} · ${escapeHtml(row.time || '')}</span><span class="text-[10px] text-blue-600 dark:text-blue-400">Lihat</span></div><div class="mt-1 line-clamp-2 text-slate-700 dark:text-slate-200">${escapeHtml(row.message || '')}</div></button>`).join('');
+        })
+        .catch(() => {
+            results.innerHTML = '<div class="py-6 text-center text-xs text-red-500">Gagal mencari pesan.</div>';
+        });
+}
+
+function jumpToMessage(id) {
+    closeMessageSearch();
+    const el = document.getElementById(`msg-wrapper-${id}`);
+    if (!el) return showSmartAlert('Belum termuat', 'Pesan ada di riwayat lama. Scroll ke atas untuk memuat riwayat.', 'info');
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('ring-2', 'ring-blue-400', 'rounded-lg');
+    setTimeout(() => el.classList.remove('ring-2', 'ring-blue-400', 'rounded-lg'), 1800);
+}
 
 function saveAdminProfile() { const name = document.getElementById('adm-name').value.trim(); const username = document.getElementById('adm-username').value.trim(); const password = document.getElementById('adm-password').value; if (!name || !username) { showSmartAlert("Gagal", "Lengkapi data.", "warning"); return; } const fd = new FormData(); fd.append('action', 'update_admin_profile'); fd.append('name', name); fd.append('username', username); if (password) fd.append('password', password); fetch('admin_api.php', { method: 'POST', body: fd }).then(r => r.json()).then(res => { if (res.status === 'success') { document.getElementById('modal-admin-profile').classList.add('hidden'); showSmartAlert("Berhasil", "Profil disimpan.", "success").then(() => location.reload()); } else { showSmartAlert("Gagal", res.msg || "Error.", "error"); } }); }
 
@@ -2193,7 +2341,16 @@ function showDetail() { toggleUserSidebar(); toggleMenu(); }
 
 function closeDetail() { document.getElementById('modal-detail').classList.add('hidden'); }
 
-function openEditUser() { if (!activeVisitId) return; const user = usersData.find(u => u.visit_id == activeVisitId); if (!user) return; document.getElementById('edit-visit-id').value = user.visit_id; document.getElementById('edit-name').value = user.name || ''; document.getElementById('edit-phone').value = user.phone || ''; document.getElementById('edit-addr').value = user.address || ''; document.getElementById('modal-edit-user').classList.remove('hidden'); toggleMenu(); }
+function ensureEditUserOpsFields() {
+    const addr = document.getElementById('edit-addr');
+    if (!addr || document.getElementById('edit-tag')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'grid grid-cols-1 gap-4';
+    wrap.innerHTML = `<div class="grid grid-cols-2 gap-3"><div><label class="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold mb-1 block">Tag</label><select id="edit-tag" class="w-full bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-lg px-3 py-2.5 text-slate-800 dark:text-white outline-none focus:border-blue-500"><option value="">Tanpa Tag</option><option value="Pembayaran">Pembayaran</option><option value="Gangguan">Gangguan</option><option value="Pasang Baru">Pasang Baru</option><option value="Komplain">Komplain</option></select></div><div><label class="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold mb-1 block">Prioritas</label><select id="edit-priority" class="w-full bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-lg px-3 py-2.5 text-slate-800 dark:text-white outline-none focus:border-blue-500"><option value="normal">Normal</option><option value="high">Tinggi</option><option value="urgent">Urgent</option><option value="low">Rendah</option></select></div></div><div><label class="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold mb-1 block">ID Admin Penanggung Jawab</label><input type="number" min="0" id="edit-assigned" placeholder="Kosongkan jika belum diambil" class="w-full bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-lg px-3 py-2.5 text-slate-800 dark:text-white outline-none focus:border-blue-500"></div>`;
+    addr.closest('div')?.after(wrap);
+}
+
+function openEditUser() { if (!activeVisitId) return; const user = usersData.find(u => u.visit_id == activeVisitId); if (!user) return; ensureEditUserOpsFields(); document.getElementById('edit-visit-id').value = user.visit_id; document.getElementById('edit-name').value = user.name || ''; document.getElementById('edit-phone').value = user.phone || ''; document.getElementById('edit-addr').value = user.address || ''; const tag = document.getElementById('edit-tag'); if(tag) tag.value = user.tag || ''; const pr = document.getElementById('edit-priority'); if(pr) pr.value = user.priority || 'normal'; const assigned = document.getElementById('edit-assigned'); if(assigned) assigned.value = user.assigned_user_id || ''; document.getElementById('modal-edit-user').classList.remove('hidden'); toggleMenu(); }
 
 window.chatTemplates = []; 
 function loadTemplates() { fetch('admin_api.php?action=get_templates').then(r => r.json()).then(data => { if(Array.isArray(data)) { window.chatTemplates = data; renderTemplateManager(); } }).catch(e => console.error("Gagal muat template:", e)); }
@@ -2214,7 +2371,7 @@ function saveTemplate() { const l = document.getElementById('tpl-label').value.t
 
 function deleteTemplate(id) { showSmartConfirm('Hapus Template', 'Hapus permanen?', 'warning').then(ok=>{ if(ok){ const fd = new FormData(); fd.append('action', 'delete_template'); fd.append('id', id); fetch('admin_api.php', { method: 'POST', body: fd }).then(r => r.json()).then(res => { if(res.status === 'success') { loadTemplates(); } else { showSmartAlert("Gagal", "Error.", "error"); } }); } }); }
 
-function saveEditUser() { const id = document.getElementById('edit-visit-id').value; const name = document.getElementById('edit-name').value.trim(); const phone = document.getElementById('edit-phone').value.trim(); const addr = document.getElementById('edit-addr').value.trim(); if (!id || !name) { showSmartAlert("Validasi", "Nama wajib diisi.", "warning"); return; } document.getElementById('modal-edit-user').classList.add('hidden'); const fd = new FormData(); fd.append('action', 'update_customer'); fd.append('visit_id', id); fd.append('name', name); fd.append('phone', phone); fd.append('address', addr); fetch('admin_api.php', { method: 'POST', body: fd }).then(r => r.json()).then(res => { if (res.status === 'success') { const userIndex = usersData.findIndex(u => u.visit_id == id); if (userIndex !== -1) { usersData[userIndex].name = name; usersData[userIndex].phone = phone; usersData[userIndex].address = addr; } openChat(id); showSmartAlert("Berhasil", "Data disimpan.", "success"); } else { showSmartAlert("Gagal", 'Error.', "error"); } }); }
+function saveEditUser() { const id = document.getElementById('edit-visit-id').value; const name = document.getElementById('edit-name').value.trim(); const phone = document.getElementById('edit-phone').value.trim(); const addr = document.getElementById('edit-addr').value.trim(); const tag = document.getElementById('edit-tag')?.value || ''; const priority = document.getElementById('edit-priority')?.value || 'normal'; const assigned = document.getElementById('edit-assigned')?.value || ''; if (!id || !name) { showSmartAlert("Validasi", "Nama wajib diisi.", "warning"); return; } document.getElementById('modal-edit-user').classList.add('hidden'); const fd = new FormData(); fd.append('action', 'update_customer'); fd.append('visit_id', id); fd.append('name', name); fd.append('phone', phone); fd.append('address', addr); fd.append('tag', tag); fd.append('priority', priority); fd.append('assigned_user_id', assigned); fetch('admin_api.php', { method: 'POST', body: fd }).then(r => r.json()).then(res => { if (res.status === 'success') { const userIndex = usersData.findIndex(u => u.visit_id == id); if (userIndex !== -1) { usersData[userIndex].name = name; usersData[userIndex].phone = phone; usersData[userIndex].address = addr; usersData[userIndex].tag = tag; usersData[userIndex].priority = priority; usersData[userIndex].assigned_user_id = assigned ? parseInt(assigned, 10) : null; } openChat(id); showSmartAlert("Berhasil", "Data disimpan.", "success"); } else { showSmartAlert("Gagal", 'Error.', "error"); } }); }
 
 function openEndModal() { if (!activeVisitId) return; toggleMenu(); showSmartConfirm("Selesaikan Sesi?", "Sesi akan ditutup.", "success", "Ya, Selesaikan").then((isConfirmed) => { if (isConfirmed) confirmEndSession(); }); }
 

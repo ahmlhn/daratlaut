@@ -30,6 +30,16 @@ class DirectApiController extends Controller
     {
     }
 
+    private function isImageExtension(string $ext): bool
+    {
+        return in_array(strtolower($ext), ['jpg', 'jpeg', 'png', 'webp'], true);
+    }
+
+    private function allowedAttachmentExtensions(): array
+    {
+        return ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'];
+    }
+
     public function reverbAuth(Request $request): JsonResponse
     {
         if ($request->isMethod('options')) {
@@ -363,6 +373,9 @@ class DirectApiController extends Controller
         $select = ['id', 'sender', 'message', 'type', 'is_edited', 'created_at'];
         if ($hasUpdatedAt) $select[] = 'updated_at';
         if ($hasMsgStatus) $select[] = 'msg_status';
+        foreach (['delivery_status', 'read_at', 'file_name', 'file_mime', 'file_size'] as $optionalColumn) {
+            if ($this->hasColumn('noci_chat', $optionalColumn)) $select[] = $optionalColumn;
+        }
         $rows = $q->get($select);
 
         $uploadDir = public_path('uploads/chat');
@@ -394,8 +407,32 @@ class DirectApiController extends Controller
                 'type' => $type,
                 'is_edited' => (int) ($r->is_edited ?? 0),
                 'status' => $hasMsgStatus ? ((string) ($r->msg_status ?? 'active')) : 'active',
+                'delivery_status' => (string) ($r->delivery_status ?? 'sent'),
+                'read_at' => (string) ($r->read_at ?? ''),
+                'file_name' => (string) ($r->file_name ?? ''),
+                'file_mime' => (string) ($r->file_mime ?? ''),
+                'file_size' => isset($r->file_size) ? (int) $r->file_size : null,
                 'time' => !empty($r->created_at) ? date('H:i', strtotime((string) $r->created_at)) : '',
             ];
+        }
+
+        try {
+            $readUpdate = ['is_read' => 1];
+            if ($this->hasColumn('noci_chat', 'delivery_status')) $readUpdate['delivery_status'] = 'read';
+            if ($this->hasColumn('noci_chat', 'read_at')) $readUpdate['read_at'] = DB::raw('NOW()');
+            if ($hasUpdatedAt) $readUpdate['updated_at'] = DB::raw('NOW()');
+            DB::table('noci_chat')
+                ->where('visit_id', $visitId)
+                ->when($this->hasColumn('noci_chat', 'tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))
+                ->where('sender', 'admin')
+                ->where(function ($q) {
+                    $q->where('is_read', 0)->orWhereNull('is_read');
+                    if ($this->hasColumn('noci_chat', 'delivery_status')) {
+                        $q->orWhere('delivery_status', '!=', 'read');
+                    }
+                })
+                ->update($readUpdate);
+        } catch (\Throwable) {
         }
 
         if ($serverTime === '' && $lastSync !== '') {
@@ -452,9 +489,8 @@ class DirectApiController extends Controller
         if ($request->hasFile('image') && $request->file('image')?->isValid()) {
             $file = $request->file('image');
             $ext = strtolower((string) $file->getClientOriginalExtension());
-            $allowed = ['jpg', 'jpeg', 'png', 'webp'];
-            if (!in_array($ext, $allowed, true)) {
-                return $this->json(['status' => 'error', 'msg' => 'Format gambar tidak valid'], $request, 422);
+            if (!in_array($ext, $this->allowedAttachmentExtensions(), true)) {
+                return $this->json(['status' => 'error', 'msg' => 'Format file tidak valid'], $request, 422);
             }
             if ($file->getSize() > 5_000_000) {
                 return $this->json(['status' => 'error', 'msg' => 'Ukuran gambar maksimal 5MB'], $request, 422);
@@ -464,11 +500,14 @@ class DirectApiController extends Controller
             if (!is_dir($dir)) @mkdir($dir, 0755, true);
 
             $newName = time() . '_' . random_int(1000, 9999) . '.' . $ext;
+            $originalName = $file->getClientOriginalName();
+            $mime = (string) ($file->getMimeType() ?: '');
+            $size = (int) $file->getSize();
             $file->move($dir, $newName);
 
             $message = $newName;
-            $type = 'image';
-            $displayMsg = '[Foto]';
+            $type = $this->isImageExtension($ext) ? 'image' : 'file';
+            $displayMsg = $type === 'image' ? '[Foto]' : '[File] ' . $originalName;
         } else {
             $raw = trim((string) ($request->input('message') ?? ''));
             $message = $raw;
@@ -503,6 +542,12 @@ class DirectApiController extends Controller
         if ($this->hasColumn('noci_chat', 'tenant_id')) $ins['tenant_id'] = $tenantId;
         if ($this->hasColumn('noci_chat', 'updated_at')) $ins['updated_at'] = DB::raw('NOW()');
         if ($this->hasColumn('noci_chat', 'msg_status')) $ins['msg_status'] = 'active';
+        if ($this->hasColumn('noci_chat', 'delivery_status')) $ins['delivery_status'] = 'sent';
+        if ($type !== 'text') {
+            if ($this->hasColumn('noci_chat', 'file_name')) $ins['file_name'] = $originalName ?? $message;
+            if ($this->hasColumn('noci_chat', 'file_mime')) $ins['file_mime'] = $mime ?? '';
+            if ($this->hasColumn('noci_chat', 'file_size')) $ins['file_size'] = $size ?? null;
+        }
 
         $messageId = (int) DB::table('noci_chat')->insertGetId($ins);
 

@@ -150,8 +150,8 @@
                 <div class="chat-body" id="chat-messages"></div>
                 <div class="chat-input-area">
                     <div class="input-wrapper">
-                        <input type="file" id="img-input" accept="image/*" style="display: none;" onchange="sendImageClient()">
-                        <button onclick="document.getElementById('img-input').click()" class="btn-attach-inner" title="Kirim Gambar">
+                        <input type="file" id="img-input" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" style="display: none;" onchange="sendImageClient()">
+                        <button onclick="document.getElementById('img-input').click()" class="btn-attach-inner" title="Kirim File">
                             <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
                         </button>
                         <textarea id="chat-input" class="msg-input" rows="1" placeholder="Ketik pesan..." onkeydown="handleEnter(event)" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>

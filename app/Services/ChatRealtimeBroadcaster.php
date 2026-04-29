@@ -81,6 +81,11 @@ class ChatRealtimeBroadcaster
             if ($hasMsgStatus) {
                 $select[] = 'msg_status';
             }
+            foreach (['delivery_status', 'read_at', 'file_name', 'file_mime', 'file_size'] as $optionalColumn) {
+                if ($this->hasColumn('noci_chat', $optionalColumn)) {
+                    $select[] = $optionalColumn;
+                }
+            }
 
             $row = DB::table('noci_chat')
                 ->when($hasTenant, fn ($q) => $q->where('tenant_id', $tenantId))
@@ -101,9 +106,14 @@ class ChatRealtimeBroadcaster
                 'type' => $type,
                 'is_edited' => (int) ($row->is_edited ?? 0),
                 'status' => $hasMsgStatus ? ((string) ($row->msg_status ?? 'active')) : 'active',
+                'delivery_status' => (string) ($row->delivery_status ?? 'sent'),
+                'read_at' => (string) ($row->read_at ?? ''),
+                'file_name' => (string) ($row->file_name ?? ''),
+                'file_mime' => (string) ($row->file_mime ?? ''),
+                'file_size' => isset($row->file_size) ? (int) $row->file_size : null,
                 'created_at' => (string) ($row->created_at ?? ''),
                 'time' => !empty($row->created_at) ? date('H:i', strtotime((string) $row->created_at)) : '',
-                'media_url' => $type === 'image' ? url('/api/v1/chat/media/' . ((int) $row->id)) : null,
+                'media_url' => in_array($type, ['image', 'file'], true) ? url('/api/v1/chat/media/' . ((int) $row->id)) : null,
             ];
         } catch (\Throwable $e) {
             Log::warning('Failed building chat realtime message payload', [

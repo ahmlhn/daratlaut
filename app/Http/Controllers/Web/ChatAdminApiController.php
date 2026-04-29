@@ -460,6 +460,7 @@ class ChatAdminApiController extends Controller
             if ($vid === '') return response()->json([]);
             return $api->messages($request);
         }
+        if ($action === 'search_messages') return $api->searchMessages($request);
         if ($action === 'send') return $api->send($request);
         if ($action === 'delete_message') {
             $id = (int) $request->input('id', 0);

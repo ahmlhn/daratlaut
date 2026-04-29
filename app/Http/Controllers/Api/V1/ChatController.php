@@ -191,6 +191,16 @@ class ChatController extends Controller
         return public_path('uploads/chat');
     }
 
+    private function isImageExtension(string $ext): bool
+    {
+        return in_array(strtolower($ext), ['jpg', 'jpeg', 'png', 'webp', 'gif'], true);
+    }
+
+    private function allowedAttachmentExtensions(): array
+    {
+        return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'];
+    }
+
     private function normalizePhone(string $raw): string
     {
         $p = preg_replace('/\D/', '', $raw);
@@ -357,6 +367,11 @@ class ChatController extends Controller
             'c.last_seen',
             DB::raw('NOW() as _server_time'),
         ];
+        foreach (['assigned_user_id', 'chat_tag', 'chat_priority'] as $optionalCustomerColumn) {
+            if ($this->hasCustomerColumn($optionalCustomerColumn)) {
+                $selectCols[] = 'c.' . $optionalCustomerColumn;
+            }
+        }
 
         $rows = $base->get($selectCols);
         $serverTime = (string) (($rows->first()->_server_time ?? '') ?: '');
@@ -412,6 +427,9 @@ class ChatController extends Controller
                 'ip_address' => (string) ($r->ip_address ?? ''),
                 'location_info' => (string) ($r->location_info ?? ''),
                 'last_seen' => (string) ($r->last_seen ?? ''),
+                'assigned_user_id' => isset($r->assigned_user_id) ? (int) $r->assigned_user_id : null,
+                'tag' => (string) ($r->chat_tag ?? ''),
+                'priority' => (string) ($r->chat_priority ?? ''),
                 'unread' => (int) ($unread[$vid] ?? 0),
                 'last_msg' => $lm ? (string) ($lm->message ?? '') : '',
                 'msg_type' => $lm ? (string) ($lm->type ?? 'text') : 'text',
@@ -463,6 +481,9 @@ class ChatController extends Controller
         $select = ['id', 'sender', 'message', 'type', 'is_edited', 'created_at'];
         if ($hasMsgStatus) $select[] = 'msg_status';
         if ($hasUpdatedAt) $select[] = 'updated_at';
+        foreach (['delivery_status', 'read_at', 'file_name', 'file_mime', 'file_size'] as $optionalChatColumn) {
+            if ($this->hasChatColumn($optionalChatColumn)) $select[] = $optionalChatColumn;
+        }
         $rows = collect();
         $hasMore = false;
         $oldestId = null;
@@ -619,9 +640,14 @@ class ChatController extends Controller
                 'type' => (string) ($r->type ?? 'text'),
                 'is_edited' => (int) ($r->is_edited ?? 0),
                 'status' => $hasMsgStatus ? ((string) ($r->msg_status ?? 'active')) : 'active',
+                'delivery_status' => (string) ($r->delivery_status ?? 'sent'),
+                'read_at' => (string) ($r->read_at ?? ''),
+                'file_name' => (string) ($r->file_name ?? ''),
+                'file_mime' => (string) ($r->file_mime ?? ''),
+                'file_size' => isset($r->file_size) ? (int) $r->file_size : null,
                 'created_at' => (string) ($r->created_at ?? ''),
                 'time' => !empty($r->created_at) ? date('H:i', strtotime((string) $r->created_at)) : '',
-                'media_url' => ((string) ($r->type ?? 'text') === 'image') ? url("/api/v1/chat/media/" . ((int) $r->id)) : null,
+                'media_url' => in_array((string) ($r->type ?? 'text'), ['image', 'file'], true) ? url("/api/v1/chat/media/" . ((int) $r->id)) : null,
             ];
         }
 
@@ -634,9 +660,43 @@ class ChatController extends Controller
         ]);
     }
 
+    public function searchMessages(Request $request): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+        if ($tenantId <= 0) return response()->json(['status' => 'error', 'msg' => 'Tenant context missing'], 403);
+
+        $visitId = trim((string) $request->query('visit_id', ''));
+        $q = trim((string) $request->query('q', ''));
+        if ($visitId === '' || $q === '') {
+            return response()->json(['status' => 'success', 'data' => []]);
+        }
+
+        $rows = DB::table('noci_chat')
+            ->when($this->hasChatColumn('tenant_id'), fn ($qb) => $qb->where('tenant_id', $tenantId))
+            ->where('visit_id', $visitId)
+            ->where('type', 'text')
+            ->when($this->hasChatColumn('msg_status'), fn ($qb) => $qb->where(function ($qq) {
+                $qq->where('msg_status', 'active')->orWhereNull('msg_status');
+            }))
+            ->where('message', 'like', '%' . $q . '%')
+            ->orderByDesc('id')
+            ->limit(30)
+            ->get(['id', 'sender', 'message', 'created_at']);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $rows->map(fn ($r) => [
+                'id' => (int) $r->id,
+                'sender' => (string) ($r->sender ?? ''),
+                'message' => (string) ($r->message ?? ''),
+                'time' => !empty($r->created_at) ? date('d/m H:i', strtotime((string) $r->created_at)) : '',
+            ])->all(),
+        ]);
+    }
+
     /**
      * GET /api/v1/chat/media/{id}
-     * Serve image message securely (tenant-scoped).
+     * Serve attachment securely (tenant-scoped).
      */
     public function media(Request $request, int $id): BinaryFileResponse|JsonResponse
     {
@@ -650,7 +710,7 @@ class ChatController extends Controller
             ->where('id', $id)
             ->first(['id', 'type', 'message']);
 
-        if (!$row || (string) ($row->type ?? '') !== 'image') {
+        if (!$row || !in_array((string) ($row->type ?? ''), ['image', 'file'], true)) {
             return response()->json(['status' => 'error', 'msg' => 'Not found'], 404);
         }
 
@@ -702,9 +762,8 @@ class ChatController extends Controller
                 return response()->json(['status' => 'error', 'msg' => 'Upload gagal'], 422);
             }
             $ext = strtolower((string) $file->getClientOriginalExtension());
-            $allowedExt = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
-            if (!in_array($ext, $allowedExt, true)) {
-                return response()->json(['status' => 'error', 'msg' => 'Format gambar tidak valid'], 422);
+            if (!in_array($ext, $this->allowedAttachmentExtensions(), true)) {
+                return response()->json(['status' => 'error', 'msg' => 'Format file tidak valid'], 422);
             }
 
             $dir = $this->chatUploadDir();
@@ -713,9 +772,12 @@ class ChatController extends Controller
             }
 
             $newName = time() . '_' . random_int(1000, 9999) . '.' . $ext;
+            $originalName = $file->getClientOriginalName();
+            $mime = (string) ($file->getMimeType() ?: '');
+            $size = (int) $file->getSize();
             $file->move($dir, $newName);
 
-            $type = 'image';
+            $type = $this->isImageExtension($ext) ? 'image' : 'file';
             $msg = $newName;
         } else {
             if ($msg === '') {
@@ -740,6 +802,12 @@ class ChatController extends Controller
         if ($hasTenant) $insert['tenant_id'] = $tenantId;
         if ($hasUpdatedAt) $insert['updated_at'] = $now;
         if ($hasMsgStatus) $insert['msg_status'] = 'active';
+        if ($this->hasChatColumn('delivery_status')) $insert['delivery_status'] = 'sent';
+        if ($type !== 'text') {
+            if ($this->hasChatColumn('file_name')) $insert['file_name'] = $originalName ?? $msg;
+            if ($this->hasChatColumn('file_mime')) $insert['file_mime'] = $mime ?? '';
+            if ($this->hasChatColumn('file_size')) $insert['file_size'] = $size ?? null;
+        }
 
         $id = DB::table('noci_chat')->insertGetId($insert);
         $this->bumpConversationCacheVersion($tenantId, $visitId);
@@ -863,6 +931,9 @@ class ChatController extends Controller
             'name' => 'required|string|max:100',
             'phone' => 'nullable|string|max:50',
             'address' => 'nullable|string|max:255',
+            'assigned_user_id' => 'nullable|integer|min:0',
+            'tag' => 'nullable|string|max:40',
+            'priority' => 'nullable|string|max:20',
         ]);
 
         $upd = [
@@ -870,6 +941,17 @@ class ChatController extends Controller
             'customer_phone' => $this->normalizePhone((string) ($validated['phone'] ?? '')),
             'customer_address' => (string) ($validated['address'] ?? ''),
         ];
+        if ($this->hasCustomerColumn('assigned_user_id')) {
+            $assigned = (int) ($validated['assigned_user_id'] ?? 0);
+            $upd['assigned_user_id'] = $assigned > 0 ? $assigned : null;
+        }
+        if ($this->hasCustomerColumn('chat_tag')) {
+            $upd['chat_tag'] = trim((string) ($validated['tag'] ?? ''));
+        }
+        if ($this->hasCustomerColumn('chat_priority')) {
+            $priority = trim((string) ($validated['priority'] ?? ''));
+            $upd['chat_priority'] = in_array($priority, ['low', 'normal', 'high', 'urgent'], true) ? $priority : 'normal';
+        }
 
         DB::table('noci_customers')
             ->when($this->hasCustomerColumn('tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))

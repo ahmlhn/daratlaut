@@ -525,7 +525,7 @@ async function sendImageClient() {
     const fileInput = document.getElementById('img-input'); 
     if (fileInput.files.length === 0) return;
     const file = fileInput.files[0];
-    appendBubble('Mengirim gambar...', 'user', '...', 'text'); 
+    appendBubble(file.type && file.type.startsWith('image/') ? 'Mengirim gambar...' : 'Mengirim file...', 'user', '...', 'text');
     scrollToBottom();
 
     markChatStarted();
@@ -541,11 +541,13 @@ async function sendImageClient() {
 async function doSendImage(originalFile) {
     let fileToSend = originalFile;
     let fileName = originalFile.name;
-    try { 
-        const compressedBlob = await compressImage(originalFile); 
-        fileToSend = compressedBlob; 
-        fileName = 'image.jpg'; 
-    } catch (err) { }
+    if (originalFile.type && originalFile.type.startsWith('image/')) {
+        try {
+            const compressedBlob = await compressImage(originalFile);
+            fileToSend = compressedBlob;
+            fileName = 'image.jpg';
+        } catch (err) { }
+    }
     
     const fd = new FormData(); 
     fd.append('action', 'send'); 
@@ -756,6 +758,22 @@ function appendBubble(content, sender, time, type = 'text', isEdited = 0) {
         wrapper.addEventListener('click', () => openImageViewer(imgSrc));
         wrapper.appendChild(img);
         div.appendChild(wrapper);
+    } else if (type === 'file') {
+        const raw = String(content ?? '').trim().replace(/(\.\.[\/\\])/g, '');
+        const fileUrl = UPLOAD_URL + encodeURIComponent(raw);
+        const name = escapeHtml(raw);
+        div.innerHTML = `
+            <a href="${fileUrl}" target="_blank" style="display:flex; align-items:center; gap:8px; color:inherit; text-decoration:none; background:rgba(255,255,255,0.18); border:1px solid rgba(148,163,184,0.35); border-radius:10px; padding:8px 10px;">
+                <span style="font-size:18px;">📎</span>
+                <span style="min-width:0;">
+                    <span style="display:block; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:190px;">${name}</span>
+                    <span style="display:block; font-size:10px; opacity:0.75;">Buka file</span>
+                </span>
+            </a>
+            <div style="display:flex; justify-content:flex-end; align-items:center; gap:6px; margin-top:4px; opacity:0.8;">
+                <span class="msg-time" style="margin:0;">${editedHtml} ${safeTime}</span>
+            </div>
+        `;
     } else {
         const copyIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="copy-svg"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
 
