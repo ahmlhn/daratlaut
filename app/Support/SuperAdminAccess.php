@@ -16,7 +16,7 @@ final class SuperAdminAccess
         if (!$user) return false;
 
         $legacyRole = self::normalizeRole($user->role ?? null);
-        $allowedLegacy = in_array($legacyRole, ['superadmin', 'owner'], true);
+        $allowedLegacy = $legacyRole === 'superadmin';
 
         $allowedPermission =
             method_exists($user, 'can')
