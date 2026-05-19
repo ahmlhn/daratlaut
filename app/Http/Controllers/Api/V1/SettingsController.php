@@ -1649,7 +1649,7 @@ class SettingsController extends Controller
 
         try {
             $endpoint = $this->normalizeMpwaMessageEndpoint($url);
-            $resp = Http::timeout(15)->withoutVerifying()->asJson()->post($endpoint, $payload);
+            $resp = Http::timeout(15)->withoutVerifying()->asForm()->post($endpoint, $payload);
             $decoded = json_decode((string) $resp->body(), true);
             $ok = $resp->successful();
             if ($ok && is_array($decoded)) {

@@ -381,11 +381,12 @@ class WaGatewaySender
     private function httpJson(string $url, array $payload, int $timeoutSec, string $provider): array
     {
         try {
-            $client = Http::timeout($timeoutSec)->asJson();
+            $client = Http::timeout($timeoutSec);
             // Keep legacy parity: some shared-hosting stacks don't provide complete CA bundle.
             if (in_array($provider, ['mpwa', 'balesotomatis'], true)) {
                 $client = $client->withoutVerifying();
             }
+            $client = $provider === 'mpwa' ? $client->asForm() : $client->asJson();
 
             $response = $client->post($url, $payload);
             $body = (string) $response->body();
