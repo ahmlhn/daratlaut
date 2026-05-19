@@ -513,8 +513,9 @@ async function saveTg() {
 async function doTestWa(isGroup = false) {
     testLoading.value = isGroup ? 'wa_group' : 'wa_personal';
     try {
-        const res = await api('/test-wa', { method: 'POST', body: JSON.stringify({
-            url: waConfig.base_url, token: waConfig.token, sender: waConfig.sender_number,
+        const res = await api('/test-mpwa', { method: 'POST', body: JSON.stringify({
+            url: isGroup ? (waConfig.group_url || waConfig.base_url) : waConfig.base_url,
+            token: waConfig.token, sender: waConfig.sender_number,
             target: isGroup ? waConfig.group_id : waConfig.target_number, is_group: isGroup,
             footer: waConfig.footer || '',
         }) });

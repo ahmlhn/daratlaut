@@ -26,7 +26,7 @@ class SettingsController extends Controller
     {
         $tid = $this->tenantId($request);
 
-        $waConfig = DB::table('noci_conf_wa')->where('tenant_id', $tid)->first();
+        $waConfig = $this->waConfigData($tid);
         $tgConfig = DB::table('noci_conf_tg')->where('tenant_id', $tid)->first();
         $templates = DB::table('noci_msg_templates')->where('tenant_id', $tid)->get();
 
@@ -74,9 +74,8 @@ class SettingsController extends Controller
 
     // ========== WhatsApp (MPWA Single Gateway) ==========
 
-    public function getWaConfig(Request $request): JsonResponse
+    private function waConfigData(int $tid): array
     {
-        $tid = $this->tenantId($request);
         $waConf = DB::table('noci_conf_wa')->where('tenant_id', $tid)->first();
         $gwPrimary = DB::table('noci_wa_tenant_gateways')
             ->where('tenant_id', $tid)->where('provider_code', 'mpwa')->first();
@@ -87,7 +86,7 @@ class SettingsController extends Controller
             $groupUrl = $baseUrl;
         }
 
-        return response()->json(['data' => [
+        return [
             'base_url' => $baseUrl,
             'group_url' => $groupUrl,
             'token' => $gwPrimary->token ?? ($waConf->token ?? ''),
@@ -98,7 +97,13 @@ class SettingsController extends Controller
             'recap_group_id' => $waConf->recap_group_id ?? '',
             'is_active' => (int) ($gwPrimary->is_active ?? ($waConf->is_active ?? 0)),
             'failover_mode' => $gwPrimary->failover_mode ?? 'manual',
-        ]]);
+        ];
+    }
+
+    public function getWaConfig(Request $request): JsonResponse
+    {
+        $tid = $this->tenantId($request);
+        return response()->json(['data' => $this->waConfigData($tid)]);
     }
 
     public function saveWaConfig(Request $request): JsonResponse
@@ -1624,6 +1629,8 @@ class SettingsController extends Controller
         $msg = $isGroup ? 'Tes Group WA OK!' : 'Tes Personal WA OK!';
 
         if (empty($url) || empty($token)) return response()->json(['status' => 'error', 'message' => 'URL dan Token wajib'], 422);
+        if (empty($sender)) return response()->json(['status' => 'error', 'message' => 'Sender wajib'], 422);
+        if (empty($target)) return response()->json(['status' => 'error', 'message' => $isGroup ? 'Group ID wajib' : 'Nomor tujuan wajib'], 422);
 
         $number = $target;
         if (!$isGroup && strpos($number, '@') === false) {
@@ -1641,8 +1648,17 @@ class SettingsController extends Controller
         if ($isGroup) $payload['is_group'] = true;
 
         try {
-            $resp = Http::timeout(15)->post($url, $payload);
+            $endpoint = $this->normalizeMpwaMessageEndpoint($url);
+            $resp = Http::timeout(15)->withoutVerifying()->asJson()->post($endpoint, $payload);
+            $decoded = json_decode((string) $resp->body(), true);
             $ok = $resp->successful();
+            if ($ok && is_array($decoded)) {
+                if (array_key_exists('status', $decoded)) {
+                    $ok = (bool) $decoded['status'];
+                } elseif (array_key_exists('success', $decoded)) {
+                    $ok = (bool) $decoded['success'];
+                }
+            }
             $this->logNotif($this->tenantId($request), $isGroup ? 'WA Group' : 'WA Personal', $target, $msg, $ok ? 'success' : 'failed', $resp->body());
             return response()->json(['status' => $ok ? 'success' : 'failed', 'message' => $resp->body()]);
         } catch (\Exception $e) {
@@ -1654,6 +1670,18 @@ class SettingsController extends Controller
     public function testMpwa(Request $request): JsonResponse
     {
         return $this->testWa($request);
+    }
+
+    private function normalizeMpwaMessageEndpoint(string $url): string
+    {
+        $endpoint = rtrim(trim($url), '/');
+        if ($endpoint === '') {
+            return 'https://app.mpwa.net/send-message';
+        }
+        if (!str_contains($endpoint, 'send-message')) {
+            $endpoint .= '/send-message';
+        }
+        return $endpoint;
     }
 
     public function testTg(Request $request): JsonResponse

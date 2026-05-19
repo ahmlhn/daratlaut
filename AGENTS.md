@@ -2,8 +2,8 @@
 
 This file is the always-read context for AI sessions inside `backend-laravel`.
 
-Last updated: 2026-04-21
-Last verified: 2026-04-21
+Last updated: 2026-05-19
+Last verified: 2026-05-19
 
 ## Update policy (MUST)
 - After any code change in `backend-laravel`, update this file and related docs in the same task.
@@ -58,6 +58,7 @@ Last verified: 2026-04-21
 - Future v2: jika perlu log per user yang kuat, tambah schema `actor_user_id`, `actor_role`, `actor_type`, dan opsional `request_id/run_id`; baru setelah itu implement tab/grouping log per user yang strict.
 
 ## Change log
+- 2026-05-19: Tes personal WhatsApp MPWA di `/settings` diperbaiki; load konfigurasi awal kini memakai data MPWA aktif hasil merge dari `noci_wa_tenant_gateways`, endpoint MPWA base URL otomatis diarahkan ke `/send-message`, dan respons JSON MPWA `status/success=false` tidak lagi dianggap berhasil hanya karena HTTP 200. Docs: N/A.
 - 2026-05-01: Akses superadmin tidak lagi otomatis diberikan ke legacy role `owner`; `App\Support\SuperAdminAccess` kini hanya menganggap role legacy `superadmin` atau permission tenant eksplisit sebagai superadmin, sehingga owner tenant seperti `dnjapung` tetap masuk dashboard tenant biasa. Docs: N/A.
 - 2026-04-29: Auth Pusher Customer Direct Chat diperbaiki; endpoint `/direct/realtime/auth` kini masuk pengecualian CSRF seperti endpoint legacy Reverb, dan widget direct menampilkan status `Auth realtime gagal` bila private channel auth gagal agar tidak lagi terlihat hanya sebagai polling tanpa sebab. Docs: N/A.
 - 2026-04-29: Customer Direct Chat dipastikan memakai Pusher untuk sesi lama; `get_messages` kini ikut mengirim `realtime_channel`, client direct langsung mencoba subscribe Pusher dari payload tersebut, dan pembacaan driver/key Pusher dibuat kompatibel dengan `BROADCAST_DRIVER`/`VITE_BROADCAST_DRIVER` agar indikator customer tidak tertahan di polling karena config lama. Docs: N/A.

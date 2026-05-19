@@ -242,6 +242,9 @@ class WaGatewaySender
         if ($endpoint === '') {
             $endpoint = 'https://app.mpwa.net/send-message';
         }
+        if (!str_contains(rtrim($endpoint, '/'), 'send-message')) {
+            $endpoint = rtrim($endpoint, '/') . '/send-message';
+        }
 
         $number = $target;
         if ($channel === 'personal' && strpos($number, '@') === false) {
